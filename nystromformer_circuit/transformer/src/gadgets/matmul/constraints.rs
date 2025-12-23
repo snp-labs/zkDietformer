@@ -8,7 +8,7 @@ use crate::gadgets::dot_prod::constraints::*;
 pub type MatrixVar<F> = Vec<Vec<FpVar<F>>>;
 pub type MatrixConst<F> = Vec<Vec<F>>;
 
-fn new_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, m: &[Vec<F>]) -> MatrixVar<F> {
+pub fn new_matrix_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, m: &[Vec<F>]) -> MatrixVar<F> {
     let mut out = Vec::with_capacity(m.len());
     for row in m.iter() {
         // Vec<FpVar<F>> implements AllocVar<[F], F>, so this works.
@@ -102,8 +102,8 @@ mod tests {
             vec![Fr::from(11u64), Fr::from(12u64)],
         ];
 
-        let a = new_witness::<Fr>(cs.clone(), &a_vals);
-        let b = new_witness::<Fr>(cs.clone(), &b_vals);
+        let a = new_matrix_witness::<Fr>(cs.clone(), &a_vals);
+        let b = new_matrix_witness::<Fr>(cs.clone(), &b_vals);
 
         let c = matmul(&a, &b);
         let expected = native_matmul(&a_vals, &b_vals);
