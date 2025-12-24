@@ -163,13 +163,11 @@ mod tests {
 
     #[test]
     fn test_constraint_compare_naive_vs_freivalds_random_size() {
-        // 설정
         let n: usize = 100; // 예: 100, 1000
         let r = n;
         let k = n;
         let c = n;
 
-        // 재현 가능한 랜덤
         let mut rng = StdRng::seed_from_u64(42);
 
         // A: r x k, B: k x c
