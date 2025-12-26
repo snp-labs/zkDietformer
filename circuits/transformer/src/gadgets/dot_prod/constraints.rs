@@ -1,9 +1,14 @@
+//! Constraint implementations for dot product gadgets.
+
 use ark_ff::PrimeField;
 use ark_r1cs_std::fields::{FieldVar, fp::FpVar};
 
-// Dot product gadget
-// returns sum_i (a_i * b_i)
-
+/// Computes the dot product of two variable vectors.
+///
+/// Returns `sum_i (a_i * b_i)`.
+///
+/// # Panics
+/// Panics if the input lengths do not match.
 pub fn dot_product<F: PrimeField>(a: &[FpVar<F>], b: &[FpVar<F>]) -> FpVar<F> {
     assert_eq!(a.len(), b.len());
     let mut acc = FpVar::<F>::constant(F::zero());
@@ -13,6 +18,12 @@ pub fn dot_product<F: PrimeField>(a: &[FpVar<F>], b: &[FpVar<F>]) -> FpVar<F> {
     acc
 }
 
+/// Computes the dot product of a variable vector and a constant vector.
+///
+/// Returns `sum_i (a_i * w_i)`.
+///
+/// # Panics
+/// Panics if the input lengths do not match.
 pub fn dot_prod_const<F: PrimeField>(a: &[FpVar<F>], w: &[F]) -> FpVar<F> {
     assert_eq!(a.len(), w.len());
 
@@ -24,6 +35,7 @@ pub fn dot_prod_const<F: PrimeField>(a: &[FpVar<F>], w: &[F]) -> FpVar<F> {
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;

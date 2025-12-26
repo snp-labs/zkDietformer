@@ -33,6 +33,7 @@ impl<F: PrimeField> ActivationGadget<ReLU, F> for ReLU {
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;

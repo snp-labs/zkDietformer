@@ -1,13 +1,18 @@
+//! Constraint implementations for matrix multiplication and linear layers.
+
 use ark_ff::PrimeField;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 
 use crate::gadgets::dot_prod::constraints::*;
 
-/// Row-major matrix: [r][c]
+/// Row-major matrix representation inside a circuit.
 pub type MatrixVar<F> = Vec<Vec<FpVar<F>>>;
+
+/// Row-major constant matrix.
 pub type MatrixConst<F> = Vec<Vec<F>>;
 
+/// Allocates a matrix witness in row-major form.
 pub fn new_matrix_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, m: &[Vec<F>]) -> MatrixVar<F> {
     let mut out = Vec::with_capacity(m.len());
     for row in m.iter() {
@@ -18,14 +23,16 @@ pub fn new_matrix_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, m: &[Vec<F>
     out
 }
 
+/// Allocates a vector witness.
 pub fn new_vector_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, v: &[F]) -> Vec<FpVar<F>> {
     Vec::<FpVar<F>>::new_witness(cs, || Ok(v.to_vec())).unwrap()
 }
 
-/// Compute C = A * B
-/// A: r x k
-/// B: k x c
-/// C: r x c
+/// Computes matrix multiplication `C = A * B`.
+///
+/// - `A`: r × k  
+/// - `B`: k × c  
+/// - `C`: r × c
 pub fn matmul<F: PrimeField>(a: &MatrixVar<F>, b: &MatrixVar<F>) -> MatrixVar<F> {
     let r = a.len();
     assert!(r > 0);
@@ -60,6 +67,7 @@ pub fn matmul<F: PrimeField>(a: &MatrixVar<F>, b: &MatrixVar<F>) -> MatrixVar<F>
     out
 }
 
+/// Computes matrix-vector multiplication `y = M * v`.
 pub fn mat_vec_mul<F: PrimeField>(
     m: &MatrixVar<F>,
     v: &[FpVar<F>],
@@ -77,15 +85,9 @@ pub fn mat_vec_mul<F: PrimeField>(
     Ok(out)
 }
 
-/// Freivalds check constraints for A * B = C:
-/// Enforce  A * (B * r) == C * r
+/// Enforces Freivalds' check for `A * B = C`.
 ///
-/// Dimensions:
-///   A: r x k
-///   B: k x c
-///   C: r x c
-///   r: c
-///
+/// Enforces `A * (B * r) = C * r`.
 pub fn enforce_freivalds<F: PrimeField>(
     a: &MatrixVar<F>,
     b: &MatrixVar<F>,
@@ -125,11 +127,7 @@ pub fn enforce_freivalds<F: PrimeField>(
     Ok(())
 }
 
-/// y = W * x + b
-/// W: out x in
-/// x: in
-/// b: out
-/// y: out
+/// Computes a linear layer `y = W * x + b`.
 pub fn linear_vec<F: PrimeField>(
     w: &MatrixVar<F>,
     x: &[FpVar<F>],
@@ -154,11 +152,7 @@ pub fn linear_vec<F: PrimeField>(
     Ok(y)
 }
 
-/// Y = X * W + b  (bias broadcast across rows)
-/// X: batch x in
-/// W: in x out
-/// b: out
-/// Y: batch x out
+/// Computes a batched linear layer `Y = X * W + b`.
 pub fn linear_mat<F: PrimeField>(
     x: &MatrixVar<F>,
     w: &MatrixVar<F>,
@@ -191,6 +185,7 @@ pub fn linear_mat<F: PrimeField>(
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;
