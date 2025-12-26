@@ -18,6 +18,10 @@ pub fn new_matrix_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, m: &[Vec<F>
     out
 }
 
+pub fn new_vector_witness<F: PrimeField>(cs: ConstraintSystemRef<F>, v: &[F]) -> Vec<FpVar<F>> {
+    Vec::<FpVar<F>>::new_witness(cs, || Ok(v.to_vec())).unwrap()
+}
+
 /// Compute C = A * B
 /// A: r x k
 /// B: k x c
@@ -121,6 +125,71 @@ pub fn enforce_freivalds<F: PrimeField>(
     Ok(())
 }
 
+/// y = W * x + b
+/// W: out x in
+/// x: in
+/// b: out
+/// y: out
+pub fn linear_vec<F: PrimeField>(
+    w: &MatrixVar<F>,
+    x: &[FpVar<F>],
+    b: &[FpVar<F>],
+) -> Result<Vec<FpVar<F>>, SynthesisError> {
+    let out_dim = w.len();
+    assert!(out_dim > 0);
+    let in_dim = w[0].len();
+    assert!(in_dim > 0);
+
+    debug_assert!(w.iter().all(|row| row.len() == in_dim));
+    assert_eq!(x.len(), in_dim);
+    assert_eq!(b.len(), out_dim);
+
+    // y = W * x
+    let mut y = mat_vec_mul(w, x)?;
+
+    // y += b
+    for (yi, bi) in y.iter_mut().zip(b.iter()) {
+        *yi += bi.clone();
+    }
+    Ok(y)
+}
+
+/// Y = X * W + b  (bias broadcast across rows)
+/// X: batch x in
+/// W: in x out
+/// b: out
+/// Y: batch x out
+pub fn linear_mat<F: PrimeField>(
+    x: &MatrixVar<F>,
+    w: &MatrixVar<F>,
+    b: &[FpVar<F>],
+) -> Result<MatrixVar<F>, SynthesisError> {
+    let batch = x.len();
+    assert!(batch > 0);
+    let in_dim = x[0].len();
+    assert!(in_dim > 0);
+    debug_assert!(x.iter().all(|row| row.len() == in_dim));
+
+    assert_eq!(w.len(), in_dim);
+    let out_dim = w[0].len();
+    assert!(out_dim > 0);
+    debug_assert!(w.iter().all(|row| row.len() == out_dim));
+
+    assert_eq!(b.len(), out_dim);
+
+    // Y = X * W
+    let mut y = matmul(x, w);
+
+    // Broadcast bias
+    for i in 0..batch {
+        for j in 0..out_dim {
+            y[i][j] += b[j].clone();
+        }
+    }
+
+    Ok(y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +220,25 @@ mod tests {
         out
     }
 
+    fn native_linear_vec(w: &[Vec<Fr>], x: &[Fr], b: &[Fr]) -> Vec<Fr> {
+        // y = W * x + b
+        // W: out x in, x: in, b: out
+        let out_dim = w.len();
+        let in_dim = w[0].len();
+        assert_eq!(x.len(), in_dim);
+        assert_eq!(b.len(), out_dim);
+
+        let mut y = vec![Fr::zero(); out_dim];
+        for i in 0..out_dim {
+            let mut acc = Fr::zero();
+            for t in 0..in_dim {
+                acc += w[i][t] * x[t];
+            }
+            y[i] = acc + b[i];
+        }
+        y
+    }
+
     fn random_matrix(rows: usize, cols: usize, rng: &mut StdRng) -> Vec<Vec<Fr>> {
         (0..rows)
             .map(|_| (0..cols).map(|_| Fr::rand(rng)).collect())
@@ -162,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn test_constraint_compare_naive_vs_freivalds_random_size() {
-        let n: usize = 100; // 예: 100, 1000
+    fn test_constraint_compare_naive_vs_freivalds() {
+        let n: usize = 1 << 10;
         let r = n;
         let k = n;
         let c = n;
@@ -234,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn test_matmul_basic() {
+    fn test_matmul() {
         let cs = ConstraintSystem::<Fr>::new_ref();
         let mut rng = StdRng::seed_from_u64(12345);
 
@@ -269,68 +357,13 @@ mod tests {
     #[test]
     fn test_freivalds_enforce() {
         let cs = ConstraintSystem::<Fr>::new_ref();
+        let mut rng = StdRng::seed_from_u64(4242);
 
         // A: 5 x 7
         // B: 7 x 3
         // C: 5 x 3
-        let a_vals = vec![
-            vec![
-                Fr::from(1u64),
-                Fr::from(2u64),
-                Fr::from(3u64),
-                Fr::from(4u64),
-                Fr::from(5u64),
-                Fr::from(6u64),
-                Fr::from(7u64),
-            ],
-            vec![
-                Fr::from(8u64),
-                Fr::from(9u64),
-                Fr::from(10u64),
-                Fr::from(11u64),
-                Fr::from(12u64),
-                Fr::from(13u64),
-                Fr::from(14u64),
-            ],
-            vec![
-                Fr::from(15u64),
-                Fr::from(16u64),
-                Fr::from(17u64),
-                Fr::from(18u64),
-                Fr::from(19u64),
-                Fr::from(20u64),
-                Fr::from(21u64),
-            ],
-            vec![
-                Fr::from(22u64),
-                Fr::from(23u64),
-                Fr::from(24u64),
-                Fr::from(25u64),
-                Fr::from(26u64),
-                Fr::from(27u64),
-                Fr::from(28u64),
-            ],
-            vec![
-                Fr::from(29u64),
-                Fr::from(30u64),
-                Fr::from(31u64),
-                Fr::from(32u64),
-                Fr::from(33u64),
-                Fr::from(34u64),
-                Fr::from(35u64),
-            ],
-        ];
-
-        let b_vals = vec![
-            vec![Fr::from(36u64), Fr::from(37u64), Fr::from(38u64)],
-            vec![Fr::from(39u64), Fr::from(40u64), Fr::from(41u64)],
-            vec![Fr::from(42u64), Fr::from(43u64), Fr::from(44u64)],
-            vec![Fr::from(45u64), Fr::from(46u64), Fr::from(47u64)],
-            vec![Fr::from(48u64), Fr::from(49u64), Fr::from(50u64)],
-            vec![Fr::from(51u64), Fr::from(52u64), Fr::from(53u64)],
-            vec![Fr::from(54u64), Fr::from(55u64), Fr::from(56u64)],
-        ];
-
+        let a_vals = random_matrix(5, 7, &mut rng);
+        let b_vals = random_matrix(7, 3, &mut rng);
         let c_vals = native_matmul(&a_vals, &b_vals);
 
         let a = new_matrix_witness::<Fr>(cs.clone(), &a_vals);
@@ -338,13 +371,48 @@ mod tests {
         let c = new_matrix_witness::<Fr>(cs.clone(), &c_vals);
 
         // r: length 3 (columns of C)
-        let r_native = vec![Fr::from(3u64), Fr::from(5u64), Fr::from(7u64)];
-        let r = Vec::<FpVar<Fr>>::new_witness(cs.clone(), || Ok(r_native.clone())).unwrap();
+        let r_native = random_vector(3, &mut rng);
+        let r = Vec::<FpVar<Fr>>::new_witness(cs.clone(), || Ok(r_native)).unwrap();
 
         enforce_freivalds(&a, &b, &c, &r).unwrap();
 
         println!(
-            "number of constraints (freivalds 5x7 * 7x3): {}",
+            "constraints (freivalds 5x7 * 7x3): {}",
+            cs.num_constraints()
+        );
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_linear_vec() {
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        let mut rng = StdRng::seed_from_u64(2025);
+
+        // W: out x in, x: in, b: out
+        let out_dim = 5usize;
+        let in_dim = 7usize;
+
+        let w_vals = random_matrix(out_dim, in_dim, &mut rng);
+        let x_vals = random_vector(in_dim, &mut rng);
+        let b_vals = random_vector(out_dim, &mut rng);
+
+        let expected = native_linear_vec(&w_vals, &x_vals, &b_vals);
+
+        let w = new_matrix_witness::<Fr>(cs.clone(), &w_vals);
+        let x = new_vector_witness::<Fr>(cs.clone(), &x_vals);
+        let b = new_vector_witness::<Fr>(cs.clone(), &b_vals);
+
+        let y = linear_vec(&w, &x, &b).unwrap();
+
+        assert_eq!(y.len(), out_dim);
+        for i in 0..out_dim {
+            assert_eq!(y[i].value().unwrap(), expected[i]);
+        }
+
+        println!(
+            "number of constraints (linear_vec {}x{}): {}",
+            out_dim,
+            in_dim,
             cs.num_constraints()
         );
         assert!(cs.is_satisfied().unwrap());
