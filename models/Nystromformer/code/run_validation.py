@@ -17,14 +17,25 @@ parser.add_argument("--batch_size", type = int, help = "batch size", dest = "bat
 parser.add_argument("--num_batch", type = int, help = "number of batches", dest = "num_batch", default = None)
 args = parser.parse_args()
 
-with open("/model/config.json", "r") as f:
+# modify
+base_dir = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(base_dir, "..", "bookcorpus-512", "config.json")
+
+with open(config_path, "r") as f:
     config = json.load(f)
 
 model_config = config["model"]
 pretraining_config = config["pretraining_setting"]
 gpu_config = config["gpu_setting"]
-checkpoint_dir = config["model_checkpoints"]
-data_folder = config["data_folder"]
+# modify
+data_folder = os.path.join(base_dir, "..", config["data_folder"].lstrip("/"))
+data_folder = os.path.normpath(data_folder)
+
+checkpoint_dir = os.path.join(base_dir, "..", config["model_checkpoints"].lstrip("/"))
+checkpoint_dir = os.path.normpath(checkpoint_dir)
+
+print("Using data folder:", data_folder)
+print("Using checkpoint folder:", checkpoint_dir)
 
 if args.batch_size is not None:
     pretraining_config["batch_size"] = args.batch_size
@@ -51,17 +62,20 @@ data_loader = DataLoader(dataset, batch_size = pretraining_config["batch_size"],
 pretrain_dataloader_iter = enumerate(data_loader)
 
 ########################### Loading Model ###########################
+device = torch.device("cpu")
 
 model = ModelForMaskedLM(model_config)
 print(model)
 
-model = model.cuda()
-model = nn.DataParallel(model, device_ids = device_ids)
-
+# model = model.cuda()
+# model = nn.DataParallel(model, device_ids = device_ids)
+model = model.to(device)
 ########################### Running Model ###########################
-
-accumu_steps = utils.compute_accumu_step(pretraining_config["batch_size"], len(device_ids), gpu_config["inst_per_gpu"])
-print("accumu_steps", accumu_steps)
+# modify
+# accumu_steps = utils.compute_accumu_step(pretraining_config["batch_size"], len(device_ids), gpu_config["inst_per_gpu"])
+# print("accumu_steps", accumu_steps)
+accumu_steps = 1
+print("accumu_steps (CPU mode):", accumu_steps)
 
 if args.checkpoint is None:
     log_f_path = os.path.join(checkpoint_dir, "validation_output.log")
@@ -84,7 +98,8 @@ for epoch in range(start_epoch, end_epoch):
 
     checkpoint_path = os.path.join(checkpoint_dir, f"cp-{epoch:04}.model")
     checkpoint = torch.load(checkpoint_path, map_location = 'cpu')
-    model.module.load_state_dict(checkpoint['model_state_dict'])
+    # modify
+    model.load_state_dict(checkpoint['model_state_dict'])
     print("Model restored", checkpoint_path, flush = True)
 
     model.eval()
@@ -98,6 +113,8 @@ for epoch in range(start_epoch, end_epoch):
             _, batch = next(pretrain_dataloader_iter)
             summary = {}
             for percent, inputs in utils.partition_inputs(batch, accumu_steps, True):
+                # modify
+                inputs = {k: v.to(device) for k, v in inputs.items()} 
                 outputs = model(**inputs)
                 for key in outputs:
                     outputs[key] = outputs[key].mean() * percent

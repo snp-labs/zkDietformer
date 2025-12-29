@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import math
 import json
+import os
 
 class SoftmaxAttention(nn.Module):
     def __init__(self, config):
@@ -23,7 +24,15 @@ class SoftmaxAttention(nn.Module):
 
 type = {}
 
-with open("/model/config.json", "r") as f:
+# modify
+if os.path.exists("/model/config.json"): # docker pretrain
+    config_path = "/model/config.json"
+else:
+    # local validation
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, "..", "bookcorpus-512", "config.json")
+
+with open(config_path, "r") as f:
     config = json.load(f)
 model_config = config["model"]
 

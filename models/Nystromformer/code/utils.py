@@ -12,7 +12,10 @@ def compute_accumu_step(batch_size, num_gpus, inst_per_gpu):
     return max(int(math.ceil(size_per_gpu / inst_per_gpu)), 1)
 
 def get_tokenizer(max_seq_len):
-    tokenizer = RobertaTokenizerFast.from_pretrained('/code/roberta-base', model_max_length = max_seq_len)
+    # modify
+    base_dir = os.path.dirname(__file__)
+    tokenizer_path = os.path.join(base_dir, "roberta-base")
+    tokenizer = RobertaTokenizerFast.from_pretrained(tokenizer_path, model_max_length = max_seq_len)
     tokenizer.model_max_length = max_seq_len
     tokenizer.init_kwargs['model_max_length'] = max_seq_len
     return tokenizer
@@ -38,9 +41,11 @@ def add_output_to_summary(outputs, summary):
         summary[key] = round(summary[key] + outputs[key].data.item(), 6)
 
 def partition_inputs(inputs, num_partitions, to_cuda):
+    # modify
     if to_cuda:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         for key in inputs:
-            inputs[key] = inputs[key].cuda()
+            inputs[key] = inputs[key].to(device)
 
     inputs_list = [[None, {}] for _ in range(num_partitions)]
     valid_size = None

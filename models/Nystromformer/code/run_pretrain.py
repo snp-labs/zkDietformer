@@ -26,11 +26,16 @@ gpu_config = config["gpu_setting"]
 checkpoint_dir = config["model_checkpoints"]
 data_folder = config["data_folder"]
 
-if not os.path.exists(checkpoint_dir):
-    os.mkdir(checkpoint_dir)
+#if not os.path.exists(checkpoint_dir):
+#    os.mkdir(checkpoint_dir)
+os.makedirs(checkpoint_dir, exist_ok=True)
 
-device_ids = list(range(torch.cuda.device_count()))
-print(f"GPU list: {device_ids}")
+# device_ids = list(range(torch.cuda.device_count()))
+# print(f"GPU list: {device_ids}")
+if torch.cuda.is_available():
+    device_ids = list(range(torch.cuda.device_count()))
+else:
+    device_ids = [torch.device("cpu")]
 
 print(json.dumps([model_config, pretraining_config], indent = 4))
 
@@ -58,8 +63,13 @@ print(model)
 print(f"parameter_size: {[weight.size() for weight in model.parameters()]}", flush = True)
 print(f"num_parameter: {np.sum([np.prod(weight.size()) for weight in model.parameters()])}", flush = True)
 
-model = model.cuda()
-model = nn.DataParallel(model, device_ids = device_ids)
+# model = model.cuda()
+# model = nn.DataParallel(model, device_ids = device_ids)
+if torch.cuda.is_available():
+    model = model.cuda()
+    model = nn.DataParallel(model, device_ids = device_ids)
+else:
+    print("Running on CPU...")
 
 if "from_cp" in config:
 
@@ -188,11 +198,14 @@ for epoch in range(start_epoch, pretraining_config["epoch"]):
             log_f.flush()
 
     dump_path = os.path.join(checkpoint_dir, f"cp-{epoch:04}.cp")
+
+    # modify
+    save_model = model.module if hasattr(model, "module") else model
     torch.save({
-        "model_state_dict":model.module.state_dict()
+        "model_state_dict":save_model.state_dict()
     }, dump_path.replace(".cp", ".model"))
     torch.save({
-        "model_state_dict":model.module.state_dict(),
+        "model_state_dict":save_model.state_dict(),
         "optimizer_state_dict":optimizer.state_dict(),
         "lr_scheduler_state_dict":lr_scheduler.state_dict(),
         "epoch":epoch,

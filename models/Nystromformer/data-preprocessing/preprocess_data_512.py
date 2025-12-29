@@ -54,22 +54,22 @@ def process(args):
     file_idx += 1
     print(dump_path)
 
+if __name__ == "__main__":
+    datasets = [("bookcorpus", 1.0)] # , ("english_wiki", 1.0), ("realnews", 1 / 3), ("stories", 1 / 3)
+    pool = Pool(len(datasets))
+    pool.map(process, datasets)
+    pool.close()
 
-datasets = [("bookcorpus", 1.0), ("english_wiki", 1.0), ("realnews", 1 / 3), ("stories", 1 / 3)]
-pool = Pool(len(datasets))
-pool.map(process, datasets)
-pool.close()
 
+    import json
+    files = sorted([file for file in os.listdir(dump_folder) if file.endswith(".pickle")])
+    print(json.dumps(files, indent = 4))
+    random.seed(1)
+    random.shuffle(files)
+    split = int(len(files) * 0.1)
 
-import json
-files = sorted([file for file in os.listdir(dump_folder) if file.endswith(".pickle")])
-print(json.dumps(files, indent = 4))
-random.seed(1)
-random.shuffle(files)
-split = int(len(files) * 0.1)
+    with open(os.path.join(dump_folder, "dev.json"), "w") as f:
+        json.dump(files[:split], f, indent = 4)
 
-with open(os.path.join(dump_folder, "dev.json"), "w") as f:
-    json.dump(files[:split], f, indent = 4)
-
-with open(os.path.join(dump_folder, "train.json"), "w") as f:
-    json.dump(files[split:], f, indent = 4)
+    with open(os.path.join(dump_folder, "train.json"), "w") as f:
+        json.dump(files[split:], f, indent = 4)

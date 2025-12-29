@@ -1,0 +1,37 @@
+{
+    "model_checkpoints": "/bookcorpus-512/model",
+    "data_folder": "/data-preprocessing/512-roberta", 
+    "glue_dataset_folder": "/glue",
+    "wikihop_dataset_folder": "/wikihop",
+    "model": {
+        "mixed_precision": false, 
+        "attention_grad_checkpointing": false,
+        "gelu_grad_checkpointing": false,
+        "vocab_size": 50265,
+        "num_sen_type": 1,
+        "max_seq_len": 512, 
+        "embedding_dim": 128,
+        "transformer_dim": 128,
+        "transformer_hidden_dim": 512,
+        "num_layers": 2,
+        "dropout_prob": 0.1,
+        "num_head": 2,
+        "head_dim": 32,
+        "attn_type": "nystrom",
+        "num_landmarks": 64,
+        "seq_len": 512,
+        "conv_kernel_size": 3
+    },
+    "pretraining_setting": {
+        "batch_size": 2,
+        "learning_rate": 0.0001,
+        "warmup": 0.01,
+        "batches_per_report": 1,
+        "batches_per_epoch": 5,
+        "epoch": 2,
+        "validate_batches_per_epoch": 1
+    },
+    "gpu_setting": {
+      "inst_per_gpu": 2
+    }
+  }
