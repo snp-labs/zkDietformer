@@ -8,3 +8,6 @@ pub mod circuits;
 
 /// Reusable low-level constraint gadgets used by circuits.
 pub mod gadgets;
+
+/// cc_snark: zkSNARK implementation based on the Groth16 protocol.
+pub mod cc_snark;
