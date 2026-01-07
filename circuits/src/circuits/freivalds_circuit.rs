@@ -29,7 +29,7 @@ pub struct FreivaldsCircuit<F:PrimeField> {
     pub multiplier: F,
 }
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
+/*impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         
         let batch_size = self.a.len();
@@ -140,6 +140,120 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
         }
         Ok(())
     }
+}*/
+
+impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        
+        let batch_size = self.a.len();
+        let head_size = self.a[0].len();
+
+        // scaling constants
+        let two_power_8: F = (2u64.pow(8)).into();
+        let two_power_8_constant = FpVar::<F>::Constant(two_power_8);
+        let two_power_22: F = (2u64.pow(22)).into();
+        let two_power_22_constant = FpVar::<F>::Constant(two_power_22);
+
+        let m_var = FpVar::new_witness(ark_relations::ns!(cs, "m_var"), || Ok(self.multiplier))?;
+
+        let c_0_var = FpVar::Constant(self.c_0_converted);
+        let a_0_var = FpVar::Constant(self.input_0);
+        let b_0_var = FpVar::Constant(self.input_0);
+        
+        // random r
+        let r_var = FpVar::new_witness(ark_relations::ns!(cs, "r_scalar"), || Ok(self.r))?;
+
+        for n in 0..batch_size {
+            for h in 0..head_size {
+
+                let a_var = new_matrix_witness(cs.clone(), &self.a[n][h]); // seq_len x head_dim
+                let b_var = new_matrix_witness(cs.clone(), &self.b[n][h]); // head_dim x seq_len
+                let c_var = new_matrix_witness(cs.clone(), &self.c[n][h]); // seq_len x seq_len
+                let div_var = new_matrix_witness(cs.clone(), &self.div[n][h]);
+                let rem_var = new_matrix_witness(cs.clone(), &self.remainder[n][h]);
+
+                let r_rows = a_var.len(); // seq_len
+                let a_cols = if !a_var.is_empty() { a_var[0].len() } else { 0 }; // head_dim
+                let b_rows = b_var.len(); // head_dim
+                let b_cols = if !b_var.is_empty() { b_var[0].len() } else { 0 }; // seq_len
+                // Ensure shapes are consistent
+                if a_cols != b_rows {
+                    return Err(SynthesisError::Unsatisfiable);
+                }
+                if r_rows != b_cols {
+                    return Err(SynthesisError::Unsatisfiable);
+                }
+
+                // r_scalar_var로부터 벡터 r_pows = [r^0, r^1, ..., r^{r_rows-1}] 생성
+                let mut r_pows: Vec<FpVar<F>> = Vec::with_capacity(r_rows);
+                if r_rows > 0 {
+                    // 첫 항 r^0 = 1
+                    let one_var = FpVar::<F>::Constant(F::one());
+                    r_pows.push(one_var);
+                    for idx in 1..r_rows {
+                        // r^{k} = r^{k-1} * r
+                        let next = &r_pows[idx - 1] * &r_var;
+                        r_pows.push(next);
+                    }
+                }
+
+                let sum_r = r_pows.iter().fold(FpVar::zero(), |acc, x| acc + x);
+
+                // Left side: m * ((A-a0)(B-b0) r + c0_corr) 
+                // 1. (AB)r = A(Br)
+                let br = mat_vec_mul(&b_var, &r_pows)?; // length head_dim
+                let term1 = mat_vec_mul(&a_var, &br)?; // length seq_len
+
+                // 2. (Ab0)r = b0 * sum_r * (RowSums of A)
+                let b0_sum_r = &b_0_var * &sum_r;
+                let term2: Vec<FpVar<F>> = a_var.iter()
+                    .map(|row| {
+                        let row_sum = row.iter().fold(FpVar::zero(), |acc, x| acc + x);
+                        row_sum * &b0_sum_r
+                    })
+                    .collect();
+
+                // 3. (a0B)r = a0 * sum_k br_k  (scalar)
+                let sum_br = br.iter().fold(FpVar::zero(), |acc, x| acc + x); // scalar
+                let term3_scalar = &sum_br * &a_0_var;
+
+                // 4. (a0b0)r = head_dim * a0 * b0 * sum_r  (scalar)
+                let head_dim_const: F = F::from(a_cols as u64);
+                let head_dim_fpvar = FpVar::Constant(head_dim_const);
+                let term4_val = &a_0_var * &b_0_var * &sum_r * &head_dim_fpvar;
+
+                // 5. c0 correction = c0 * sum_r
+                let c0_corr = &c_0_var * &sum_r;
+
+                // Combine left side per row
+                let mut left_side = Vec::with_capacity(r_rows);
+                for i in 0..r_rows {
+                    let res = (&term1[i] - &term2[i] - &term3_scalar + &term4_val + &c0_corr) * &m_var;
+                    left_side.push(res);
+                }
+
+                // Right side: ((C + div*2^8)*2^22 + rem) * r 
+                let mut cc_var_matrix: MatrixVar<F> = Vec::with_capacity(r_rows);
+                for i in 0..r_rows {
+                    let mut row = Vec::with_capacity(c_var[0].len());
+                    for j in 0..c_var[0].len() {
+                        let val = (&c_var[i][j] + (&div_var[i][j] * &two_power_8_constant)) 
+                                  * &two_power_22_constant + &rem_var[i][j];
+                        row.push(val);
+                    }
+                    cc_var_matrix.push(row);
+                }
+
+                let right_side = mat_vec_mul(&cc_var_matrix, &r_pows)?;
+
+                // enforce equality
+                for (l, r) in left_side.iter().zip(right_side.iter()) {
+                    l.enforce_equal(r)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 
@@ -150,6 +264,7 @@ mod tests {
     use ark_ff::PrimeField;
     use ark_bls12_381::Bls12_381; 
     use ark_ec::pairing::Pairing;
+    use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
     use ark_std::rand::{SeedableRng, rngs::StdRng};
     use ark_std::rand::Rng;
 
@@ -270,7 +385,7 @@ mod tests {
 
     fn test_prove_and_verify_cc<E: Pairing>(batch: usize, num_head: usize) {
         let mut rng = StdRng::seed_from_u64(42);
-        let seq_len = 3;
+        let seq_len = 5;
         let head_dim = 4;
 
         let (a, b, c, remainder, div, r, input_0, c_0_converted, multiplier) =
@@ -281,6 +396,13 @@ mod tests {
             remainder: remainder.clone(), div: div.clone(),
             input_0, c_0_converted, multiplier,
         };
+
+        let cs = ConstraintSystem::<E::ScalarField>::new_ref();
+        circuit.clone().generate_constraints(cs.clone()).expect("generate_constraints failed");
+
+        let num_constraints = cs.num_constraints();
+        println!("Generated constraints: {}", num_constraints);
+        assert!(num_constraints > 0, "constraints should be greater than 0");
 
         let (pk, vk) = CcGroth16::<E>::setup(circuit.clone(), &mut rng).unwrap();
         let pvk = prepare_verifying_key::<E>(&vk);
