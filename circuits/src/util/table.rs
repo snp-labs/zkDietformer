@@ -1,0 +1,40 @@
+use std::{env, error::Error};
+use std::fs::File;
+use std::{ops::Bound, str::FromStr, path::Path};
+use ark_std::{One};
+use ark_ff::PrimeField;
+use anyhow::{Context, Result};
+use ndarray_npy::NpzReader;
+use ndarray::{Array4, ArrayD, Ix4, Array2, Array0};
+use num_bigint::BigInt;
+use crate::harisa::hash_to_prime::primality_test;
+
+// 테이블 소수테이블로 만들기
+pub fn lookup_setgen(set: Vec<BigInt>) -> (Vec<BigInt>, Vec<BigInt>) {
+    println!("lookup_setgen: generating prime and z tables for {} elements", set.len());
+    let base_2: i32 = 2;
+    let expo = 14;
+
+    let mut z_prime: Vec<BigInt> = Vec::new();
+    let mut z_len = BigInt::from(base_2.pow(expo));
+
+    let mut prime_table: Vec<BigInt> = Vec::new();
+
+    for f in set {
+        let mut tmp_z = BigInt::from(1627);
+        let mut tmp_f = f.clone() * z_len.clone() + tmp_z.clone();
+
+        while !(primality_test(&tmp_f.clone(), 10)
+            && primality_test(&tmp_z.clone(), 10)
+            && !prime_table.contains(&tmp_f.clone())
+            && !z_prime.contains(&tmp_z.clone()))
+        {
+            tmp_z += BigInt::one();
+            tmp_f += BigInt::one();
+        }
+        prime_table.push(tmp_f.clone());
+        z_prime.push(tmp_z.clone());
+    }
+
+    (prime_table, z_prime)
+}

@@ -19,8 +19,15 @@ def load_npz(path):
             meta = d['meta'].tolist()
         except Exception:
             meta = d['meta']
+    frac_bits = None
+    if 'frac_bits' in d:
+        try:
+            frac_bits = int(np.array(d['frac_bits']).tolist())
+        except Exception:
+            # 안전하게 None 처리
+            frac_bits = None
 
-    return a, b, c, div, rem, r, input_0, c_0, mult, meta
+    return a, b, c, div, rem, r, input_0, c_0, mult, meta, frac_bits
 
 def reconstruct_target_from_c_div_rem(c_arr, div_arr, rem_arr):
     # 넘파이의 제한된 자료형을 파이썬 객체로 바꿔줌 
@@ -59,7 +66,7 @@ if __name__ == "__main__":
         print("usage: python verify_npz.py path/to/inputs.npz")
         sys.exit(1)
     path = sys.argv[1]
-    a,b,c,div,rem,r,input_0,c_0,mult,meta = load_npz(path)
+    a,b,c,div,rem,r,input_0,c_0,mult,meta,frac_bits = load_npz(path)
 
     print("PYTHON DEBUG"); # 기본정보 뽑아서 출력해보기
     print("info: shapes:","a", a.shape, "b", b.shape, "c", c.shape, "div", div.shape, "rem", rem.shape)
@@ -69,6 +76,7 @@ if __name__ == "__main__":
     print("div[0,0,0,0] =", int(div[0,0,0,0]))
     print("rem[0,0,0,0] =", int(rem[0,0,0,0]))
     print("meta:", meta)
+    print("frac_bits (if present):", frac_bits)
 
     # 양자화된 타겟값 계산하기(npz에서 가져온 값)
     target_recon = reconstruct_target_from_c_div_rem(c, div, rem)

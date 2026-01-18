@@ -12,3 +12,6 @@ pub mod dot_prod;
 
 /// Matrix multiplication and linear layer gadgets.
 pub mod matmul;
+
+/// Softmax function gadgets.
+pub mod softmax;

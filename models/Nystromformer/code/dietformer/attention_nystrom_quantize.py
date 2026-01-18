@@ -12,7 +12,7 @@ def random_inputs_torch(batch, num_head, seq_len, head_dim, seed=42, device='cpu
     mask = torch.ones(batch, seq_len, device=device, dtype=dtype)
     return Q, K, mask
 
-def quantize_with_auto_zero(a_float, b_float, scale_input=1<<8, input_0_default=0):
+def quantize_with_auto_zero(a_float, b_float, scale_input=1<<8, input_0_default=0, check_uint64=True):
     batch, num_head, seq_len, head_dim = a_float.shape
     a_raw = np.round(a_float * float(scale_input)).astype(np.int64) # 스케일링 후 반올림하여 값을 정수화시키기
     b_raw = np.round(b_float * float(scale_input)).astype(np.int64)
@@ -29,6 +29,17 @@ def quantize_with_auto_zero(a_float, b_float, scale_input=1<<8, input_0_default=
     a_q = (a_raw + input_0).astype(np.int64)
     b_q = (b_raw + input_0).astype(np.int64)
     b_q = b_q.transpose(0,1,3,2).copy()  # to (batch,num_head,head_dim,seq_len)
+
+    # optional safety checks before casting to uint64 / saving : 새로 추가한거
+    if check_uint64:
+        max_a = int(a_q.max())
+        max_b = int(b_q.max())
+        max_val = max(max_a, max_b)
+        if max_val >= 2**64:
+            raise ValueError(f"Quantized values too large for uint64: max={max_val}. Reduce scale or choose larger input_0 handling.")
+        if input_0 < 0:
+            raise ValueError(f"Computed input_0 negative: {input_0}")
+        
     return a_q, b_q, input_0, a_raw, b_raw
 
 def decompose_targets(a_q, b_q, a_raw, b_raw_t, input_0, c0=0, multiplier=1):
@@ -80,8 +91,9 @@ def decompose_targets(a_q, b_q, a_raw, b_raw_t, input_0, c0=0, multiplier=1):
     return c, div, rem, c0_used
 
 # 모든 파일을 npz 파일로 패킹하여 저장
-def export_npz(path, a,b,c,div,rem,r_int,input_0,c0,multiplier,meta=None):
+def export_npz(path, a,b,c,div,rem,r_int,input_0,c0,multiplier,frac_bits,meta=None):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
     np.savez_compressed(
         path,
         a=a.astype(np.uint64),
@@ -93,6 +105,7 @@ def export_npz(path, a,b,c,div,rem,r_int,input_0,c0,multiplier,meta=None):
         input_0=np.uint64(input_0),
         c_0_converted=np.uint64(c0),
         multiplier=np.uint64(multiplier),
+        frac_bits=np.int32(frac_bits),
         meta=np.array([meta]) if meta is not None else np.array([0])
     )
 
@@ -107,6 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--scale", type=int, default=(1<<8))
     parser.add_argument("--input_0", type=int, default=0, help="minimum zero-point hint (will be increased if needed)")
     parser.add_argument("--r", type=int, default=3)
+    parser.add_argument("--frac_bits", type=int, default=32, help="fractional bits used for exp fixed-point in lookup tables")
     parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
 
@@ -123,7 +137,7 @@ if __name__ == "__main__":
     Q_np = Q_proc.cpu().numpy()
     K_np = K_proc.cpu().numpy()
 
-    a_q, b_q, input_0_fin, a_raw, b_raw = quantize_with_auto_zero(Q_np, K_np, scale_input=args.scale, input_0_default=args.input_0)
+    a_q, b_q, input_0_fin, a_raw, b_raw = quantize_with_auto_zero(Q_np, K_np, scale_input=args.scale, input_0_default=args.input_0, check_uint64=False)
     
     b_raw_t = b_raw.transpose(0,1,3,2).copy()
 
@@ -134,6 +148,6 @@ if __name__ == "__main__":
     
     c, div, rem, c0_used = decompose_targets(a_q, b_q, a_raw, b_raw_t, input_0_fin, c0=0, multiplier=1)
 
-    meta = {"batch": args.batch, "num_head": args.num_head, "seq_len": args.seq_len, "head_dim": args.head_dim, "scale": args.scale}
-    export_npz(args.out_npz, a_q, b_q, c, div, rem, args.r, input_0_fin, c0_used, 1, meta)
+    meta = {"batch": args.batch, "num_head": args.num_head, "seq_len": args.seq_len, "head_dim": args.head_dim, "scale": args.scale, "frac_bits": args.frac_bits}
+    export_npz(args.out_npz, a_q, b_q, c, div, rem, args.r, input_0_fin, c0_used, 1, args.frac_bits, meta)
     print("Wrote", args.out_npz, "input_0_used=", input_0_fin, "c0_used=", c0_used)
