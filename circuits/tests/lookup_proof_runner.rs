@@ -99,6 +99,12 @@ where
 
     // 5) prime/z 테이블 생성 (lookup_setgen)
     let (prime_table, mut z_table) = lookup_setgen(u_bigints.clone());
+    /*let (mut prime_table, mut z_table) = lookup_setgen_from_precomputed(
+        u_bigints.clone(),
+        &flat_table,
+        &flat_prime,
+        &flat_z,
+    );*/
 
     // safety: prime_table.len() == u_bigints.len()
     if prime_table.len() != u_bigints.len() || z_table.len() != u_bigints.len() {

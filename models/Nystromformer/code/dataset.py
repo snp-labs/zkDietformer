@@ -11,7 +11,7 @@ import numpy as np
 from multiprocessing import Pool
 
 class CorpusDataset(Dataset):
-    def __init__(self, folder_path, file_json, files_per_batch = 1024, keep_prob = 0.1, option = None):
+    def __init__(self, folder_path, file_json, files_per_batch = 1024, keep_prob = 1.0, option = None):
 
         self.files_per_batch = files_per_batch
         self.keep_prob = keep_prob
@@ -32,6 +32,8 @@ class CorpusDataset(Dataset):
 
         self.curr_idx = 0
         self.examples = []
+
+        self.load_files()
 
     def load_files(self):
 
@@ -62,14 +64,27 @@ class CorpusDataset(Dataset):
             print(f"Completed Loading", flush = True)
 
 
+    #def __len__(self):
+    #    return 100000000
+
+    #def __getitem__(self, i) -> torch.Tensor:
+    #    if self.curr_idx >= len(self.examples):
+    #        self.load_files()
+    #    inst = self.examples[self.curr_idx]
+    #    self.curr_idx += 1
+    #    return torch.tensor(inst, dtype = torch.long)
     def __len__(self):
-        return 100000000
+        # 1억이라는 고정값 대신 실제 리스트의 길이를 반환 
+        return len(self.examples)
 
     def __getitem__(self, i) -> torch.Tensor:
-        if self.curr_idx >= len(self.examples):
+        # i가 범위를 벗어날 경우(새 에폭 등)를 대비해 로드 로직 점검
+        if len(self.examples) == 0 or i >= len(self.examples):
             self.load_files()
-        inst = self.examples[self.curr_idx]
-        self.curr_idx += 1
+            # 로드 후에도 i가 범위를 넘는다면 0으로 리셋 (순환 인덱싱)
+            i = i % len(self.examples)
+            
+        inst = self.examples[i] # self.curr_idx 대신 i를 사용 
         return torch.tensor(inst, dtype = torch.long)
 
 

@@ -51,6 +51,11 @@ model_config["vocab_size"] = len(tokenizer.get_vocab())
 
 if not args.use_data:
     dataset = CorpusDataset(folder_path = data_folder, file_json = "train.json", option = config["dataset"])
+    # DataLoader 생성 전에 데이터를 먼저 로드하여 len이 0이 되지 않게 함 
+    dataset.load_files()
+    print(f"DEBUG: Dataset length is {len(dataset)}") # 이 값이 0이면 에러 발생
+    if len(dataset) == 0:
+        raise ValueError("데이터셋이 비어있습니다. 경로와 전처리 파일을 확인하세요.")
     data_collator = DataCollatorForLanguageModeling(tokenizer = tokenizer, mlm = True, mlm_probability = 0.15)
     data_loader = DataLoader(dataset, batch_size = pretraining_config["batch_size"], shuffle = True, collate_fn = data_collator)
     pretrain_dataloader_iter = enumerate(data_loader)

@@ -26,7 +26,7 @@ parser.add_argument("--witness_inv_scale", type=int, default=1)
 parser.add_argument("--witness_scale_input", type=int, default=(1<<8))
 parser.add_argument("--witness_frac_bits", type=int, default=16)
 parser.add_argument("--witness_k_segments", type=int, default=2)
-parser.add_argument("--witness_limb_bits", type=int, default=2)
+parser.add_argument("--witness_limb_bits", type=int, default=4)
 parser.add_argument("--witness_tables_outdir", type=str, default="tmp_tables")
 args = parser.parse_args()
 
@@ -60,6 +60,11 @@ model_config["vocab_size"] = len(tokenizer.get_vocab())
 
 if not args.use_data:
     dataset = CorpusDataset(folder_path = data_folder, file_json = "train.json", option = config["dataset"])
+    # DataLoader 생성 전에 데이터를 먼저 로드하여 len이 0이 되지 않게 함 
+    dataset.load_files()
+    print(f"DEBUG: Dataset length is {len(dataset)}") # 이 값이 0이면 에러 발생
+    if len(dataset) == 0:
+        raise ValueError("데이터셋이 비어있습니다. 경로와 전처리 파일을 확인하세요.")
     data_collator = DataCollatorForLanguageModeling(tokenizer = tokenizer, mlm = True, mlm_probability = 0.15)
     data_loader = DataLoader(dataset, batch_size = pretraining_config["batch_size"], shuffle = True, collate_fn = data_collator)
     pretrain_dataloader_iter = enumerate(data_loader)
@@ -249,7 +254,6 @@ def _capture_and_save_attention_intermediates(model, data_loader_iter, save_pref
                     inv_scale = args.witness_inv_scale,
                     tables_outdir = args.witness_tables_outdir,
                     multiplier = 1,
-                    r = 3,
                 )
             except Exception as e:
                 print(f"Failed to run witness pipeline on {saved_path}: {e}")

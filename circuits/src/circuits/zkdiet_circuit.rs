@@ -98,7 +98,7 @@ where
     let mult_arr = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("multiplier.npy")?;
     let multiplier = F::from(mult_arr.iter().next().copied().unwrap_or(1u64));
 
-    // 프리발드 서킷 ���성
+    // 프리발드 서킷 생성
     let qkfreivalds = FreivaldsCircuit {
         a: a_f.clone(),
         b: b_f.clone(),
@@ -332,7 +332,7 @@ where
         println!("DEBUG: softmax normalization check PASSED (s*denom == exp_prod_field)");
     } 
 
-    // (추가)
+    // (추가) 여기서부터 룩업 값준비
     let mut combined_matmul_ints: Vec<Vec<i128>> = Vec::with_capacity(batch * num_head * seq_len);
     for n in 0..batch {
         for h in 0..num_head {
@@ -577,8 +577,8 @@ pub fn run(path: &Path) -> Result<()> {
     let (pk, vk) = CcGroth16::<Bn254>::setup(combined.clone(), &mut rng)?;
     let pvk = prepare_verifying_key::<Bn254>(&vk);
 
-    let proof = CcGroth16::<Bn254>::prove(&pk, combined, &mut rng)?;
-    let ok = CcGroth16::<Bn254>::verify_with_processed_vk(&pvk, &[], &proof)?;
+    let proof = CcGroth16::<Bn254>::prove(&pk, combined.clone(), &mut rng)?;
+    let ok = CcGroth16::<Bn254>::verify_with_processed_vk(&pvk, &[combined.qkfreivalds.r], &proof)?;
     println!("Integrated verification result: {}", ok);
     if !ok {
         return Err(anyhow::anyhow!("verification failed"));

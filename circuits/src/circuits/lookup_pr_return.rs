@@ -75,8 +75,6 @@ where
     pub wt_opening: <E as Pairing>::ScalarField,
 }
 
-/// Duplex 룩업 증명 생성하기 (수정판)
-/// 이제 CPLinkInfo를 반환합니다: 생성된 커밋/오프닝/pp/accum/lookup_proof를 호출자에게 돌려줌
 pub fn create_lookup_proof<E: Pairing>(
     npz_path: &str,
     matmul_ints: Vec<Vec<i128>>,
@@ -89,6 +87,7 @@ where
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
     // 1) 테이블 로드
+    // let (raw_tables, raw_prime, raw_z, _frac_bits, limb_bits) = load_tables(npz_path)?;
     let (raw_tables, _frac_bits, limb_bits) = load_tables(npz_path)?;
 
     let k_segments = raw_tables.len();
@@ -107,8 +106,6 @@ where
             flat_table.push(BigInt::from(raw_tables[k][idx]));
         }
     }
-
-    println!("Table value is : {:?}", flat_table);
 
     // 3) u_bigints: matmul_ints -> limb 인덱스로 찾아 flat_table 항목 수집
     let mut u_bigints: Vec<BigInt> = Vec::new();
@@ -136,13 +133,6 @@ where
     if batch_size == 0 {
         return Err("batch_size must be > 0".into());
     }
-    if batch_size > flat_table.len() {
-        return Err(format!(
-            "batch_size ({}) is larger than full table length ({}) — must be <= flat_table.len()",
-            batch_size,
-            flat_table.len()
-        ).into());
-    }
     if batch_size > u_bigints.len() {
         return Err(format!(
             "batch_size ({}) is larger than number of referenced table entries (u_bigints.len() = {}) — \
@@ -152,7 +142,7 @@ where
         ).into());
     }
 
-    print!("u_bigints: {:?}", u_bigints);
+    // print!("u_bigints: {:?}", u_bigints);
 
     // 5) prime/z 테이블 생성 (lookup_setgen)
     let (mut prime_table, mut z_table) = lookup_setgen(u_bigints.clone());
@@ -163,7 +153,6 @@ where
     }
 
     // 6) build vec_table WITH original indices, sort 및 proven/non_proven 분할
-    // we keep original index so we can later reorder proven elements back into original (flat) order
     let mut vec_table: Vec<(BigInt, BigInt, BigInt, usize)> = Vec::with_capacity(prime_table.len());
     for i in 0..prime_table.len() {
         vec_table.push((prime_table[i].clone(), u_bigints[i].clone(), z_table[i].clone(), i));
@@ -171,12 +160,11 @@ where
     // sort by prime (first component)
     vec_table.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // collect proven entries (first batch_size in sorted order), but record their ORIGINAL indices
     let mut proven_indices: Vec<usize> = Vec::with_capacity(batch_size);
     for i in 0..batch_size {
         proven_indices.push(vec_table[i].3);
     }
-    // For convenience build a set for O(1) membership
+
     use std::collections::HashSet;
     let proven_set: HashSet<usize> = proven_indices.iter().cloned().collect();
 
@@ -288,8 +276,6 @@ where
     let ctt_circuit = CTTCircuit::<E::ScalarField>::new(ctt_elem.clone(), ctt_elem.clone());
     let wt_circuit = WTCircuit::<E::ScalarField>::new(circuit_hat_f.clone(), circuit_t.clone(), circuit_z_f.clone());
 
-    // --- Prepare commitments and openings (these are used later and will be returned) ---
-
     // f_hat (hat_f)
     let mut f_hat_scalar: Vec<E::ScalarField> = Vec::new();
     for u_i in hat_f.clone() {
@@ -372,8 +358,8 @@ where
         non_proven_elem.clone(),
     )?;
 
-    // 13) CPLinkInfo 조립 — 반환되는 f_bigints/f_fields는 proven t 값들을
-    //     "원래(flat) 순서"로 정렬한 버전입니다 (이제 zkdiet에서 만든 prod_bigints_flat 순서와 일치합니다).
+    // 13) CPLinkInfo 조립 — 반환되는 f_bigints/f_fields는 proven t 값들을 "원래(flat) 순서"로 정렬한 버전
+    // zkdiet에서 만든 prod_bigints_flat 순서와 일치
     let f_bigints = t.clone(); // proven values, in original(flat) order
     let f_fields = f_scalar.clone(); // already converted to field in same order
 
@@ -401,7 +387,6 @@ where
         wt_opening,
     };
 
-    // Done: CPLinkInfo 반환
     Ok(cpinfo)
 }
 
@@ -430,8 +415,4 @@ fn main() {
         .expect("create_lookup_proof failed");
 
     println!("create_lookup_proof completed successfully; received CPLinkInfo");
-    // 이제 호출자(zkdiet_with_lookup_link.rs 등)에서 다음을 호출하여 Harisa lookup proof를 검증할 수 있습니다:
-    // let flag = HarisaPlus::<E, Harisa<E, LinkSnark<E>>, LinkSnark<E>>::verify_lookup(
-    //     cpinfo.pp, cpinfo.accum, cpinfo.lookup_proof.cm_f_hat, cpinfo.lookup_proof.cm_f, cpinfo.lookup_proof.cm_z, cpinfo.lookup_proof.clone()
-    // )?;
 }

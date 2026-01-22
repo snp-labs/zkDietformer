@@ -14,7 +14,7 @@ pub struct FreivaldsCircuit<F:PrimeField> {
     pub a: Vec<Vec<Vec<Vec<F>>>>, // [Batch Size, Num Head, Seq Len, Head dim]
     pub b: Vec<Vec<Vec<Vec<F>>>>, // [Batch Size, Num Head, 토큰 개수, 토큰 하나의 길이]
     pub c: Vec<Vec<Vec<Vec<F>>>>,
-    pub r: F,      // Random vector r
+    pub r: F,      // Random vector r, Fiat-Shamir challenge(public input)
 
     //these two variables are used to restore the real y
     pub remainder: Vec<Vec<Vec<Vec<F>>>>,
@@ -32,6 +32,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         
         let batch_size = self.a.len();
+        // erase
+        if batch_size == 0 {
+            return Ok(());
+        }
         let head_size = self.a[0].len();
 
         // scaling constants
@@ -47,19 +51,20 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
         let b_0_var = FpVar::Constant(self.input_0);
         
         // random r
-        let r_var = FpVar::new_witness(ark_relations::ns!(cs, "r_scalar"), || Ok(self.r))?;
+        let r_var = FpVar::new_input(ark_relations::ns!(cs, "r_scalar"), || Ok(self.r))?;
 
         for n in 0..batch_size {
             for h in 0..head_size {
 
                 let a_var = new_matrix_witness(cs.clone(), &self.a[n][h]); // seq_len x head_dim
-                let b_var = new_matrix_witness(cs.clone(), &self.b[n][h]); // head_dim x seq_len
+                let b_var = new_matrix_witness(cs.clone(), &self.b[n][h]); // head_dim x seq_len 전치된 상태로 들어옴
                 let c_var = new_matrix_witness(cs.clone(), &self.c[n][h]); // seq_len x seq_len
                 let div_var = new_matrix_witness(cs.clone(), &self.div[n][h]);
                 let rem_var = new_matrix_witness(cs.clone(), &self.remainder[n][h]);
 
-                let r_rows = a_var.len(); // seq_len
+                let r_rows = b_var[0].len(); // seq_len
                 let a_cols = if !a_var.is_empty() { a_var[0].len() } else { 0 }; // head_dim
+                let a_rows = a_var.len(); // seq_len
                 let b_rows = b_var.len(); // head_dim
                 let b_cols = if !b_var.is_empty() { b_var[0].len() } else { 0 }; // seq_len
                 // Ensure shapes are consistent
@@ -112,15 +117,15 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for FreivaldsCircuit<F> {
                 let c0_corr = &c_0_var * &sum_r;
 
                 // Combine left side per row
-                let mut left_side = Vec::with_capacity(r_rows);
-                for i in 0..r_rows {
+                let mut left_side: Vec<FpVar<F>> = Vec::with_capacity(a_rows); // a_row = seq_len
+                for i in 0..a_rows {
                     let res = (&term1[i] - &term2[i] - &term3_scalar + &term4_val + &c0_corr) * &m_var;
                     left_side.push(res);
                 }
 
                 // Right side: ((C + div*2^8)*2^22 + rem) * r 
-                let mut cc_var_matrix: MatrixVar<F> = Vec::with_capacity(r_rows);
-                for i in 0..r_rows {
+                let mut cc_var_matrix: MatrixVar<F> = Vec::with_capacity(a_rows);
+                for i in 0..a_rows {
                     let mut row = Vec::with_capacity(c_var[0].len());
                     for j in 0..c_var[0].len() {
                         let val = (&c_var[i][j] + (&div_var[i][j] * &two_power_8_constant)) 
@@ -296,7 +301,7 @@ mod tests {
         let proof = CcGroth16::<E>::prove(&pk, circuit, &mut rng).unwrap();
 
         // 현재 서킷에 Public Input(new_input_variable)이 없다면 빈 벡터 []를 전달.
-        let public_inputs = vec![]; 
+        let public_inputs = vec![r.clone()]; 
         let result = CcGroth16::<E>::verify_with_processed_vk(&pvk, &public_inputs, &proof).unwrap();
         
         assert!(result, "cc-Groth16 proof verification failed!");

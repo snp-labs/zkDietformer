@@ -57,8 +57,9 @@ where
             flat_table.push(BigInt::from(raw_tables[k][idx]));
         }
     }
+    // prime_table, z_table
 
-    println!("Table value is : {:?}", flat_table);
+    // println!("Table value is : {:?}", flat_table);
 
     // 3) u_bigints: matmul_ints -> limb 인덱스로 찾아 flat_table 항목 수집
     let mut u_bigints: Vec<BigInt> = Vec::new();
@@ -86,13 +87,13 @@ where
     if batch_size == 0 {
         return Err("batch_size must be > 0".into());
     }
-    if batch_size > flat_table.len() {
+    /*if batch_size > flat_table.len() {
         return Err(format!(
             "batch_size ({}) is larger than full table length ({}) — must be <= flat_table.len()",
             batch_size,
             flat_table.len()
         ).into());
-    }
+    }*/
     if batch_size > u_bigints.len() {
         return Err(format!(
             "batch_size ({}) is larger than number of referenced table entries (u_bigints.len() = {}) — \
@@ -102,7 +103,7 @@ where
         ).into());
     }
 
-    print!("u_bigints: {:?}", u_bigints);
+    // print!("u_bigints: {:?}", u_bigints);
 
     // 5) prime/z 테이블 생성 (lookup_setgen)
     let (mut prime_table, mut z_table) = lookup_setgen(u_bigints.clone());

@@ -7,29 +7,20 @@ from transformers import RobertaTokenizerFast
 
 def tokenize(args):
     src, tgt = args
-
-    if not os.path.exists(src):
-        return
+    if not os.path.exists(src): return
 
     tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
-
-    print("START", flush = True)
-    with open(src, "r", encoding = "utf-8") as read_f:
+    with open(src, "r", encoding="utf-8") as read_f:
         text = read_f.read()
-    print(f"Read {src}", flush = True)
 
+    # 1. 전체 텍스트 토큰화
     tokens = tokenizer.tokenize(text)
-    print(f"Tokenized {src}", flush = True)
-    del text
-
     token_ids = tokenizer.convert_tokens_to_ids(tokens)
-    print(f"To Token IDs {src}", flush = True)
 
+    # 2. 자르지 않고 전체 ID 리스트를 저장 (전처리기 2단계에서 처리하도록)
     with open(tgt, "wb") as dump_f:
         pickle.dump(token_ids, dump_f)
-    print(f"Dump {tgt}", flush = True)
-    print("END", flush = True)
-
+    print(f"Dump {tgt} (Total Tokens: {len(token_ids)})", flush=True)
 
 if __name__ == "__main__":
     if not os.path.exists("data"):

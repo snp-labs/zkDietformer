@@ -18,14 +18,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--checkpoint", type = int, help = "checkpoint", dest = "checkpoint", default = None)
 parser.add_argument("--batch_size", type = int, help = "batch size", dest = "batch_size", default = None)
 parser.add_argument("--num_batch", type = int, help = "number of batches", dest = "num_batch", default = None)
-# new options: save attention intermediates and witness pipeline parameters
+# (추가/어텐션 수 기록에 필요한 것들)
 parser.add_argument("--save_attn_npz", type = str, help = "prefix path to save attention intermediates npz (optional). Example: /tmp/attn_debug", default = None)
 parser.add_argument("--witness_v_scale", type=int, default=1)
 parser.add_argument("--witness_inv_scale", type=int, default=1)
 parser.add_argument("--witness_scale_input", type=int, default=(1<<8))
 parser.add_argument("--witness_frac_bits", type=int, default=16)
 parser.add_argument("--witness_k_segments", type=int, default=2)
-parser.add_argument("--witness_limb_bits", type=int, default=2)
+parser.add_argument("--witness_limb_bits", type=int, default=4)
 parser.add_argument("--witness_tables_outdir", type=str, default="tmp_tables")
 args = parser.parse_args()
 
@@ -121,7 +121,7 @@ def _capture_and_save_attention_intermediates(model, data_loader, save_prefix):
 
     # Obtain one batch (create an iterator so we don't consume outer iterator)
     try:
-        capture_iter = iter(data_loader)
+        capture_iter = enumerate(data_loader)
         _, batch = next(capture_iter)
     except Exception as e:
         print("Failed to fetch a batch for attention capture:", e)
@@ -224,7 +224,6 @@ def _capture_and_save_attention_intermediates(model, data_loader, save_prefix):
                     inv_scale = args.witness_inv_scale,
                     tables_outdir = args.witness_tables_outdir,
                     multiplier = 1,
-                    r = 3,
                 )
             except Exception as e:
                 print(f"Failed to run witness pipeline on {saved_path}: {e}")

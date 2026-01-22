@@ -1,4 +1,3 @@
-use std::env;
 use std::path::Path;
 use anyhow::{Context, Result};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};

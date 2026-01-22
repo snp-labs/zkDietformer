@@ -127,6 +127,7 @@ pub fn load_npz(path: &Path) -> Result<(
 }
 
 /// 테이블 로드하기
+/// 원래는 Vec<Vec<u64>> 형태로 반환했었음.
 pub fn load_tables<P: AsRef<Path>>(npz_path: P) -> Result<(Vec<Vec<u64>>, u32, usize), Box<dyn Error>> {
     let f = File::open(&npz_path)?;
     let mut npz = NpzReader::new(f)?;
@@ -134,6 +135,9 @@ pub fn load_tables<P: AsRef<Path>>(npz_path: P) -> Result<(Vec<Vec<u64>>, u32, u
     let tables_arr: Array2<u64> = npz.by_name("tables.npy")?;
     let frac_bits_arr: Array0<i32> = npz.by_name("frac_bits.npy")?;
     let limb_bits_arr: Array0<i32> = npz.by_name("limb_bits.npy")?;
+    //추가함
+    //let prime_arr: Array2<u64> = npz.by_name("prime_tables.npy")?;
+    //let z_arr: Array2<u64> = npz.by_name("z_tables.npy")?;
     let frac_bits: i32 = frac_bits_arr[()];
     let limb_bits: i32 = limb_bits_arr[()];
 
@@ -141,9 +145,16 @@ pub fn load_tables<P: AsRef<Path>>(npz_path: P) -> Result<(Vec<Vec<u64>>, u32, u
     let row_len = tables_arr.shape()[1];
 
     let mut raw_tables = Vec::with_capacity(k);
+    // 추가함
+    //let mut prime_tables = Vec::with_capacity(k);
+    //let mut z_tables = Vec::with_capacity(k);
+
     for i in 0..k {
         raw_tables.push(tables_arr.row(i).to_vec());
-    }
+        //raw_tables.push(tables_arr.row(i).iter().map(|&x| BigInt::from(x)).collect());
+        //prime_tables.push(prime_arr.row(i).iter().map(|&x| BigInt::from(x)).collect()); // 추가함
+        //z_tables.push(z_arr.row(i).iter().map(|&x| BigInt::from(x)).collect()); // 추가함
+    }    
 
     Ok((raw_tables, frac_bits as u32, limb_bits as usize))
 }

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::{fields::fp::FpVar, fields::FieldVar, prelude::AllocVar};

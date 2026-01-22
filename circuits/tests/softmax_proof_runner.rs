@@ -3,8 +3,7 @@ mod tests {
     use ark_ff::{PrimeField, Zero, One};
     use nystromformer::gadgets::softmax::constraints::{build_softmax_witnesses, decompose_to_limbs_dynamic};
     use nystromformer::util::load::load_tables_f;
-
-    use nystromformer::circuits::softmax_circuit::SoftmaxCircuit;
+    use nystromformer::circuits::softmax_circuit::{SoftmaxCircuit, K_SEGMENTS};
     use nystromformer::cc_snark::cc_gro::{prepare_verifying_key, CcGroth16};
     use ark_crypto_primitives::snark::{SNARK};
     use ark_bn254::{Bn254, Fr as F};
@@ -107,7 +106,6 @@ mod tests {
         let (matmul_outputs, limbs, exp_limb_vals, softmax_outputs) =
             build_softmax_witnesses::<F>(matmul_ints.clone(), &tables, limb_bits);
 
-        // First: pure Rust 수학적 검증 (ConstraintLayer 필요 없음)
         verify_softmax_witnesses(
             &matmul_ints,
             &tables,
@@ -122,14 +120,13 @@ mod tests {
         let rows = matmul_outputs[0][0].len();
         let cols = matmul_outputs[0][0][0].len();
 
-        const EXPECTED_SEG : usize = 2;
         let frac : u32 = _frac_bits;
-        assert_eq!(k_segments, EXPECTED_SEG, "This test assumes k_segments == seg");
+        assert_eq!(k_segments, K_SEGMENTS, "This test assumes k_segments == seg");
 
         let circuit_mock = SoftmaxCircuit::<F> {
             matmul_outputs: vec![vec![vec![vec![F::zero(); cols]; rows]; 1]; 1],
-            limbs: vec![vec![vec![vec![[F::zero(); EXPECTED_SEG]; cols]; rows]; 1]; 1],
-            exp_limb_vals: vec![vec![vec![vec![[F::one(); EXPECTED_SEG]; cols]; rows]; 1]; 1],
+            limbs: vec![vec![vec![vec![[F::zero(); K_SEGMENTS]; cols]; rows]; 1]; 1],
+            exp_limb_vals: vec![vec![vec![vec![[F::one(); K_SEGMENTS]; cols]; rows]; 1]; 1],
             softmax_outputs: vec![vec![vec![vec![F::zero(); cols]; rows]; 1]; 1],
             frac_bits: frac,
         };
@@ -138,24 +135,24 @@ mod tests {
         let (ek, vk) = CcGroth16::<Bn254>::circuit_specific_setup(circuit_mock, &mut rng).unwrap();
         let pvk = prepare_verifying_key::<Bn254>(&vk);
 
-        // Convert dynamic limbs/exp_limb_vals to fixed [F;EXPECTED_SEG] arrays expected by the circuit
-        let mut limbs_fixed: Vec<Vec<Vec<Vec<[F; EXPECTED_SEG]>>>> =
-            vec![vec![vec![vec![[F::zero(); EXPECTED_SEG]; cols]; rows]; 1]; 1];
-        let mut exp_fixed: Vec<Vec<Vec<Vec<[F; EXPECTED_SEG]>>>> =
-            vec![vec![vec![vec![[F::one(); EXPECTED_SEG]; cols]; rows]; 1]; 1];
+        // Convert dynamic limbs/exp_limb_vals to fixed [F;K_SEGMENTS] arrays expected by the circuit
+        let mut limbs_fixed: Vec<Vec<Vec<Vec<[F; K_SEGMENTS]>>>> =
+            vec![vec![vec![vec![[F::zero(); K_SEGMENTS]; cols]; rows]; 1]; 1];
+        let mut exp_fixed: Vec<Vec<Vec<Vec<[F; K_SEGMENTS]>>>> =
+            vec![vec![vec![vec![[F::one(); K_SEGMENTS]; cols]; rows]; 1]; 1];
 
         for b in 0..1 {
             for h in 0..1 {
                 for i in 0..rows {
                     for j in 0..cols {
                         let dynamic_limbs: &Vec<F> = &limbs[b][h][i][j];
-                        let arr_limbs: [F; EXPECTED_SEG] = dynamic_limbs.clone().try_into()
-                            .expect("k_segments must be EXPECTED_SEG (cannot convert Vec<F> to [F;EXPECTED_SEG])");
+                        let arr_limbs: [F; K_SEGMENTS] = dynamic_limbs.clone().try_into()
+                            .expect("k_segments must be K_SEGMENTS (cannot convert Vec<F> to [F;K_SEGMENTS])");
                         limbs_fixed[b][h][i][j] = arr_limbs;
 
                         let dynamic_exps: &Vec<F> = &exp_limb_vals[b][h][i][j];
-                        let arr_exps: [F; EXPECTED_SEG] = dynamic_exps.clone().try_into()
-                            .expect("k_segments must be EXPECTED_SEG (cannot convert Vec<F> to [F;EXPECTED_SEG])");
+                        let arr_exps: [F; K_SEGMENTS] = dynamic_exps.clone().try_into()
+                            .expect("k_segments must be K_SEGMENTS (cannot convert Vec<F> to [F;K_SEGMENTS])");
                         exp_fixed[b][h][i][j] = arr_exps;
                     }
                 }

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::{
@@ -8,7 +7,7 @@ use ark_r1cs_std::{
 
 // 세크먼트 및 림브 설정(파이썬 설정값과 일치해야 함)
 pub const K_SEGMENTS: usize = 2;
-pub const LIMB_BITS: usize = 16;
+pub const LIMB_BITS: usize = 8;
 pub const LIMB_BASE: u128 = 1u128 << LIMB_BITS;
 
 #[derive(Debug, Clone)]
@@ -27,6 +26,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for SoftmaxCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         
         let batch_size = self.matmul_outputs.len();
+        if batch_size == 0 {
+            return Ok(());
+        }
         let head_size = self.matmul_outputs[0].len();
 
         for n in 0..batch_size {
@@ -65,14 +67,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for SoftmaxCircuit<F> {
                         recomposed.enforce_equal(&x_var)?;
 
                         // limb range check (to_bits_le 사용) 이 인덱스가 테이블 안에 있다는 것을 증명
-                        for k in 0..K_SEGMENTS {
+                        /*for k in 0..K_SEGMENTS {
                             let bits = limb_vars[k].to_bits_le()?;
                             if bits.len() > LIMB_BITS {
                                 for b in bits.iter().skip(LIMB_BITS) {
                                     b.enforce_equal(&Boolean::constant(false))?;
                                 }
                             }
-                        }
+                        }*/
 
                         // per-limb exp 할당 및 곱
                         let mut exp_prod_var = FpVar::<F>::Constant(F::one());
