@@ -51,9 +51,9 @@ class NystromAttention(nn.Module):
 
         # 중간값 저장
         if collect_intermediates:
-            debug["Q_proc"] = Q_proc.detach().cpu().numpy()
-            debug["K_proc"] = K_proc.detach().cpu().numpy()
-            debug["V"] = V.detach().cpu().numpy()
+            debug["Q_proc"] = Q_proc.detach().cpu().numpy() # 커밋
+            debug["K_proc"] = K_proc.detach().cpu().numpy() # 커밋
+            debug["V"] = V.detach().cpu().numpy() # 커밋
             debug["mask"] = mask2.detach().cpu().numpy()
 
         if self.num_landmarks == self.seq_len:

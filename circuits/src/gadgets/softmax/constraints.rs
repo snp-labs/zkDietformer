@@ -5,6 +5,15 @@ use std::error::Error;
 use ark_ff::{PrimeField, Zero, One};
 use ndarray::{Array2, Array0};
 use ndarray_npy::NpzReader;
+use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_r1cs_std::{
+    fields::{FieldVar, fp::FpVar},
+    prelude::{AllocVar, EqGadget},
+};
+
+pub const K_SEGMENTS: usize = 2;
+pub const LIMB_BITS: usize = 8;
+
 
 /// 128비트 정수(u128) 하나를 고정된 비트 크기(limb_bits)단위를 가지는 k 세그먼트로 분해함.
 pub fn decompose_to_limbs_dynamic(mut unsigned: u128, limb_bits: usize, k_segments: usize) -> Vec<u128> {
@@ -112,4 +121,75 @@ pub fn build_softmax_witnesses<F: PrimeField>(
         exp_limb_vals_field, // 하나의 e^i에 대하여 세그먼트 나누어서 저장, e^한 상태임.
         softmax_outputs_field, // 소프트 맥스 결과 e^i / sum 모든 e
     )
+}
+
+/// Softmax 연산 데이터 묶음
+#[derive(Clone)]
+pub struct SoftmaxBundle<F: PrimeField> {
+    pub matmul_outputs: Vec<Vec<Vec<Vec<F>>>>,
+    pub limbs: Vec<Vec<Vec<Vec<[F; K_SEGMENTS]>>>>,
+    pub exp_limb_vals: Vec<Vec<Vec<Vec<[F; K_SEGMENTS]>>>>,
+    pub softmax_outputs: Vec<Vec<Vec<Vec<F>>>>,
+}
+
+/// 개별 Batch/Head의 Softmax 제약 조건을 생성하는 가젯 함수
+pub fn enforce_softmax<F: PrimeField>(
+    cs: ConstraintSystemRef<F>,
+    bundle: &SoftmaxBundle<F>,
+) -> Result<(), SynthesisError> {
+    let batch_size = bundle.matmul_outputs.len();
+    if batch_size == 0 { return Ok(()); }
+    let head_size = bundle.matmul_outputs[0].len();
+
+    for n in 0..batch_size {
+        for h in 0..head_size {
+            let rows = bundle.matmul_outputs[n][h].len();
+            let cols = if rows > 0 { bundle.matmul_outputs[n][h][0].len() } else { 0 };
+
+            for i in 0..rows {
+                let mut exp_prods_vars: Vec<FpVar<F>> = Vec::with_capacity(cols);
+                let mut softmax_vars: Vec<FpVar<F>> = Vec::with_capacity(cols);
+
+                for j in 0..cols {
+                    // 1. 입력 및 Limb 할당/재조립 검증
+                    let x_var = FpVar::new_witness(cs.clone(), || Ok(bundle.matmul_outputs[n][h][i][j]))?;
+                    let mut recomposed = FpVar::zero();
+                    let mut mul_const = 1u128;
+
+                    for k in 0..K_SEGMENTS {
+                        let l_v = FpVar::new_witness(cs.clone(), || Ok(bundle.limbs[n][h][i][j][k]))?;
+                        recomposed += l_v * FpVar::Constant(F::from(mul_const));
+                        mul_const <<= LIMB_BITS;
+                    }
+                    recomposed.enforce_equal(&x_var)?;
+
+                    // 2. Per-limb exponent 곱 계산
+                    let mut exp_prod_var = FpVar::Constant(F::one());
+                    for k in 0..K_SEGMENTS {
+                        let e_var = FpVar::new_witness(cs.clone(), || Ok(bundle.exp_limb_vals[n][h][i][j][k]))?;
+                        exp_prod_var *= e_var;
+                    }
+                    exp_prods_vars.push(exp_prod_var);
+
+                    // 3. Softmax 결과 Witness 할당
+                    let s_var = FpVar::new_witness(cs.clone(), || Ok(bundle.softmax_outputs[n][h][i][j]))?;
+                    softmax_vars.push(s_var);
+                }
+
+                // 4. Softmax 수식 검증 (분모 * Softmax = 분자)
+                let mut denom = FpVar::zero();
+                for ep in &exp_prods_vars { denom += ep; }
+
+                for (s_var, ep_var) in softmax_vars.iter().zip(exp_prods_vars.iter()) {
+                    (s_var * &denom).enforce_equal(ep_var)?;
+                }
+
+                // 5. 합계 1 검증
+                let mut sum_soft = FpVar::zero();
+                for s in &softmax_vars { sum_soft += s; }
+                sum_soft.enforce_equal(&FpVar::Constant(F::one()))?;
+            }
+        }
+    }
+    Ok(())
 }

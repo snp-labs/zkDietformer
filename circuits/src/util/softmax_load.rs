@@ -10,6 +10,35 @@ use crate::{
 };
 use num_bigint::BigInt;
 
+// 소프트맥스 메타데이터 가져오기
+pub fn load_softmax_metadata(reader: &mut NpzReader<File>) -> (u32, usize, usize, i64, i64, i32) {
+    let frac_bits = reader.by_name::<ndarray::OwnedRepr<u32>, IxDyn>("softmax_tables_frac_bits.npy")
+        .ok()
+        .and_then(|a| a.into_dimensionality::<Ix0>().ok().and_then(|s| s.iter().next().cloned()))
+        .unwrap_or(32);
+    let limb_bits = reader.by_name::<ndarray::OwnedRepr<i32>, IxDyn>("softmax_limb_bits.npy")
+        .ok()
+        .and_then(|a| a.into_dimensionality::<Ix0>().ok().and_then(|s| s.iter().next().cloned()))
+        .unwrap_or(4) as usize;
+    let k_segments = reader.by_name::<ndarray::OwnedRepr<i32>, IxDyn>("softmax_k_segments.npy")
+        .ok()
+        .and_then(|a| a.into_dimensionality::<Ix0>().ok().and_then(|s| s.iter().next().cloned()))
+        .unwrap_or(2) as usize;
+    let scale_input = reader.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("softmax_scale_input.npy")
+        .ok()
+        .and_then(|a| a.into_dimensionality::<Ix0>().ok().and_then(|s| s.iter().next().cloned()))
+        .unwrap_or((1i64<<8) as i64);
+    let multiplier = reader.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("softmax_multiplier.npy")
+        .ok()
+        .and_then(|a| a.into_dimensionality::<Ix0>().ok().and_then(|s| s.iter().next().cloned()))
+        .unwrap_or(1i64);
+    let base_scale_exp = reader.by_name::<ndarray::OwnedRepr<i32>, IxDyn>("softmax_base_scale_exp.npy")
+        .ok()
+        .and_then(|a| a.into_dimensionality::<Ix0>().ok().and_then(|s| s.iter().next().cloned()))
+        .unwrap_or(16i32);
+    (frac_bits, limb_bits, k_segments, scale_input, multiplier, base_scale_exp)
+}
+
 /// 각 커널(K1, K2, K3)에 대해 소프트맥스 서킷 데이터를 로드하고 검증하는 공통 함수
 pub fn load_softmax_circuit<F: PrimeField>(
     npz: &mut NpzReader<File>,

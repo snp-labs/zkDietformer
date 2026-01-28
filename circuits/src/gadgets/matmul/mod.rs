@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Matrix multiplication and linear layer gadgets.
 //!
 //! This module provides matrix and vector level gadgets
