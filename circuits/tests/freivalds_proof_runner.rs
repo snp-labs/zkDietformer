@@ -15,7 +15,7 @@ mod tests {
     #[test]
     fn test_freivalds_proof_runner() -> Result<()> {
 
-        let npz_path = "zp_inputs.npz";
+        let npz_path = "attn_debug_outputs/attn_debug-model.transformer_0.mha.attn.witness.npz";
         let (a_int, b_int, c_int, rem_int, div_int, r_int, input_0_int, c0_int, mult_int, meta) =
             load_npz(Path::new(npz_path)).context("loading npz")?;
         
@@ -220,7 +220,6 @@ mod tests {
                     s_signed += a_val * b_val;
                     }
                     let target_signed = (s_signed + c0_int as i128) * mult_int as i128;
-                    println!("n{} h{} i{} j{} s_signed={} target_signed={}", n,h,i,j,s_signed, target_signed);
                 }
                 }
             }

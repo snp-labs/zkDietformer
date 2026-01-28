@@ -20,10 +20,6 @@ pub mod gadgets;
 
 /// cc_snark: zkSNARK implementation based on the Groth16 protocol.
 pub mod cc_snark;
-
-pub mod harisa;
-pub mod linker;
-pub mod lookup;
 /// util
 pub mod util;
 

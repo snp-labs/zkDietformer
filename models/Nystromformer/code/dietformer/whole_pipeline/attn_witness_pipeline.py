@@ -12,6 +12,24 @@ from softmax_table import generate_tables_quantized
 MASK22 = (1 << 22) - 1
 UINT64_MAX = (1 << 64) - 1
 
+def validate_limbs_recompose(targets_obj, limb_indices, limb_bits, k_segments, name=""):
+    # targets_obj: original uint array (object or uint)
+    # limb_indices: shape (..., k_segments)
+    shape = targets_obj.shape
+    batch, num_head, rows, cols = shape[0], shape[1], shape[2], shape[3]
+    for n in range(batch):
+        for h in range(num_head):
+            for i in range(rows):
+                for j in range(cols):
+                    orig = int(targets_obj[n,h,i,j])
+                    recomposed = 0
+                    for k in range(k_segments):
+                        limb = int(limb_indices[n,h,i,j,k])
+                        recomposed |= (limb << (k * limb_bits))
+                    if recomposed != orig:
+                        raise RuntimeError(f"RECOMPOSE MISMATCH {name} at n{n} h{h} i{i} j{j}: orig={orig} recomposed={recomposed} limb_bits={limb_bits} k_segments={k_segments}")
+    print(f"Recompose validation OK for {name}: limb_bits={limb_bits} k_segments={k_segments}")
+
 # 4차원 배열 targets_obj (B,H,R,C)를 k_segments 개수의 limb로 분해함.
 def decompose_to_limbs_array(targets_obj, limb_bits, k_segments):
     shape = targets_obj.shape
@@ -213,8 +231,6 @@ def process_attn_debug_npz(
 
     # validate loaded tables match expected limb_bits/k_segments
     softmax_tables_arr = tables_npz['tables'].astype(np.uint64)
-    #softmax_prime_tables = tables_npz['prime_tables'].astype(np.uint64)
-    #softmax_z_tables = tables_npz['z_tables'].astype(np.uint64)
     softmax_frac_bits = int(tables_npz.get('frac_bits', frac_bits))
     softmax_scale_input = int(tables_npz.get('scale_input', scale_input))
     softmax_multiplier = int(tables_npz.get('multiplier', multiplier))
@@ -247,6 +263,10 @@ def process_attn_debug_npz(
     attn_k1_float = compute_float_softmax_from_targets_int_rect(matmul_targets_k1)
     attn_k2_float = compute_float_softmax_from_targets_int(matmul_targets_k2)
     attn_k3_float = compute_float_softmax_from_targets_int_rect(matmul_targets_k3)
+
+    validate_limbs_recompose(matmul_targets_k1, limb_indices_k1, softmax_limb_bits, softmax_k_segments, name="k1")
+    validate_limbs_recompose(matmul_targets_k2, limb_indices_k2, softmax_limb_bits, softmax_k_segments, name="k2")
+    validate_limbs_recompose(matmul_targets_k3, limb_indices_k3, softmax_limb_bits, softmax_k_segments, name="k3")
 
     # iterative inverse: try to obtain inv from debug if present, else compute inv from attn_k2_float
     if 'inv_kernel_2' in debug:
@@ -470,8 +490,6 @@ def process_attn_debug_npz(
 
         # softmax tables
         softmax_tables=softmax_tables_arr,
-        #softmax_prime_tables=softmax_prime_tables,
-        #softmax_z_tables=softmax_z_tables,
         softmax_tables_frac_bits=np.int32(softmax_frac_bits),
         softmax_scale_input=np.int64(softmax_scale_input),
         softmax_multiplier=np.int64(softmax_multiplier),

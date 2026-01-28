@@ -7,28 +7,14 @@ use anyhow::{Context, Result};
 use ndarray_npy::NpzReader;
 use ndarray::{Array4, ArrayD, Ix4, Array2, Array0};
 use num_bigint::BigInt;
-use crate::harisa::hash_to_prime::primality_test;
 
-/// npz 파일에서 u64 배열 읽어오기
-pub fn read_u64_array(npz: &mut NpzReader<File>, name: &str) -> Result<ArrayD<u64>> {
-    // npz 파일에서 저장했던 대로 읽어오기
-    let arr = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&format!("{}.npy", name))
-        .context(format!("missing key '{}'", name))?;
-    Ok(arr)
-}
-
-// unsigned 64비트 배열을 읽어오는 함수
+//  npz 파일에서 unsigned 64비트 배열을 읽어오는 함수
 pub fn read_array_u64(npz: &mut NpzReader<File>, key: &str) -> Result<ArrayD<u64>, anyhow::Error> {
     let arr = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&format!("{}.npy", key))?;
     Ok(arr)
 }
-// signed 64비트 배열을 읽어오는 함수
-pub fn read_array_i64(npz: &mut NpzReader<File>, key: &str) -> Result<ArrayD<i64>, anyhow::Error> {
-    let arr = npz.by_name::<ndarray::OwnedRepr<i64>, ndarray::IxDyn>(&format!("{}.npy", key))?;
-    Ok(arr)
-}
 
-/// npz 파일에서 데이터 로드하기
+/// npz 파일에서 데이터 로드하기[test/freivalds_proof_runner.rs 전용]
 pub fn load_npz(path: &Path) -> Result<(
     Vec<Vec<Vec<Vec<u128>>>>, // a
     Vec<Vec<Vec<Vec<u128>>>>, // b
@@ -46,15 +32,15 @@ pub fn load_npz(path: &Path) -> Result<(
 
     // npz 파일에서 값을 읽어오기
     let mut npz = npz?;
-    let a_arr = read_u64_array(&mut npz, "a")?;
-    let b_arr = read_u64_array(&mut npz, "b")?;
-    let c_arr = read_u64_array(&mut npz, "c")?;
-    let div_arr = read_u64_array(&mut npz, "div")?;
-    let rem_arr = read_u64_array(&mut npz, "rem")?;
-    let r_arr = read_u64_array(&mut npz, "r")?;
-    let input_0_arr = read_u64_array(&mut npz, "input_0")?;
-    let c0_arr = read_u64_array(&mut npz, "c_0_converted")?;
-    let mult_arr = read_u64_array(&mut npz, "multiplier")?;
+    let a_arr = read_array_u64(&mut npz, "a_k1")?;
+    let b_arr = read_array_u64(&mut npz, "b_k1")?;
+    let c_arr = read_array_u64(&mut npz, "c_k1")?;
+    let div_arr = read_array_u64(&mut npz, "div_k1")?;
+    let rem_arr = read_array_u64(&mut npz, "rem_k1")?;
+    let r_arr = read_array_u64(&mut npz, "r")?;
+    let input_0_arr = read_array_u64(&mut npz, "input_0_k1")?;
+    let c0_arr = read_array_u64(&mut npz, "c_0_converted_k1")?;
+    let mult_arr = read_array_u64(&mut npz, "multiplier")?;
     // AFTER reading mult_arr etc.
     let frac_bits_opt: Option<u32> = match npz.by_name::<ndarray::OwnedRepr<i32>, ndarray::IxDyn>("frac_bits.npy") {
         Ok(arr) => {
@@ -126,41 +112,8 @@ pub fn load_npz(path: &Path) -> Result<(
     Ok((a, b, c, rem, div, r, input_0, c0, mult, (batch, num_head, seq_len, head_dim)))
 }
 
-/// 테이블 로드하기
-/// 원래는 Vec<Vec<u64>> 형태로 반환했었음.
-pub fn load_tables<P: AsRef<Path>>(npz_path: P) -> Result<(Vec<Vec<u64>>, u32, usize), Box<dyn Error>> {
-    let f = File::open(&npz_path)?;
-    let mut npz = NpzReader::new(f)?;
-
-    let tables_arr: Array2<u64> = npz.by_name("tables.npy")?;
-    let frac_bits_arr: Array0<i32> = npz.by_name("frac_bits.npy")?;
-    let limb_bits_arr: Array0<i32> = npz.by_name("limb_bits.npy")?;
-    //추가함
-    //let prime_arr: Array2<u64> = npz.by_name("prime_tables.npy")?;
-    //let z_arr: Array2<u64> = npz.by_name("z_tables.npy")?;
-    let frac_bits: i32 = frac_bits_arr[()];
-    let limb_bits: i32 = limb_bits_arr[()];
-
-    let k = tables_arr.shape()[0];
-    let row_len = tables_arr.shape()[1];
-
-    let mut raw_tables = Vec::with_capacity(k);
-    // 추가함
-    //let mut prime_tables = Vec::with_capacity(k);
-    //let mut z_tables = Vec::with_capacity(k);
-
-    for i in 0..k {
-        raw_tables.push(tables_arr.row(i).to_vec());
-        //raw_tables.push(tables_arr.row(i).iter().map(|&x| BigInt::from(x)).collect());
-        //prime_tables.push(prime_arr.row(i).iter().map(|&x| BigInt::from(x)).collect()); // 추가함
-        //z_tables.push(z_arr.row(i).iter().map(|&x| BigInt::from(x)).collect()); // 추가함
-    }    
-
-    Ok((raw_tables, frac_bits as u32, limb_bits as usize))
-}
-
 /// 테이블 로드하기 (필드 요소로 변환)
-pub fn load_tables_f<F: PrimeField, P: AsRef<Path>>(
+pub fn load_tables<F: PrimeField, P: AsRef<Path>>(
     npz_path: P,
 ) -> Result<(Vec<Vec<F>>, u32, usize), Box<dyn Error>> {
     let f = File::open(&npz_path)?;
@@ -195,10 +148,10 @@ pub fn load_tables_f<F: PrimeField, P: AsRef<Path>>(
 #[test]
 fn print_npz_tables() {
     // npz 경로 설정
-    let npz_path = "tmp_tables/softmax_tables_quantized.npz";
+    let npz_path = "tmp_tables/embedded_softmax_for_lookup.npz";
 
     // 테이블 로드
-    let (tables, frac_bits, limb_bits) =load_tables_f::<ark_bn254::Fr,_,>(npz_path).expect("failed to load npz");
+    let (tables, frac_bits, limb_bits) =load_tables::<ark_bn254::Fr,_,>(npz_path).expect("failed to load npz");
 
     // 테이블 정보 출력
     println!("Loaded npz: {}", npz_path);

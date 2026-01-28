@@ -2,7 +2,7 @@
 mod tests {
     use ark_ff::{PrimeField, Zero, One};
     use nystromformer::gadgets::softmax::constraints::{build_softmax_witnesses, decompose_to_limbs_dynamic};
-    use nystromformer::util::load::load_tables_f;
+    use nystromformer::util::load::load_tables;
     use nystromformer::circuits::softmax_circuit::{SoftmaxCircuit, K_SEGMENTS};
     use nystromformer::cc_snark::cc_gro::{prepare_verifying_key, CcGroth16};
     use ark_crypto_primitives::snark::{SNARK};
@@ -89,9 +89,9 @@ mod tests {
 
     #[test]
     fn test_softmax_lookup_runner() {
-        let npz_path = "tmp_tables/softmax_tables_quantized.npz";
+        let npz_path = "tmp_tables/embedded_softmax_for_lookup.npz";
         let (tables, _frac_bits, limb_bits) =
-        load_tables_f::<F, _>(npz_path).expect("load tables");
+        load_tables::<F, _>(npz_path).expect("load tables");
 
         // Sanity
         let k_segments = tables.len();

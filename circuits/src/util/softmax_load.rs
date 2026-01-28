@@ -44,7 +44,8 @@ pub fn load_softmax_circuit<F: PrimeField>(
     let mut combined_matmul_ints: Vec<Vec<i128>> = Vec::with_capacity(batch * num_head * rows);
 
     // 룩업증명에 필요해서 반환해야 할 값들
-    let mut prod_bigints_flat: Vec<BigInt> = Vec::new();
+    // let mut prod_bigints_flat: Vec<BigInt> = Vec::new();
+    let mut limbs_bigints_flat: Vec<BigInt> = Vec::new();
 
     // 3. 위트니스 생성
     for n in 0..batch {
@@ -82,13 +83,19 @@ pub fn load_softmax_circuit<F: PrimeField>(
                     row_for_lookup.push(t4[[n, h, i, j]] as i128);
 
                     // compute prod_u128 from tables_u64 using limb indices
-                    let mut prod_u128: u128 = 1;
+                    /*let mut prod_u128: u128 = 1;
                     for k in 0..k_dim {
                         let idx = limb_idx_dyn[ndarray::IxDyn(&[n, h, i, j, k])] as usize;
                         let v = tables_u64[[k, idx]];
                         prod_u128 = prod_u128.saturating_mul(v as u128);
                     }
-                    prod_bigints_flat.push(BigInt::from(prod_u128));
+                    prod_bigints_flat.push(BigInt::from(prod_u128));*/
+                    // 각 림별로 개별 값을 수집 (순서: n,h,i,j -> k)
+                    for k in 0..k_dim {
+                        let idx = limb_idx_dyn[ndarray::IxDyn(&[n, h, i, j, k])] as usize;
+                        let v = tables_u64[[k, idx]];
+                        limbs_bigints_flat.push(BigInt::from(v)); // 곱하지 않고 개별 추가
+                    }
                 }
                 combined_matmul_ints.push(row_for_lookup);
             }
@@ -145,5 +152,5 @@ pub fn load_softmax_circuit<F: PrimeField>(
         frac_bits: soft_frac_bits,
     };
 
-    Ok((softmax_circuit, combined_matmul_ints, prod_bigints_flat, cols))
+    Ok((softmax_circuit, combined_matmul_ints, limbs_bigints_flat, cols))
 }

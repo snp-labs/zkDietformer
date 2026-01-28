@@ -1,3 +1,4 @@
 #![allow(missing_docs)]
 pub mod load;
-pub mod table;
+pub mod freivalds_load;
+pub mod softmax_load;
