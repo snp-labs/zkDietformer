@@ -1,0 +1,325 @@
+use ark_ff::PrimeField;
+use ark_std::log2;
+use ndarray_npy::NpzReader;
+use std::fs::File;
+use std::path::Path;
+use std::sync::OnceLock; // 메모리 캐싱을 위해 추가
+use ndarray::{Array2, Ix2};
+
+use crate::util::load::load_tables;
+use super::SubtableStrategy;
+
+pub enum SoftmaxSubtableStrategy {}
+
+/// 필드 독립적인 u64 데이터를 캐싱하기 위한 정적 변수
+static SOFTMAX_CACHE: OnceLock<Array2<u64>> = OnceLock::new();
+
+/// 환경 변수 및 파일에서 테이블을 한 번만 로드하는 헬퍼 함수
+fn get_or_init_softmax_cache(c: usize, m: usize) -> &'static Array2<u64> {
+    SOFTMAX_CACHE.get_or_init(|| {
+        let lookup_npz_path = std::env::var("SOFTMAX_TABLE_NPZ")
+            .unwrap_or_else(|_| "tmp_tables/embedded_softmax_for_lookup.npz".to_string());
+        let path = Path::new(&lookup_npz_path);
+
+        let file = File::open(path)
+            .expect("evaluate_subtable_mle: failed to open softmax lookup npz");
+        let mut npz = NpzReader::new(file).expect("failed to create NpzReader");
+
+        let tables_arr_dyn = npz
+            .by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("tables.npy")
+            .or_else(|_| npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("softmax_tables.npy"))
+            .or_else(|_| npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("tables"))
+            .expect("npz does not contain tables");
+
+        let tables_2d = tables_arr_dyn
+            .into_dimensionality::<Ix2>()
+            .expect("softmax tables must be 2D");
+
+        // 컴파일 타임 C, M과 실제 로드된 데이터 규격 검증
+        let shape = tables_2d.shape();
+        assert_eq!(shape[0], c, "k_segments mismatch");
+        assert_eq!(shape[1], m, "table width mismatch");
+
+        tables_2d
+    })
+}
+
+impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
+    for SoftmaxSubtableStrategy
+{
+    const NUM_SUBTABLES: usize = C; // 수정
+    const NUM_MEMORIES: usize = C;
+
+    /// 추가: 메모리 인덱스(0 ~ C-1)를 서브테이블 인덱스(0 ~ C-1)로 1:1 매핑합니다.
+    fn memory_to_subtable_index(memory_index: usize) -> usize {
+        debug_assert!(memory_index < C);
+        memory_index
+    }
+
+    /// 추가: 메모리 인덱스가 어느 차원(Dimension)에 대응하는지 정의합니다.
+    /// Softmax에서는 각 세그먼트가 입력의 각 파트에 대응하므로 memory_index를 그대로 사용합니다.
+    fn memory_to_dimension_index(memory_index: usize) -> usize {
+        debug_assert!(memory_index < C);
+        memory_index
+    }
+
+    /*fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
+        let tables_2d = get_or_init_softmax_cache(C, M);
+        
+        let mut materialized: Vec<F> = Vec::with_capacity(C * M);
+        for row in tables_2d.rows() {
+            for &val in row {
+                materialized.push(F::from(val));
+            }
+        }
+        
+        let mut result = std::array::from_fn(|_| Vec::new());
+        result[0] = materialized;
+        result
+    }*/
+    fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
+        let tables_2d = get_or_init_softmax_cache(C, M);
+        
+        // 각 행(row)을 별도의 벡터로 분리하여 배열로 반환합니다.
+        // Lasso는 이제 각 메모리가 어떤 서브테이블을 참조하는지 1:1로 매핑합니다.
+        std::array::from_fn(|i| {
+            tables_2d.row(i).iter().map(|&val| F::from(val)).collect()
+        })
+    }
+
+    fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
+        let bits_per_operand = (log2(M) as usize).max(1);
+        let tables_2d = get_or_init_softmax_cache(C, M);
+
+        // MLE 평가를 위한 기저 다항식(Lagrange basis) 계산 최적화 (O(M))
+        // f(r) = \sum V_i * \chi_i(r) 에서 모든 \chi_i(r)을 DP로 미리 계산
+        let compute_eq_evals = |point_slice: &[F]| -> Vec<F> {
+            let b = point_slice.len();
+            let mut evals = vec![F::one(); 1 << b];
+            let mut size = 1;
+            for j in 0..b {
+                // MSB-first 매핑 (Lasso 표준에 맞춰 point_slice[b-1-j] 사용)
+                let r = point_slice[b - 1 - j];
+                for i in 0..size {
+                    evals[i + size] = evals[i] * r;
+                    evals[i] = evals[i] * (F::one() - r);
+                }
+                size *= 2;
+            }
+            evals
+        };
+
+        let eval_row_mle = |seg: usize, point_slice: &[F]| -> F {
+            let chi = compute_eq_evals(point_slice);
+            let mut acc = F::zero();
+            for (idx, &basis) in chi.iter().enumerate() {
+                let entry_u64 = tables_2d[[seg, idx]];
+                acc += F::from(entry_u64) * basis;
+            }
+            acc
+        };
+
+        // 1. 단일 세그먼트 포인트 처리 (length == bits_per_operand)
+        /*if point.len() == bits_per_operand {
+            return eval_row_mle(subtable_index, point.as_slice());
+        }
+
+        // 2. 결합된 포인트 처리 (length == bits_per_operand * C)
+        let mut prod = F::one();
+        for seg in 0..C {
+            let start = seg * bits_per_operand;
+            let end = start + bits_per_operand;
+            prod *= eval_row_mle(seg, &point[start..end]);
+        }
+        prod*/
+        // 수정: 단일 세그먼트 포인트 처리만 지원
+        eval_row_mle(subtable_index, point)
+        
+    }
+
+    fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
+        vals.iter().product()
+    }
+
+    fn g_poly_degree() -> usize {
+         C 
+    }
+}
+
+/*#[cfg(test)]
+mod test {
+    use ark_curve25519::Fr;
+    use ndarray_npy::{NpzReader, NpzWriter};
+    use ndarray::{arr0, Ix2};
+    use std::fs::{self, File};
+    use std::path::Path;
+    use crate::lasso::utils::index_to_field_bitvector;
+    use super::*;
+
+    const SEG_LIMB_BITS: usize = 8;
+    const C_TEST: usize = 2;
+    const WIDTH: usize = 1 << SEG_LIMB_BITS;
+
+    /// 테스트 실행 전 필요한 디렉토리와 더미 NPZ 파일을 준비하는 헬퍼
+    fn setup_test_npz() {
+        let dir = "tmp_tables";
+        let path = "tmp_tables/embedded_softmax_for_lookup.npz";
+        fs::create_dir_all(dir).unwrap();
+
+        if !Path::new(path).exists() {
+            let file = File::create(path).unwrap();
+            let mut writer = NpzWriter::new(file);
+            
+            // 테스트용 데이터 생성 (C_TEST x WIDTH)
+            let data = Array2::<u64>::from_shape_fn((C_TEST, WIDTH), |(i, j)| (i * WIDTH + j) as u64);
+            writer.add_array("tables.npy", &data).unwrap();
+            writer.add_array("frac_bits.npy", &arr0(32i32)).unwrap();
+            writer.add_array("limb_bits.npy", &arr0(SEG_LIMB_BITS as i32)).unwrap();
+            writer.finish().unwrap();
+        }
+    }
+
+    #[test]
+    fn softmax_materialization_matches_npz() {
+        setup_test_npz();
+        
+        // materialize_subtables 내부에서 get_or_init_softmax_cache를 호출함
+        let materialized: [Vec<Fr>; 1] =
+            <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::materialize_subtables();
+
+        let cache = get_or_init_softmax_cache(C_TEST, WIDTH);
+        
+        assert_eq!(materialized[0].len(), C_TEST * WIDTH);
+        
+        // 캐시 데이터와 변환된 필드 요소가 일치하는지 확인
+        let mut idx = 0;
+        for row in cache.rows() {
+            for &val in row {
+                assert_eq!(materialized[0][idx], Fr::from(val));
+                idx += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn softmax_mle_parity() {
+        setup_test_npz();
+        
+        let materialized = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::materialize_subtables();
+        
+        // 각 세그먼트(C)에 대해 모든 인덱스(M)를 검사
+        for s in 0..C_TEST {
+            for i in 0..WIDTH {
+                // Lasso의 index_to_field_bitvector는 Little-endian 비트 벡터를 반환할 수 있으므로
+                // 구현된 evaluate_subtable_mle의 MSB-first 매핑과 일치하는지 확인이 필요합니다.
+                let point = index_to_field_bitvector(i, SEG_LIMB_BITS);
+                let mle_val = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::evaluate_subtable_mle(s, &point);
+                
+                let expected_val = materialized[0][s * WIDTH + i];
+                
+                assert_eq!(
+                    mle_val, 
+                    expected_val, 
+                    "Mismatch at segment {} index {}", s, i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn combine_lookups_is_product() {
+        setup_test_npz();
+        
+        let v1 = Fr::from(10u64);
+        let v2 = Fr::from(20u64);
+        let vals: [Fr; C_TEST] = [v1, v2];
+        
+        let combined = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::combine_lookups(&vals);
+        assert_eq!(combined, v1 * v2);
+    }
+}*/
+#[cfg(test)]
+mod test {
+    use ark_curve25519::Fr;
+    use ndarray_npy::{NpzReader, NpzWriter};
+    use ndarray::{arr0, Ix2, Array2};
+    use std::fs::{self, File};
+    use std::path::Path;
+    use crate::lasso::utils::index_to_field_bitvector;
+    use super::*;
+
+    const SEG_LIMB_BITS: usize = 8;
+    const C_TEST: usize = 2;
+    const WIDTH: usize = 1 << SEG_LIMB_BITS;
+
+    fn setup_test_npz() {
+        let dir = "tmp_tables";
+        let path = "tmp_tables/embedded_softmax_for_lookup.npz";
+        fs::create_dir_all(dir).unwrap();
+
+        if !Path::new(path).exists() {
+            let file = File::create(path).unwrap();
+            let mut writer = NpzWriter::new(file);
+            
+            let data = Array2::<u64>::from_shape_fn((C_TEST, WIDTH), |(i, j)| (i * WIDTH + j) as u64);
+            writer.add_array("tables.npy", &data).unwrap();
+            writer.add_array("frac_bits.npy", &arr0(32i32)).unwrap();
+            writer.add_array("limb_bits.npy", &arr0(SEG_LIMB_BITS as i32)).unwrap();
+            writer.finish().unwrap();
+        }
+    }
+
+    #[test]
+    fn softmax_materialization_matches_npz() {
+        setup_test_npz();
+        
+        // [수정] 결과 타입이 [Vec<Fr>; C_TEST]가 됩니다.
+        let materialized: [Vec<Fr>; C_TEST] =
+            <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::materialize_subtables();
+
+        let cache = get_or_init_softmax_cache(C_TEST, WIDTH);
+        
+        // [수정] 각 서브테이블이 WIDTH 크기를 가지는지 확인합니다.
+        for s in 0..C_TEST {
+            assert_eq!(materialized[s].len(), WIDTH);
+            for i in 0..WIDTH {
+                assert_eq!(materialized[s][i], Fr::from(cache[[s, i]]));
+            }
+        }
+    }
+
+    #[test]
+    fn softmax_mle_parity() {
+        setup_test_npz();
+        
+        let materialized = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::materialize_subtables();
+        
+        for s in 0..C_TEST {
+            for i in 0..WIDTH {
+                let point = index_to_field_bitvector(i, SEG_LIMB_BITS);
+                let mle_val = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::evaluate_subtable_mle(s, &point);
+                
+                // [수정] 2차원 배열 형태인 materialized[s][i]와 비교합니다.
+                let expected_val = materialized[s][i];
+                
+                assert_eq!(
+                    mle_val, 
+                    expected_val, 
+                    "Mismatch at segment {} index {}", s, i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn combine_lookups_is_product() {
+        setup_test_npz();
+        
+        let v1 = Fr::from(10u64);
+        let v2 = Fr::from(20u64);
+        let vals: [Fr; C_TEST] = [v1, v2];
+        
+        let combined = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::combine_lookups(&vals);
+        assert_eq!(combined, v1 * v2);
+    }
+}

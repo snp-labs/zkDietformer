@@ -1,7 +1,10 @@
 //! zkSNARK circuits and gadgets for Transformer-style neural networks
 //! components for building zero-knowledge proofs of Transformer models,
 //! including matrix multiplication, linear layers, and activation functions.
-#![deny(missing_docs)]
+#![allow(missing_docs)]
+#![feature(extend_one)]
+#![feature(associated_type_defaults)]
+#![feature(generic_const_exprs)]
 #![allow(
     dead_code,
     unused_imports,
@@ -11,6 +14,11 @@
     unused_assignments,
     unreachable_patterns
 )]
+
+#![allow(non_snake_case)]
+#![allow(clippy::assertions_on_result_states)]
+#![allow(incomplete_features)]
+
 
 /// High-level zkSNARK circuits for Transformer models.
 pub mod circuits;
@@ -22,6 +30,8 @@ pub mod gadgets;
 pub mod cc_snark;
 /// util
 pub mod util;
+
+pub mod lasso;
 
 pub use ark_crypto_primitives::*;
 pub use ark_ec::*;

@@ -120,7 +120,8 @@ pub fn load_tables<F: PrimeField, P: AsRef<Path>>(
     let mut npz = NpzReader::new(f)?;
 
     // Read the tables (2D array of u64)
-    let tables_arr: Array2<u64> = npz.by_name("tables.npy")?;
+    let tables_arr: Array2<u64> = npz.by_name("tables.npy").or_else(|_| npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::Ix2>("softmax_tables.npy"))
+    .or_else(|_| npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::Ix2>("softmax_tables.npy"))?;
 
     // Read scalar metadata as 0-d arrays and extract
     let frac_bits_arr: Array0<i32> = npz.by_name("frac_bits.npy")?;
@@ -132,13 +133,19 @@ pub fn load_tables<F: PrimeField, P: AsRef<Path>>(
     let row_len = tables_arr.shape()[1];
 
     let mut tables: Vec<Vec<F>> = Vec::with_capacity(k);
-    for i in 0..k {
+    /*for i in 0..k {
         let row = tables_arr.row(i);
         let mut v = Vec::with_capacity(row_len);
         for val in row.iter() {
             let fe = F::from(*val as u128);
             v.push(fe);
         }
+        tables.push(v);
+    }*/
+    for i in 0..k {
+        let row = tables_arr.row(i);
+        let mut v = Vec::with_capacity(row_len);
+        for &val in row.iter() { v.push(F::from(val));}
         tables.push(v);
     }
 
