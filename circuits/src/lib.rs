@@ -34,11 +34,12 @@ pub mod util;
 pub mod lasso;
 
 pub use ark_crypto_primitives::*;
-pub use ark_ec::*;
-pub use ark_ff::*;
-pub use ark_poly::*;
+pub use ark_ff::{Field, PrimeField, BigInteger, One, Zero}; 
+pub use ark_ec::{CurveGroup, pairing::Pairing, AffineRepr};
+pub use ark_poly::{DenseUVPolynomial, Polynomial};
+pub use ark_std::{marker::PhantomData, vec::Vec};
 
-pub use pairing::*;
+pub use ark_ec::pairing;
 
 pub(crate) type ConstraintF<C> = <<C as CurveGroup>::BaseField as Field>::BasePrimeField;
 pub(crate) type BasePrimeField<E> =
@@ -47,5 +48,3 @@ pub(crate) type BasePrimeField<E> =
 #[cfg(feature = "r1cs")]
 #[macro_use]
 extern crate derivative;
-
-pub use ark_std::{marker::PhantomData, vec::Vec};

@@ -3,9 +3,9 @@ use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
 use ndarray::{ArrayD, IxDyn, Ix0, Ix4, Array2, Ix2, IxDynImpl, arr0};
 use ndarray_npy::{NpzReader, NpzWriter};
-use ark_std::{marker::PhantomData, rand::{rngs::StdRng, SeedableRng, Rng}, UniformRand};
-use ark_bn254::{Bn254, Fr};
-use ark_ff::{PrimeField, One, Zero};
+use ark_std::{UniformRand, log2, marker::PhantomData, rand::{Rng, SeedableRng, rngs::StdRng}};
+use ark_bn254::{Bn254, Fr, G1Projective};
+use ark_ff::{PrimeField, One, Zero, BigInteger};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
@@ -23,6 +23,22 @@ use crate::{
     }, util::{load::{read_array_u64},freivalds_load::load_freivalds_circuit, softmax_load::{load_softmax_circuit, load_softmax_metadata}}, 
 };
 use ark_std::fs;
+use crate::lasso::{
+    lasso::{
+        densified::DensifiedRepresentation,
+        surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
+    },
+    subtables::{
+        and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
+        softmax::SoftmaxSubtableStrategy,
+        SubtableStrategy,
+    },
+    utils::math::Math,
+    utils::random::RandomTape,
+};
+use merlin::Transcript;
+// Lasso에 필요한 타입 정의: Bn254::Fr에 맞춰 Bn254::G1Projective 사용
+type G1 = G1Projective;
 
 /// 단순화된 통합 서킷 구조체
 #[derive(Clone)]
@@ -121,8 +137,7 @@ where
         .context("reading multiplier")?;
     let multiplier = E::ScalarField::from(mult_arr.iter().next().copied().unwrap_or(1u64));
 
-    // 3. Matmul Bundles 로드 (freivalds_load.rs의 load_freivalds_circuit 활용)
-    // 기존 함수가 FreivaldsCircuit을 반환하므로, 거기서 데이터를 Bundle로 변환합니다.
+    // 3. Matmul Bundles 로드
     let load_matmul_bundle = |npz: &mut NpzReader<File>, suffix: &str, r: E::ScalarField, m: E::ScalarField| -> Result<MatmulBundle<E::ScalarField>> {
         let circuit = load_freivalds_circuit(npz, suffix, r, m)?;
         Ok(MatmulBundle {
@@ -175,6 +190,22 @@ where
     let k2_softmax = load_soft_bundle(&mut npz, "_k2")?;
     let k3_softmax = load_soft_bundle(&mut npz, "_k3")?;
 
+    // 소프트맥스 메타데이터
+    // 테이블값을 2차원으로 강제함
+    let tables_2d = tables_arr.into_dimensionality::<Ix2>().context("softmax_tables must be 2D (K, table_width)")?;
+    let lookup_npz_path = "tmp_tables/embedded_softmax_for_lookup.npz";
+    {
+        let _ = std::fs::create_dir_all("tmp_tables");
+        let f = File::create(lookup_npz_path).context("creating temporary lookup npz file")?;
+        let mut writer = NpzWriter::new(f);
+        writer.add_array("tables.npy", &tables_2d).context("writing tables to temp npz")?;
+        let frac = arr0(soft_frac_bits as i32);
+        let limb = arr0(soft_limb_bits as i32);
+        writer.add_array("frac_bits.npy", &frac).context("writing frac_bits")?;
+        writer.add_array("limb_bits.npy", &limb).context("writing limb_bits")?;
+        writer.finish().context("finalizing temp npz write")?;
+    }
+
     // 6. 최종 통합 서킷 반환
     Ok(CombinedCircuit {
         k1_data,
@@ -195,8 +226,68 @@ where
     })
 }
 
+// [주의] 내가 만든 서브테이블 SPEC과 동일하게 맞춰 주어야 함.
+const SOFTMAX_C: usize = 2;   // number of segments (C)
+const SOFTMAX_M: usize = 256; // table width (M) - must be a power of two/ limb bits = 8
+
+fn prove_lasso_for_softmax(
+    bundle: &SoftmaxBundle<Fr>,
+    gens: &SparsePolyCommitmentGens<G1>,
+    rng: &mut StdRng,
+    label: &[u8],
+) -> Result<()> 
+{
+    use ark_ff::{BigInteger, PrimeField};
+
+    // Build nz_indices
+    let mut nz_indices: Vec<[usize; SOFTMAX_C]> = Vec::new();
+    for batch in &bundle.limbs {
+        for head in batch {
+            let idx_arr: [usize; SOFTMAX_C] = std::array::from_fn(|seg| {
+                let val = head[seg][0][0];
+                let bytes = val.into_bigint().to_bytes_le();
+                let mut b = [0u8; 8];
+                b.copy_from_slice(&bytes[0..8]);
+                u64::from_le_bytes(b) as usize
+            });
+            nz_indices.push(idx_arr);
+        }
+    }
+
+    let sparsity = nz_indices.len();
+    if sparsity == 0 { return Ok(()); } 
+
+    assert!(SOFTMAX_M.is_power_of_two(), "SOFTMAX_M must be a power of two");
+    let log_M = SOFTMAX_M.trailing_zeros() as usize;
+
+    let lookup_matrix = SparseLookupMatrix::<SOFTMAX_C>::new(nz_indices, log_M);
+    let mut densified = DensifiedRepresentation::<Fr, SOFTMAX_C>::from(&lookup_matrix);
+
+
+    let commitment = densified.commit::<G1>(gens);
+
+
+    let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
+    let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
+
+    let mut random_tape = RandomTape::new(b"lasso_tape");
+    let mut transcript = Transcript::new(b"lasso_softmax");
+
+    let proof_lasso = SparsePolynomialEvaluationProof::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>::prove(
+        &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
+    );
+
+    let mut verifier_transcript = Transcript::new(b"lasso_softmax");
+    proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
+        .map_err(|_| anyhow::anyhow!("Lasso verification failed for label: {:?}", std::str::from_utf8(label)))?;
+
+    println!("Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
+    Ok(())
+}
+
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
 where
+E: Pairing<ScalarField = Fr>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
 
@@ -243,6 +334,7 @@ where
             return Err(anyhow::anyhow!("Constraints NOT satisfied in {:?}", file_path));
         }
 
+        println!("=== [1] ccGroth Proofs: Freivald/Softmax ===");    
         // Per-file SNARK flow: setup, prove, verify
         let (pk, vk) = CcGroth16::<E>::setup(circuit.clone(), &mut rng)?;
         let pvk = prepare_verifying_key::<E>(&vk);
@@ -254,6 +346,23 @@ where
         println!("Verification result for {:?}: {}", file_path, ok);
         if !ok {
             return Err(anyhow::anyhow!("Verification failed for {:?}", file_path));
+        }
+
+        println!("=== [2] Lasso Lookup Proofs: Softmax K1, K2, K3 ===");    
+        
+        let bundles = [
+            (&circuit.k1_softmax, b"lasso_k1"),
+            (&circuit.k2_softmax, b"lasso_k2"),
+            (&circuit.k3_softmax, b"lasso_k3"),
+        ];
+
+        for (bundle, label) in bundles {
+            // non-zero값 세기
+            let sparsity = bundle.limbs.iter().map(|b| b.len()).sum::<usize>();
+            assert!(SOFTMAX_M.is_power_of_two(), "SOFTMAX_M must be a power of two");
+            let log_M = SOFTMAX_M.trailing_zeros() as usize;
+            let gens = SparsePolyCommitmentGens::<G1>::new(b"gens_lasso", SOFTMAX_C, sparsity, SOFTMAX_C, log_M);
+            prove_lasso_for_softmax(bundle, &gens, &mut rng, label)?;
         }
 
     }
@@ -268,6 +377,7 @@ fn combined_full_witness_test() {
 
     let p = Path::new("attn_debug_outputs/attn_debug-model.transformer_0.mha.attn.witness.npz");
     if p.exists() {
+        println!("Running combined circuit test on {:?}", p);
         let res = run_paths::<Bn254>(p);
         if let Err(e) = res {
             println!("failed constraint: {:?}", cs.which_is_unsatisfied());
