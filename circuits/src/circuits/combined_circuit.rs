@@ -37,6 +37,8 @@ use crate::lasso::{
     utils::random::RandomTape,
 };
 use merlin::Transcript;
+use std::time::Instant;
+
 // Lasso에 필요한 타입 정의: Bn254::Fr에 맞춰 Bn254::G1Projective 사용
 type G1 = G1Projective;
 
@@ -255,6 +257,7 @@ fn prove_lasso_for_softmax(
     }
 
     let sparsity = nz_indices.len();
+    println!("    * Sparsity (m): {}", sparsity);
     if sparsity == 0 { return Ok(()); } 
 
     assert!(SOFTMAX_M.is_power_of_two(), "SOFTMAX_M must be a power of two");
@@ -263,9 +266,10 @@ fn prove_lasso_for_softmax(
     let lookup_matrix = SparseLookupMatrix::<SOFTMAX_C>::new(nz_indices, log_M);
     let mut densified = DensifiedRepresentation::<Fr, SOFTMAX_C>::from(&lookup_matrix);
 
-
+    let commit_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
-
+    let commit_duration = commit_start.elapsed();
+    println!("    * Commitment Time: {:?}", commit_duration);
 
     let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
     let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
@@ -273,15 +277,22 @@ fn prove_lasso_for_softmax(
     let mut random_tape = RandomTape::new(b"lasso_tape");
     let mut transcript = Transcript::new(b"lasso_softmax");
 
+    println!("    * Starting Lasso Prove (log_s: {})...", log_s);
+    let prove_start = Instant::now();
     let proof_lasso = SparsePolynomialEvaluationProof::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>::prove(
         &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
     );
+    let prove_duration = prove_start.elapsed();
+    println!("    * Lasso Prover Time: {:?}", prove_duration);
 
     let mut verifier_transcript = Transcript::new(b"lasso_softmax");
+    let verify_start = Instant::now();
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso verification failed for label: {:?}", std::str::from_utf8(label)))?;
+    let verify_duration = verify_start.elapsed();
 
     println!("Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
+    println!("    * Lasso Verifier Time: {:?}", verify_duration);
     Ok(())
 }
 
@@ -334,19 +345,47 @@ E: Pairing<ScalarField = Fr>,
             return Err(anyhow::anyhow!("Constraints NOT satisfied in {:?}", file_path));
         }
 
+        let cs = ark_relations::r1cs::ConstraintSystem::<Fr>::new_ref();
+        circuit.clone().generate_constraints(cs.clone())?;
+        let num_constraints = cs.num_constraints();
+        let num_instance_variables = cs.num_instance_variables();
+        let num_witness_variables = cs.num_witness_variables();
+        
+        println!("  [Constraint Stats]");
+        println!("  - Number of Constraints: {}", num_constraints);
+        println!("  - Public Inputs (Instance Vars): {}", num_instance_variables);
+        println!("  - Private Inputs (Witness Vars): {}", num_witness_variables);
+
+        if !cs.is_satisfied().unwrap() {
+            return Err(anyhow::anyhow!("Constraints NOT satisfied"));
+        }
+
         println!("=== [1] ccGroth Proofs: Freivald/Softmax ===");    
         // Per-file SNARK flow: setup, prove, verify
+        let setup_start = Instant::now();
         let (pk, vk) = CcGroth16::<E>::setup(circuit.clone(), &mut rng)?;
-        let pvk = prepare_verifying_key::<E>(&vk);
+        let setup_duration = setup_start.elapsed();
+        println!("  - Setup Time: {:?}", setup_duration);
+
+        let prove_start = Instant::now();
         let proof = CcGroth16::<E>::prove(&pk, circuit.clone(), &mut rng)?;
+        let prove_duration = prove_start.elapsed();
+        println!("  - Prover Time (ccGroth): {:?}", prove_duration);
 
         // public inputs: include the Fiat-Shamir r_challenge
+        let pvk = prepare_verifying_key::<E>(&vk);
         let public_inputs = vec![circuit.r_challenge];
+        let verify_start = Instant::now();
         let ok = CcGroth16::<E>::verify_with_processed_vk(&pvk, &public_inputs, &proof)?;
         println!("Verification result for {:?}: {}", file_path, ok);
         if !ok {
             return Err(anyhow::anyhow!("Verification failed for {:?}", file_path));
         }
+        let verify_duration = verify_start.elapsed();
+        println!("  - Verifier Time (ccGroth): {:?}", verify_duration);
+        println!("  - Verification Result: {}", ok);
+
+
 
         println!("=== [2] Lasso Lookup Proofs: Softmax K1, K2, K3 ===");    
         
@@ -362,7 +401,10 @@ E: Pairing<ScalarField = Fr>,
             assert!(SOFTMAX_M.is_power_of_two(), "SOFTMAX_M must be a power of two");
             let log_M = SOFTMAX_M.trailing_zeros() as usize;
             let gens = SparsePolyCommitmentGens::<G1>::new(b"gens_lasso", SOFTMAX_C, sparsity, SOFTMAX_C, log_M);
+            let lasso_start = Instant::now();
             prove_lasso_for_softmax(bundle, &gens, &mut rng, label)?;
+            let lasso_duration = lasso_start.elapsed();
+            println!("  - Lasso Prove & Verify Time ({}): {:?}", std::str::from_utf8(label).unwrap(), lasso_duration);
         }
 
     }
