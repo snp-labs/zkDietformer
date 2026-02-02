@@ -1,14 +1,10 @@
+use crate::config::{K_SEGMENTS, LIMB_BITS}; 
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::{
     fields::{FieldVar, fp::FpVar},
     prelude::{AllocVar, Boolean, EqGadget, ToBitsGadget},
 };
-
-// 세크먼트 및 림브 설정(파이썬 설정값과 일치해야 함)
-pub const K_SEGMENTS: usize = 2;
-pub const LIMB_BITS: usize = 8;
-pub const LIMB_BASE: u128 = 1u128 << LIMB_BITS;
 
 #[derive(Debug, Clone)]
 pub struct SoftmaxCircuit<F: PrimeField> {

@@ -5,8 +5,8 @@ import argparse
 
 # 행렬곱 결과가 양자화된 정수일 때,그 정수를 limb로 분해했을 때 각 limb가 exp에 기여하는 값을 반영한 lookup table을 만듬
 BASE_SCALE_EXP = 16
-K_SEGMENTS = 2
-LIMB_BITS = 8
+K_SEGMENTS = 5
+LIMB_BITS = 16
 LIMB_SIZE = 1 << LIMB_BITS
 
 # 실수 값을 고정소수점 형식으로 변환

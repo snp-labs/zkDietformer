@@ -1,3 +1,4 @@
+use crate::config::{K_SEGMENTS, LIMB_BITS}; 
 use std::fs::File;
 use std::path::Path;
 use std::error::Error;
@@ -10,9 +11,6 @@ use ark_r1cs_std::{
     fields::{FieldVar, fp::FpVar},
     prelude::{AllocVar, EqGadget},
 };
-
-pub const K_SEGMENTS: usize = 2;
-pub const LIMB_BITS: usize = 8;
 
 
 /// 128비트 정수(u128) 하나를 고정된 비트 크기(limb_bits)단위를 가지는 k 세그먼트로 분해함.

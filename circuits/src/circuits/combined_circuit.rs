@@ -1,3 +1,4 @@
+use crate::config::{SOFTMAX_C, SOFTMAX_M}; 
 use std::{fs::File, ops::{AddAssign, Mul},path::Path, str::FromStr};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
@@ -14,7 +15,7 @@ use crate::{
     cc_snark::cc_gro::{CcGroth16, prepare_verifying_key},
     circuits::{
         freivalds_circuit::FreivaldsCircuit, 
-        softmax_circuit::{K_SEGMENTS, SoftmaxCircuit}, 
+        softmax_circuit::{SoftmaxCircuit}, 
     },
     gadgets::{
         matmul::constraints::{new_matrix_witness, enforce_quantized_freivalds, MatmulBundle},
@@ -41,7 +42,6 @@ use std::time::Instant;
 
 // Lasso에 필요한 타입 정의: Bn254::Fr에 맞춰 Bn254::G1Projective 사용
 type G1 = G1Projective;
-
 /// 단순화된 통합 서킷 구조체
 #[derive(Clone)]
 pub struct CombinedCircuit<F: PrimeField> {
@@ -227,10 +227,6 @@ where
         multiplier,
     })
 }
-
-// [주의] 내가 만든 서브테이블 SPEC과 동일하게 맞춰 주어야 함.
-const SOFTMAX_C: usize = 2;   // number of segments (C)
-const SOFTMAX_M: usize = 256; // table width (M) - must be a power of two/ limb bits = 8
 
 fn prove_lasso_for_softmax(
     bundle: &SoftmaxBundle<Fr>,

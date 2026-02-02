@@ -128,8 +128,8 @@ mod test {
     use super::*;
 
     //[주의] 내가 만든 테이블의 SPEC과 동일하게 맞춰 주어야 함.
-    const SEG_LIMB_BITS: usize = 8;
-    const C_TEST: usize = 2;
+    const SEG_LIMB_BITS: usize = 16;
+    const C_TEST: usize = 5;
     const WIDTH: usize = 1 << SEG_LIMB_BITS;
 
     fn setup_test_npz() {
@@ -196,9 +196,12 @@ mod test {
         
         let v1 = Fr::from(10u64);
         let v2 = Fr::from(20u64);
-        let vals: [Fr; C_TEST] = [v1, v2];
+        let v3 = Fr::from(30u64);
+        let v4 = Fr::from(40u64);
+        let v5 = Fr::from(50u64);
+        let vals: [Fr; C_TEST] = [v1, v2, v3, v4, v5];
         
         let combined = <SoftmaxSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::combine_lookups(&vals);
-        assert_eq!(combined, v1 * v2);
+        assert_eq!(combined, v1 * v2 * v3 * v4 * v5);
     }
 }

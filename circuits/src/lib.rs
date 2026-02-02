@@ -30,6 +30,7 @@ pub mod gadgets;
 pub mod cc_snark;
 /// util
 pub mod util;
+pub mod config;
 
 pub mod lasso;
 

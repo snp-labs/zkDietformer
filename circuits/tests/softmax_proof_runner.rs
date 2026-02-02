@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use nystromformer::config::K_SEGMENTS;
     use ark_ff::{PrimeField, Zero, One};
     use nystromformer::gadgets::softmax::constraints::{build_softmax_witnesses, decompose_to_limbs_dynamic};
     use nystromformer::util::load::load_tables;
-    use nystromformer::circuits::softmax_circuit::{SoftmaxCircuit, K_SEGMENTS};
+    use nystromformer::circuits::softmax_circuit::{SoftmaxCircuit};
     use nystromformer::cc_snark::cc_gro::{prepare_verifying_key, CcGroth16};
     use ark_crypto_primitives::snark::{SNARK};
     use ark_bn254::{Bn254, Fr as F};

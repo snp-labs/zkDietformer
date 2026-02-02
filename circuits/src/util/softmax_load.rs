@@ -4,9 +4,10 @@ use ndarray_npy::NpzReader;
 use std::fs::File;
 use ark_ff::PrimeField;
 use crate::{
-    circuits::softmax_circuit::{SoftmaxCircuit, K_SEGMENTS},
+    circuits::softmax_circuit::{SoftmaxCircuit},
     gadgets::softmax::constraints::build_softmax_witnesses,
     util::load::read_array_u64,
+    config::K_SEGMENTS,
 };
 use num_bigint::BigInt;
 
