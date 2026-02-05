@@ -8,7 +8,7 @@ use ark_std::{UniformRand, log2, marker::PhantomData, rand::{Rng, SeedableRng, r
 use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_ff::{PrimeField, One, Zero, BigInteger};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{emulated_fp::params, fp::FpVar}};
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use num_bigint::BigInt;
 use crate::{
@@ -76,6 +76,13 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub m_prime_k2: F,
     pub z_sim_k2: F,
 
+    // Kernel 3
+    pub q_sim_k3: Vec<Vec<Vec<Vec<F>>>>,
+    pub r_matmul_k3: Vec<Vec<Vec<Vec<F>>>>,
+    pub m_k3: F,
+    pub m_prime_k3: F,
+    pub z_sim_k3: F,
+
     pub r_challenge: F, 
     pub seg_size: usize,
 }
@@ -99,6 +106,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             q_sim: new_matrix_witness_4d(cs.clone(), &self.q_sim_k2),
             r_matmul: new_matrix_witness_4d(cs.clone(), &self.r_matmul_k2),
         };
+        let k3_data = MatmulData {
+            q_sim: new_matrix_witness_4d(cs.clone(), &self.q_sim_k3),
+            r_matmul: new_matrix_witness_4d(cs.clone(), &self.r_matmul_k3),
+        };
 
         // 3. 파라미터 설정
         let params_k1 = ZenParams {
@@ -111,6 +122,12 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.z_sim_k2),
             two_k: two_k.clone(),
         };
+        let params_k3 = ZenParams {
+            m: FpVar::Constant(self.m_k3), m_prime: FpVar::Constant(self.m_prime_k3),
+            z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.z_sim_k3),
+            two_k: two_k.clone(),
+        };
+
 
         for b in 0..q_proc.len() {
             // 해당 배치의 Landmarks 계산
@@ -140,6 +157,17 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &k2_data.r_matmul[b][h], 
                     &params_k2, 
                     &r_pows_k2
+                )?;
+
+                let k_full_t = transpose_matrix(&k_proc[b][h]);
+                let r_pows_k3 = gen_challenge_vector(&r_var, k3_data.q_sim[b][h][0].len()); 
+                enforce_zen_matmul_logic(
+                    &q_landmarks[h], 
+                    &k_full_t, 
+                    &k3_data.q_sim[b][h], 
+                    &k3_data.r_matmul[b][h], 
+                    &params_k3, 
+                    &r_pows_k3
                 )?;
             }
         }
@@ -183,6 +211,11 @@ where
     let m_prime_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k2.npy")?.into_scalar();
     let z_sim_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k2.npy")?.into_scalar();
 
+    let q_sim_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_sim_k3.npy")?.into_dimensionality()?;
+    let r_matmul_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_matmul_k3.npy")?.into_dimensionality()?;
+    let m_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k3.npy")?.into_scalar();
+    let m_prime_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k3.npy")?.into_scalar();
+    let z_sim_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k3.npy")?.into_scalar();
     // 6. NystromAttentionCircuit 인스턴스 생성
     Ok(NystromAttentionCircuit {
         q_q: to_field_4d(&q_q),
@@ -204,6 +237,12 @@ where
         m_prime_k2: E::ScalarField::from(m_prime_k2),
         z_sim_k2: E::ScalarField::from(z_sim_k2),
 
+        q_sim_k3: to_field_4d(&q_sim_k3), 
+        r_matmul_k3: to_field_4d(&r_matmul_k3), 
+        m_k3: E::ScalarField::from(m_k3), 
+        m_prime_k3: E::ScalarField::from(m_prime_k3), 
+        z_sim_k3: E::ScalarField::from(z_sim_k3),
+        
         r_challenge: r,
         seg_size: seg,
     })

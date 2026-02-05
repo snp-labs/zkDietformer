@@ -194,16 +194,15 @@ pub fn transpose_matrix<F: PrimeField>(m: &MatrixVar<F>) -> MatrixVar<F> {
 }*/
 
 pub fn enforce_zen_matmul_logic<F: PrimeField>(
-    w_matrix: &MatrixVar<F>,        // 현재 헤드의 Q 
-    x_matrix_t: &MatrixVar<F>,      // 현재 헤드의 K_landmarks_T
-    q_y_sim_head: &MatrixVar<F>,    // 현재 헤드의 Y_sim [S][D]
-    r_matmul_head: &MatrixVar<F>,   // 현재 헤드의 R_matmul [S][D]
+    w_matrix: &MatrixVar<F>,        
+    x_matrix_t: &MatrixVar<F>,      
+    q_y_sim_head: &MatrixVar<F>,    
+    r_matmul_head: &MatrixVar<F>,   
     params: &ZenParams<F>,
     r_pows: &[FpVar<F>],
 ) -> Result<(), SynthesisError> {
     
     // 1. LHS 계산: (Q_y * 2^k + R) * r
-    // 특정 인덱스 [0]을 제거하고 넘겨받은 헤드 데이터를 직접 사용합니다.
     let qy_r = mat_vec_mul(q_y_sim_head, r_pows)?; 
     let r_mat_r = mat_vec_mul(r_matmul_head, r_pows)?;
     
@@ -226,7 +225,6 @@ pub fn enforce_zen_matmul_logic<F: PrimeField>(
         r_pows
     )?;
 
-    // 3. 제약 조건 강제: LHS == RHS
     for (l, r) in lhs.iter().zip(rhs.iter()) {
         l.enforce_equal(r)?;
     }

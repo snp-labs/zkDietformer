@@ -57,6 +57,20 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     M_prime_k2 = int(np.floor((z_y2 * two_k) / M_k2))
 
     ### kernel 3
+    Y3_real = debug['kernel_3_scores']
+    s_y3, z_y3 = get_quantization_params(Y3_real)
+
+    # K^T 준비 (B, H, D, S)
+    K_T = np.swapaxes(Q_k, -1, -2)
+    
+    # M_k3 계산
+    M_k3 = get_m_constant(s_q, s_k, s_y3, k=k_bits)
+    M_prime_k3 = int(np.floor((z_y3 * two_k) / M_k3))
+    
+    # ZEN Matmul 실행: Q_landmarks_q (L x D) * K_T (D x S) -> (L x S)
+    Q_sim_k3, R_matmul_k3 = sign_bit_grouping_matmul(
+        Q_landmarks_q, z_q, K_T, z_k, z_y3, M_k3, k_bits
+    )
 
     np.savez_compressed(
         out_npz_path,
@@ -79,6 +93,13 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         M_k2=np.int64(M_k2),
         M_prime_k2=np.int64(M_prime_k2),
         z_sim_k2=np.int64(z_y2),
+        ### kernel 3
+        Q_sim_k3=Q_sim_k3.astype(np.int64),
+        R_matmul_k3=R_matmul_k3.astype(np.int64),
+        M_k3=np.int64(M_k3),
+        M_prime_k3=np.int64(M_prime_k3),
+        z_sim_k3=np.int64(z_y3),
+
         ### 추가 디버그 정보
         seg_size=np.int64(seg)
     )

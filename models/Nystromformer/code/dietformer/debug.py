@@ -44,6 +44,12 @@ def debug_circuit_consistency(npz_path, k_bits=22):
     print("\n[Step 3] Verifying Kernel 2 Equality (Q_L * K_L^T)...")
     verify_matmul_zen(Q_landmarks_q, Q_landmarks_k, data['Q_sim_k2'], data['R_matmul_k2'], 
                       int(data['M_k2']), int(data['M_prime_k2']), z_q, z_k, two_k)
+    
+
+    # [Step 4] Kernel 3 검증 (Q_L * K^T)
+    print("\n[Step 4] Verifying Kernel 3 Equality (Q_L * K^T)...")
+    verify_matmul_zen(Q_landmarks_q, Q_k, data['Q_sim_k3'], data['R_matmul_k3'], 
+                      int(data['M_k3']), int(data['M_prime_k3']), z_q, z_k, two_k)
 
 def verify_matmul_zen(W, X, Y_sim, R_mat, M, M_prime, z_w, z_x, two_k):
     """Freivalds 알고리즘 기반 ZEN 수식 검증"""
