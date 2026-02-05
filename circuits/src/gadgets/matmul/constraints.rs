@@ -1,10 +1,10 @@
 //! Constraint implementations for matrix multiplication and linear layers.
 
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, BigInteger};
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::fields::FieldVar;
-
+use ark_r1cs_std::R1CSVar;
 use crate::gadgets::dot_prod::constraints::*;
 
 /// Row-major matrix representation inside a circuit.
@@ -184,107 +184,6 @@ pub fn linear_mat<F: PrimeField>(
 
     Ok(y)
 }
-
-/// 행렬 곱셈 한세트
-#[derive(Clone)]
-pub struct MatmulBundle<F: PrimeField> {
-    pub a: Vec<Vec<Vec<Vec<F>>>>,   // [Batch, Head, Seq, Dim]
-    pub b: Vec<Vec<Vec<Vec<F>>>>,   // [Batch, Head, Dim, Seq]
-    pub c: Vec<Vec<Vec<Vec<F>>>>,   // [Batch, Head, Seq, Seq]
-    pub div: Vec<Vec<Vec<Vec<F>>>>,
-    pub rem: Vec<Vec<Vec<Vec<F>>>>,
-    // 각 행렬 연산마다 고유한 양자화 상수
-    pub input_0: F,
-    pub c_0_converted: F,
-}
-
-/// freivald with ZEN quantization
-pub fn enforce_quantized_freivalds<F: PrimeField>(
-    a_var: &MatrixVar<F>,         // [seq_len x head_dim]
-    b_var: &MatrixVar<F>,         // [head_dim x seq_len] (전치된 상태)
-    c_var: &MatrixVar<F>,         // [seq_len x seq_len]
-    div_var: &MatrixVar<F>,       // [seq_len x seq_len]
-    rem_var: &MatrixVar<F>,       // [seq_len x seq_len]
-    input_0_var: &FpVar<F>,       // zero point (a0, b0)
-    c_0_var: &FpVar<F>,           // c zero point
-    r_var: &FpVar<F>,             // Fiat-Shamir challenge scalar
-    m_var: &FpVar<F>,             // multiplier (s1*s2/s3)
-) -> Result<(), SynthesisError> {
-    let a_rows = a_var.len();
-    let a_cols = if !a_var.is_empty() { a_var[0].len() } else { 0 };
-    let b_rows = b_var.len();
-    let b_cols = if !b_var.is_empty() { b_var[0].len() } else { 0 };
-
-    // 1. 차원 검증
-    if a_cols != b_rows { return Err(SynthesisError::Unsatisfiable); }
-
-    // 2. 상수 설정
-    let two_power_8_constant = FpVar::<F>::Constant(F::from(256u64));
-    let two_power_22_constant = FpVar::<F>::Constant(F::from(1u64 << 22));
-
-    // 3. r_pows 생성 [r^0, r^1, ..., r^{n-1}]
-    let mut r_pows: Vec<FpVar<F>> = Vec::with_capacity(b_cols);
-    let mut curr_r = FpVar::<F>::Constant(F::one());
-    for _ in 0..b_cols {
-        r_pows.push(curr_r.clone());
-        curr_r = &curr_r * r_var;
-    }
-
-    let sum_r = r_pows.iter().fold(FpVar::zero(), |acc, x| acc + x);
-
-    // --- Left side: m * ((A-a0)(B-b0) r + c0_corr) ---
-    // (AB)r = A(Br)
-    let br = mat_vec_mul(b_var, &r_pows)?;
-    let term1 = mat_vec_mul(a_var, &br)?;
-
-    // (Ab0)r = b0 * sum_r * (RowSums of A)
-    let b0_sum_r = input_0_var * &sum_r;
-    let term2: Vec<FpVar<F>> = a_var.iter()
-        .map(|row| {
-            let row_sum = row.iter().fold(FpVar::zero(), |acc, x| acc + x);
-            row_sum * &b0_sum_r
-        })
-        .collect();
-
-    // (a0B)r = a0 * sum(br)
-    let sum_br = br.iter().fold(FpVar::zero(), |acc, x| acc + x);
-    let term3_scalar = &sum_br * input_0_var;
-
-    // (a0b0)r = head_dim * a0 * b0 * sum_r
-    let head_dim_fpvar = FpVar::Constant(F::from(a_cols as u64));
-    let term4_val = input_0_var * input_0_var * &sum_r * &head_dim_fpvar;
-
-    // c0_corr = c0 * sum_r
-    let c0_corr = c_0_var * &sum_r;
-
-    let mut left_side: Vec<FpVar<F>> = Vec::with_capacity(a_rows);
-    for i in 0..a_rows {
-        let res = (&term1[i] - &term2[i] - &term3_scalar + &term4_val + &c0_corr) * m_var;
-        left_side.push(res);
-    }
-
-    // --- Right side: ((C + div*2^8)*2^22 + rem) * r ---
-    let mut cc_var_matrix: MatrixVar<F> = Vec::with_capacity(a_rows);
-    for i in 0..a_rows {
-        let mut row = Vec::with_capacity(b_cols);
-        for j in 0..b_cols {
-            let val = (&c_var[i][j] + (&div_var[i][j] * &two_power_8_constant)) 
-                      * &two_power_22_constant + &rem_var[i][j];
-            row.push(val);
-        }
-        cc_var_matrix.push(row);
-    }
-
-    let right_side = mat_vec_mul(&cc_var_matrix, &r_pows)?;
-
-    // Equality Enforce
-    for (l, r) in left_side.iter().zip(right_side.iter()) {
-        l.enforce_equal(r)?;
-    }
-
-    Ok(())
-}
-
 
 #[cfg(test)]
 #[allow(missing_docs)]

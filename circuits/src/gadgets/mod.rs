@@ -15,3 +15,6 @@ pub mod matmul;
 
 /// Softmax function gadgets.
 pub mod softmax;
+
+pub mod linear;
+pub mod layernorm;

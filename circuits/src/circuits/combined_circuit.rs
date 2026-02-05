@@ -1,4 +1,4 @@
-use crate::config::{SOFTMAX_C, SOFTMAX_M}; 
+use crate::{config::{SOFTMAX_C, SOFTMAX_M}, gadgets::matmul::quantized::MatmulData}; 
 use std::{fs::File, ops::{AddAssign, Mul},path::Path, str::FromStr};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
@@ -13,15 +13,25 @@ use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use num_bigint::BigInt;
 use crate::{
     cc_snark::cc_gro::{CcGroth16, prepare_verifying_key},
-    circuits::{
-        freivalds_circuit::FreivaldsCircuit, 
-        softmax_circuit::{SoftmaxCircuit}, 
-    },
+    circuits::{softmax_circuit::{SoftmaxCircuit}},
     gadgets::{
-        matmul::constraints::{new_matrix_witness, enforce_quantized_freivalds, MatmulBundle},
-        softmax::constraints::{SoftmaxBundle, enforce_softmax}
+        activation::gelu::{enforce_gelu, GeluBundle},
+        matmul::{
+            constraints::{new_matrix_witness, MatrixVar}, 
+            quantized::{
+                enforce_zen_matmul_logic, 
+                ZenParams, 
+                new_matrix_witness_4d, 
+                transpose_matrix, 
+                gen_challenge_vector,
+                compute_circuit_landmarks
+            },},
+        softmax::constraints::{SoftmaxBundle, enforce_softmax},
+        layernorm::constraints::{LayerNormBundle, enforce_layernorm},
     
-    }, util::{load::{read_array_u64},freivalds_load::load_freivalds_circuit, softmax_load::{load_softmax_circuit, load_softmax_metadata}}, 
+    }, util::{
+        load::{read_array_i64, to_field_4d},
+    }, 
 };
 use ark_std::fs;
 use crate::lasso::{
@@ -39,89 +49,106 @@ use crate::lasso::{
 };
 use merlin::Transcript;
 use std::time::Instant;
+use std::error::Error;
 
-// Lasso에 필요한 타입 정의: Bn254::Fr에 맞춰 Bn254::G1Projective 사용
 type G1 = G1Projective;
-/// 단순화된 통합 서킷 구조체
 #[derive(Clone)]
-pub struct CombinedCircuit<F: PrimeField> {
-    // 1) Kernel Matmuls
-    pub k1_data: MatmulBundle<F>,
-    pub k2_data: MatmulBundle<F>,
-    pub k3_data: MatmulBundle<F>,
+pub struct NystromAttentionCircuit<F: PrimeField> {
+    // 공통 입력 (한 번만 로드)
+    pub q_q: Vec<Vec<Vec<Vec<F>>>>,       
+    pub q_k: Vec<Vec<Vec<Vec<F>>>>,       
+    pub z_q: F,      
+    pub z_k: F,      
     
-    // 2) Moore-Penrose Inverse Property
-    pub aaplus_data: MatmulBundle<F>,
-    pub aplusa_data: MatmulBundle<F>,
-    pub aaplusa_data: MatmulBundle<F>,
-    pub aplusaaplus_data: MatmulBundle<F>,
+    // Kernel 1
+    pub r_mean_k1: Vec<Vec<Vec<Vec<F>>>>, 
+    pub q_sim_k1: Vec<Vec<Vec<Vec<F>>>>,
+    pub r_matmul_k1: Vec<Vec<Vec<Vec<F>>>>,
+    pub m_k1: F,
+    pub m_prime_k1: F,
+    pub z_sim_k1: F,
 
-    // 3) Final Output Reconstruction
-    pub temp_data: MatmulBundle<F>,
-    pub mid_data: MatmulBundle<F>,
-    pub final_data: MatmulBundle<F>,
+    // Kernel 2
+    pub r_mean_k2: Vec<Vec<Vec<Vec<F>>>>,
+    pub q_sim_k2: Vec<Vec<Vec<Vec<F>>>>,
+    pub r_matmul_k2: Vec<Vec<Vec<Vec<F>>>>,
+    pub m_k2: F,
+    pub m_prime_k2: F,
+    pub z_sim_k2: F,
 
-    // 4) Softmax Sub-circuits
-    pub k1_softmax: SoftmaxBundle<F>,
-    pub k2_softmax: SoftmaxBundle<F>,
-    pub k3_softmax: SoftmaxBundle<F>,
-
-    // 공통 챌린지 및 배율
-    pub r_challenge: F,
-    pub multiplier: F,
+    pub r_challenge: F, 
+    pub seg_size: usize,
 }
-
-impl<F: PrimeField> ConstraintSynthesizer<F> for CombinedCircuit<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        // 공통 변수 할당
-        let r_var = FpVar::new_input(ark_relations::ns!(cs, "r_challenge"), || Ok(self.r_challenge))?;
-        let m_var = FpVar::new_witness(ark_relations::ns!(cs, "multiplier"), || Ok(self.multiplier))?;
+        let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
+        let two_k = FpVar::Constant(F::from(1u64 << 22));
 
-        // 검증할 모든 행렬 묶음 리스트 생성
-        let bundles = vec![
-            &self.k1_data, &self.k2_data, &self.k3_data,
-            &self.aaplus_data, &self.aplusa_data, &self.aaplusa_data, &self.aplusaaplus_data,
-            &self.temp_data, &self.mid_data, &self.final_data,
-        ];
+        // 1. 공통 입력 및 위트니스 할당 ([B][H][S][D])
+        let q_proc = new_matrix_witness_4d(cs.clone(), &self.q_q);
+        let k_proc = new_matrix_witness_4d(cs.clone(), &self.q_k);
+        let r_mean_k1 = new_matrix_witness_4d(cs.clone(), &self.r_mean_k1);
+        let r_mean_k2 = new_matrix_witness_4d(cs.clone(), &self.r_mean_k2);
 
-        // 각 번들에 대해 루프를 돌며 제약 조건 생성
-        for bundle in bundles {
-            let batch_size = bundle.a.len();
-            if batch_size == 0 { continue; }
-            let head_size = bundle.a[0].len();
+        // 2. Kernel 결과 데이터 할당
+        let k1_data = MatmulData {
+            q_sim: new_matrix_witness_4d(cs.clone(), &self.q_sim_k1),
+            r_matmul: new_matrix_witness_4d(cs.clone(), &self.r_matmul_k1),
+        };
+        let k2_data = MatmulData {
+            q_sim: new_matrix_witness_4d(cs.clone(), &self.q_sim_k2),
+            r_matmul: new_matrix_witness_4d(cs.clone(), &self.r_matmul_k2),
+        };
 
-            // 번들별 개별 양자화 상수를 FpVar로 변환 (상수로 처리)
-            let a0_var = FpVar::Constant(bundle.input_0);
-            let c0_var = FpVar::Constant(bundle.c_0_converted);
+        // 3. 파라미터 설정
+        let params_k1 = ZenParams {
+            m: FpVar::Constant(self.m_k1), m_prime: FpVar::Constant(self.m_prime_k1),
+            z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.z_sim_k1),
+            two_k: two_k.clone(),
+        };
+        let params_k2 = ZenParams {
+            m: FpVar::Constant(self.m_k2), m_prime: FpVar::Constant(self.m_prime_k2),
+            z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.z_sim_k2),
+            two_k: two_k.clone(),
+        };
 
-            for n in 0..batch_size {
-                for h in 0..head_size {
-                    // 증인 할당 (MatrixVar 생성)
-                    let a_v = new_matrix_witness(cs.clone(), &bundle.a[n][h]);
-                    let b_v = new_matrix_witness(cs.clone(), &bundle.b[n][h]);
-                    let c_v = new_matrix_witness(cs.clone(), &bundle.c[n][h]);
-                    let d_v = new_matrix_witness(cs.clone(), &bundle.div[n][h]);
-                    let rem_v = new_matrix_witness(cs.clone(), &bundle.rem[n][h]);
+        for b in 0..q_proc.len() {
+            // 해당 배치의 Landmarks 계산
+            let k_landmarks = compute_circuit_landmarks(cs.clone(), &k_proc[b], &r_mean_k1[b], self.seg_size)?;
+            let q_landmarks = compute_circuit_landmarks(cs.clone(), &q_proc[b], &r_mean_k2[b], self.seg_size)?;
 
-                    // 가젯 함수를 사용하여 프리발드 제약 조건 강제
-                    enforce_quantized_freivalds(
-                        &a_v, &b_v, &c_v, &d_v, &rem_v,
-                        &a0_var, &c0_var, &r_var, &m_var
-                    )?;
-                }
+            for h in 0..q_proc[b].len() {
+                let k_l_t = transpose_matrix(&k_landmarks[h]);
+                let r_pows_k1 = gen_challenge_vector(&r_var, k1_data.q_sim[b][h][0].len());
+                // Kernel 1
+                enforce_zen_matmul_logic(
+                    &q_proc[b][h], 
+                    &k_l_t, 
+                    &k1_data.q_sim[b][h], 
+                    &k1_data.r_matmul[b][h], 
+                    &params_k1, 
+                    &r_pows_k1
+                )?;
+
+                // Kernel 2
+                let q_l_h = &q_landmarks[h];
+                let r_pows_k2 = gen_challenge_vector(&r_var, k2_data.q_sim[b][h][0].len());
+                enforce_zen_matmul_logic(
+                    q_l_h, 
+                    &k_l_t, 
+                    &k2_data.q_sim[b][h], 
+                    &k2_data.r_matmul[b][h], 
+                    &params_k2, 
+                    &r_pows_k2
+                )?;
             }
         }
-
-        // 3. 모든 Softmax 번들에 대해 가젯 실행
-        enforce_softmax(cs.clone(), &self.k1_softmax)?;
-        enforce_softmax(cs.clone(), &self.k2_softmax)?;
-        enforce_softmax(cs.clone(), &self.k3_softmax)?;
 
         Ok(())
     }
 }
 
-pub fn load_single_circuit<E: Pairing>(path: &Path) -> Result<CombinedCircuit<E::ScalarField>>
+pub fn load_nystrom_circuit<E: Pairing>(path: &Path) -> Result<NystromAttentionCircuit<E::ScalarField>>
 where
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
@@ -130,166 +157,58 @@ where
     let mut npz = NpzReader::new(f)?;
 
     // 2. 공통 챌린지 값 로드
-    let r_val = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("r_challenge.npy")
-        .map(|a| a.into_scalar())
-        .context("reading r_val")?;
-    let r = E::ScalarField::from(r_val); 
-
-    let mult_arr = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("multiplier.npy")
-        .context("reading multiplier")?;
-    let multiplier = E::ScalarField::from(mult_arr.iter().next().copied().unwrap_or(1u64));
-
-    // 3. Matmul Bundles 로드
-    let load_matmul_bundle = |npz: &mut NpzReader<File>, suffix: &str, r: E::ScalarField, m: E::ScalarField| -> Result<MatmulBundle<E::ScalarField>> {
-        let circuit = load_freivalds_circuit(npz, suffix, r, m)?;
-        Ok(MatmulBundle {
-            a: circuit.a,
-            b: circuit.b,
-            c: circuit.c,
-            div: circuit.div,
-            rem: circuit.remainder,
-            input_0: circuit.input_0,
-            c_0_converted: circuit.c_0_converted,
-        })
-    };
-
-    let k1_data = load_matmul_bundle(&mut npz, "_k1", r, multiplier)?;
-    let k2_data = load_matmul_bundle(&mut npz, "_k2", r, multiplier)?;
-    let k3_data = load_matmul_bundle(&mut npz, "_k3", r, multiplier)?;
-
-    let aaplus_data = load_matmul_bundle(&mut npz, "_A_AP", r, multiplier)?;
-    let aplusa_data = load_matmul_bundle(&mut npz, "_P_A", r, multiplier)?;
-    let aaplusa_data = load_matmul_bundle(&mut npz, "_AAplus_A", r, multiplier)?;
-    let aplusaaplus_data = load_matmul_bundle(&mut npz, "_PAm_P", r, multiplier)?;
-
-    let temp_data = load_matmul_bundle(&mut npz, "_k3V", r, multiplier)?;
-    let mid_data = load_matmul_bundle(&mut npz, "_k1_inv_k2", r, multiplier)?;
-    let final_data = load_matmul_bundle(&mut npz, "_mt", r, multiplier)?;
-
-    // 4. Softmax Tables 로드 및 메타데이터 처리
-    let tables_arr = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::Ix2>("softmax_tables.npy")?;
-    let (soft_frac_bits, soft_limb_bits, _, _, _, _) = load_softmax_metadata(&mut npz);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let r = E::ScalarField::from(42u64); // 혹은 결정론적 해시 결과값
     
-    let mut tables_field: Vec<Vec<E::ScalarField>> = Vec::new();
-    for row in tables_arr.rows() {
-        tables_field.push(row.iter().map(|&v| E::ScalarField::from(v)).collect());
-    }
+    // 3. 공통 입력 로드
+    let q_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_q.npy")?.into_dimensionality()?;
+    let q_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_k.npy")?.into_dimensionality()?;
+    let z_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_q.npy")?.into_scalar();
+    let z_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_k.npy")?.into_scalar();
+    let seg= npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("seg_size.npy")?.into_scalar() as usize;
 
-    // 5. Softmax Bundles 로드 (softmax_load.rs의 load_softmax_circuit 활용)
-    let load_soft_bundle = |npz: &mut NpzReader<File>, suffix: &str| -> Result<SoftmaxBundle<E::ScalarField>> {
-        let (circuit, _, _, _) = load_softmax_circuit(
-            npz, suffix, &tables_field, &tables_arr, soft_limb_bits, soft_frac_bits
-        )?;
-        Ok(SoftmaxBundle {
-            matmul_outputs: circuit.matmul_outputs,
-            limbs: circuit.limbs,
-            exp_limb_vals: circuit.exp_limb_vals,
-            softmax_outputs: circuit.softmax_outputs,
-        })
-    };
+    // 4. Kernel 1 데이터 로드
+    let r_mean_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_mean_k1.npy")?.into_dimensionality()?;
+    let q_sim_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_sim_k1.npy")?.into_dimensionality()?;
+    let r_matmul_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_matmul_k1.npy")?.into_dimensionality()?;
+    let m_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k1.npy")?.into_scalar();
+    let m_prime_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k1.npy")?.into_scalar();
+    let z_sim_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k1.npy")?.into_scalar();
 
-    let k1_softmax = load_soft_bundle(&mut npz, "_k1")?;
-    let k2_softmax = load_soft_bundle(&mut npz, "_k2")?;
-    let k3_softmax = load_soft_bundle(&mut npz, "_k3")?;
+    // 5. Kernel 2 데이터 로드
+    let r_mean_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_mean_k2.npy")?.into_dimensionality()?;
+    let q_sim_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_sim_k2.npy")?.into_dimensionality()?;
+    let r_matmul_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_matmul_k2.npy")?.into_dimensionality()?;
+    let m_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k2.npy")?.into_scalar();
+    let m_prime_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k2.npy")?.into_scalar();
+    let z_sim_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k2.npy")?.into_scalar();
 
-    // 소프트맥스 메타데이터
-    // 테이블값을 2차원으로 강제함
-    let tables_2d = tables_arr.into_dimensionality::<Ix2>().context("softmax_tables must be 2D (K, table_width)")?;
-    let lookup_npz_path = "tmp_tables/embedded_softmax_for_lookup.npz";
-    {
-        let _ = std::fs::create_dir_all("tmp_tables");
-        let f = File::create(lookup_npz_path).context("creating temporary lookup npz file")?;
-        let mut writer = NpzWriter::new(f);
-        writer.add_array("tables.npy", &tables_2d).context("writing tables to temp npz")?;
-        let frac = arr0(soft_frac_bits as i32);
-        let limb = arr0(soft_limb_bits as i32);
-        writer.add_array("frac_bits.npy", &frac).context("writing frac_bits")?;
-        writer.add_array("limb_bits.npy", &limb).context("writing limb_bits")?;
-        writer.finish().context("finalizing temp npz write")?;
-    }
+    // 6. NystromAttentionCircuit 인스턴스 생성
+    Ok(NystromAttentionCircuit {
+        q_q: to_field_4d(&q_q),
+        q_k: to_field_4d(&q_k),
+        z_q: E::ScalarField::from(z_q),
+        z_k: E::ScalarField::from(z_k),
 
-    // 6. 최종 통합 서킷 반환
-    Ok(CombinedCircuit {
-        k1_data,
-        k2_data,
-        k3_data,
-        aaplus_data,
-        aplusa_data,
-        aaplusa_data,
-        aplusaaplus_data,
-        temp_data,
-        mid_data,
-        final_data,
-        k1_softmax,
-        k2_softmax,
-        k3_softmax,
+        r_mean_k1: to_field_4d(&r_mean_k1),
+        q_sim_k1: to_field_4d(&q_sim_k1),
+        r_matmul_k1: to_field_4d(&r_matmul_k1),
+        m_k1: E::ScalarField::from(m_k1),
+        m_prime_k1: E::ScalarField::from(m_prime_k1),
+        z_sim_k1: E::ScalarField::from(z_sim_k1),
+
+        r_mean_k2: to_field_4d(&r_mean_k2),
+        q_sim_k2: to_field_4d(&q_sim_k2),
+        r_matmul_k2: to_field_4d(&r_matmul_k2),
+        m_k2: E::ScalarField::from(m_k2),
+        m_prime_k2: E::ScalarField::from(m_prime_k2),
+        z_sim_k2: E::ScalarField::from(z_sim_k2),
+
         r_challenge: r,
-        multiplier,
+        seg_size: seg,
     })
-}
 
-fn prove_lasso_for_softmax(
-    bundle: &SoftmaxBundle<Fr>,
-    gens: &SparsePolyCommitmentGens<G1>,
-    rng: &mut StdRng,
-    label: &[u8],
-) -> Result<()> 
-{
-    use ark_ff::{BigInteger, PrimeField};
-
-    // Build nz_indices
-    let mut nz_indices: Vec<[usize; SOFTMAX_C]> = Vec::new();
-    for batch in &bundle.limbs {
-        for head in batch {
-            let idx_arr: [usize; SOFTMAX_C] = std::array::from_fn(|seg| {
-                let val = head[seg][0][0];
-                let bytes = val.into_bigint().to_bytes_le();
-                let mut b = [0u8; 8];
-                b.copy_from_slice(&bytes[0..8]);
-                u64::from_le_bytes(b) as usize
-            });
-            nz_indices.push(idx_arr);
-        }
-    }
-
-    let sparsity = nz_indices.len();
-    println!("    * Sparsity (m): {}", sparsity);
-    if sparsity == 0 { return Ok(()); } 
-
-    assert!(SOFTMAX_M.is_power_of_two(), "SOFTMAX_M must be a power of two");
-    let log_M = SOFTMAX_M.trailing_zeros() as usize;
-
-    let lookup_matrix = SparseLookupMatrix::<SOFTMAX_C>::new(nz_indices, log_M);
-    let mut densified = DensifiedRepresentation::<Fr, SOFTMAX_C>::from(&lookup_matrix);
-
-    let commit_start = Instant::now();
-    let commitment = densified.commit::<G1>(gens);
-    let commit_duration = commit_start.elapsed();
-    println!("    * Commitment Time: {:?}", commit_duration);
-
-    let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
-    let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
-
-    let mut random_tape = RandomTape::new(b"lasso_tape");
-    let mut transcript = Transcript::new(b"lasso_softmax");
-
-    println!("    * Starting Lasso Prove (log_s: {})...", log_s);
-    let prove_start = Instant::now();
-    let proof_lasso = SparsePolynomialEvaluationProof::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>::prove(
-        &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
-    );
-    let prove_duration = prove_start.elapsed();
-    println!("    * Lasso Prover Time: {:?}", prove_duration);
-
-    let mut verifier_transcript = Transcript::new(b"lasso_softmax");
-    let verify_start = Instant::now();
-    proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
-        .map_err(|_| anyhow::anyhow!("Lasso verification failed for label: {:?}", std::str::from_utf8(label)))?;
-    let verify_duration = verify_start.elapsed();
-
-    println!("Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    println!("    * Lasso Verifier Time: {:?}", verify_duration);
-    Ok(())
+    
 }
 
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
@@ -327,7 +246,7 @@ E: Pairing<ScalarField = Fr>,
 
     for file_path in targets.iter() {
         println!("\n=== Processing witness NPZ: {:?} ===", file_path);
-        let circuit= load_single_circuit::<E>(file_path)?;
+        let circuit= load_nystrom_circuit::<E>(file_path)?;
 
         let cs = ark_relations::r1cs::ConstraintSystem::<ScalarF<E>>::new_ref();
         circuit.clone().generate_constraints(cs.clone())?;
@@ -381,28 +300,6 @@ E: Pairing<ScalarField = Fr>,
         println!("  - Verifier Time (ccGroth): {:?}", verify_duration);
         println!("  - Verification Result: {}", ok);
 
-
-
-        println!("=== [2] Lasso Lookup Proofs: Softmax K1, K2, K3 ===");    
-        
-        let bundles = [
-            (&circuit.k1_softmax, b"lasso_k1"),
-            (&circuit.k2_softmax, b"lasso_k2"),
-            (&circuit.k3_softmax, b"lasso_k3"),
-        ];
-
-        for (bundle, label) in bundles {
-            // non-zero값 세기
-            let sparsity = bundle.limbs.iter().map(|b| b.len()).sum::<usize>();
-            assert!(SOFTMAX_M.is_power_of_two(), "SOFTMAX_M must be a power of two");
-            let log_M = SOFTMAX_M.trailing_zeros() as usize;
-            let gens = SparsePolyCommitmentGens::<G1>::new(b"gens_lasso", SOFTMAX_C, sparsity, SOFTMAX_C, log_M);
-            let lasso_start = Instant::now();
-            prove_lasso_for_softmax(bundle, &gens, &mut rng, label)?;
-            let lasso_duration = lasso_start.elapsed();
-            println!("  - Lasso Prove & Verify Time ({}): {:?}", std::str::from_utf8(label).unwrap(), lasso_duration);
-        }
-
     }
 
     Ok(())
@@ -410,15 +307,14 @@ E: Pairing<ScalarField = Fr>,
 
 #[test]
 fn combined_full_witness_test() {
-    let cs = ConstraintSystem::<Fr>::new_ref();
-    cs.set_mode(ark_relations::r1cs::SynthesisMode::Setup); 
+    // let cs = ConstraintSystem::<Fr>::new_ref();
+    // cs.set_mode(ark_relations::r1cs::SynthesisMode::Setup); 
 
-    let p = Path::new("attn_debug_outputs/attn_debug-model.transformer_0.mha.attn.witness.npz");
+    let p = Path::new("outputs/outputs-model.transformer_0.mha.attn.witness.npz");
     if p.exists() {
         println!("Running combined circuit test on {:?}", p);
         let res = run_paths::<Bn254>(p);
         if let Err(e) = res {
-            println!("failed constraint: {:?}", cs.which_is_unsatisfied());
             panic!("proof generate failed: {}", e);
         }
     }

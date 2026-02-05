@@ -13,18 +13,15 @@ def random_inputs_torch(batch, num_head, seq_len, head_dim, seed=42, device='cpu
     return Q, K, mask
 
 def quantize_with_auto_zero(a_float, b_float, scale_input=1<<8, input_0_default=0, check_uint64=True):
-    batch, num_head, seq_len, head_dim = a_float.shape
+    batch, num_head, rows_a, head_dim = a_float.shape
+    rows_b = b_float.shape[2]
+
     a_raw = np.round(a_float * float(scale_input)).astype(np.int64) # 스케일링 후 반올림하여 값을 정수화시키기
     b_raw = np.round(b_float * float(scale_input)).astype(np.int64)
     # 두 행렬에서 최소값을 찾기(올바른 zero point 계산을 위함)
-    min_a = int(a_raw.min())
-    min_b = int(b_raw.min())
-    min_val = min(min_a, min_b)
+    min_val = min(int(a_raw.min()), int(b_raw.min()))
     # 행렬의 모든 값 + input_0 >= 0 이 되도록 zero point 결정
-    input_0_needed = 0
-    if min_val < 0:
-        input_0_needed = -min_val
-    input_0 = max(int(input_0_default), int(input_0_needed))
+    input_0 = max(int(input_0_default), int(-min_val if min_val < 0 else 0))
     # 제로 포인트를 더해서 값의 중심축 잡아주기
     a_q = (a_raw + input_0).astype(np.int64)
     b_q = (b_raw + input_0).astype(np.int64)
@@ -43,18 +40,21 @@ def quantize_with_auto_zero(a_float, b_float, scale_input=1<<8, input_0_default=
     return a_q, b_q, input_0, a_raw, b_raw
 
 def decompose_targets(a_q, b_q, a_raw, b_raw_t, input_0, c0=0, multiplier=1):
+    # a_raw의 행과 b_raw_t의 열 크기를 각각 가져옴
     batch, num_head, seq_len, head_dim = a_raw.shape
+    cols = b_raw_t.shape[3]
     mask22 = (1 << 22) - 1
 
     # 양자화를 하지 않은 원래값으로 행렬곱을 수행함
+    # 결과 행렬의 크기에 맞게 s_vals 초기화 (리스트 대신 numpy object array 권장)
+    s_vals = np.zeros((batch, num_head, seq_len, cols), dtype=object)
     min_s = None
-    s_vals = [[[ [0 for j in range(seq_len)] for i in range(seq_len)] for h in range(num_head)] for n in range(batch)]
     for n in range(batch):
         for h in range(num_head):
             A_raw = a_raw[n,h]  
             B_raw = b_raw_t[n,h]  
             for i in range(seq_len):
-                for j in range(seq_len):
+                for j in range(cols):
                     s = 0
                     for k in range(head_dim):
                         aval = int(A_raw[i,k])
@@ -70,13 +70,13 @@ def decompose_targets(a_q, b_q, a_raw, b_raw_t, input_0, c0=0, multiplier=1):
         c0_needed = -min_s
     c0_used = max(int(c0), int(c0_needed))
 
-    c = np.zeros((batch, num_head, seq_len, seq_len), dtype=np.uint64)
+    c = np.zeros((batch, num_head, seq_len, cols), dtype=np.uint64)
     div = np.zeros_like(c)
     rem = np.zeros_like(c)
     for n in range(batch):
         for h in range(num_head):
             for i in range(seq_len):
-                for j in range(seq_len):
+                for j in range(cols):
                     s = int(s_vals[n][h][i][j])
                     target = (s + int(c0_used)) * int(multiplier) # 이때의 target값은 모두 양수여야 함
                     if target < 0:
@@ -89,6 +89,8 @@ def decompose_targets(a_q, b_q, a_raw, b_raw_t, input_0, c0=0, multiplier=1):
                     div[n,h,i,j] = np.uint64(div_8)
                     rem[n,h,i,j] = np.uint64(rem_22)
     return c, div, rem, c0_used
+
+
 
 # 모든 파일을 npz 파일로 패킹하여 저장
 def export_npz(path, a,b,c,div,rem,r_int,input_0,c0,multiplier,frac_bits,meta=None):

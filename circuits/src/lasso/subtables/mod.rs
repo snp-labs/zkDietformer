@@ -25,6 +25,7 @@ pub mod or;
 pub mod range_check;
 pub mod xor;
 pub mod softmax;
+pub mod gelu;
 
 #[cfg(test)]
 pub mod test;

@@ -1,72 +1,46 @@
-use anyhow::{Context, Result};
-use ndarray::{Ix0, Ix4, IxDyn};
-use ndarray_npy::NpzReader;
-use std::fs::File;
+/*use crate::{util::load::{read_array_u64, to_field_4d}};
 use ark_ff::PrimeField;
-use crate::circuits::freivalds_circuit::FreivaldsCircuit;
-use crate::util::load::read_array_u64;
+use ark_std::fs::File;
+use ndarray_npy::NpzReader;
+use ndarray::{Ix0, Ix4, ArrayD, IxDyn};
+use std::error::Error;
+
+pub fn read_array_i64(npz: &mut NpzReader<File>, name: &str) -> Result<ArrayD<i64>, Box<dyn Error>> {
+    let key = format!("{}.npy", name);
+    let arr = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>(&key)?;
+    Ok(arr.into_owned().into_dimensionality().unwrap())
+}
 
 pub fn load_freivalds_circuit<F: PrimeField>(
     npz: &mut NpzReader<File>,
-    suffix: &str,
-    r_challenge: F,
-    multiplier_global: F,
-) -> Result<FreivaldsCircuit<F>> {
-    // 1. 행렬 데이터 로드 (a, b, c, div, rem)
-    let a_arr = read_array_u64(npz, &format!("a{}", suffix)).context(format!("reading a{}", suffix))?;
-    let b_arr = read_array_u64(npz, &format!("b{}", suffix)).context(format!("reading b{}", suffix))?;
-    let c_arr = read_array_u64(npz, &format!("c{}", suffix)).context(format!("reading c{}", suffix))?;
-    let div_arr = read_array_u64(npz, &format!("div{}", suffix)).context(format!("reading div{}", suffix))?;
-    let rem_arr = read_array_u64(npz, &format!("rem{}", suffix)).context(format!("reading rem{}", suffix))?;
+    r_challenge: F
+) -> Result<MatmulBundle<F>, Box<dyn std::error::Error>> {
+    // 1. 행렬 데이터 로드 (whole_pipeline.py에서 저장한 키값 기준)
+    let q_q = read_array_i64(npz, "Q_q")?.into_dimensionality::<Ix4>()?;
+    let q_k = read_array_i64(npz, "Q_k")?.into_dimensionality::<Ix4>()?;
+    let q_y_sim = read_array_i64(npz, "Q_y1_sim")?.into_dimensionality::<Ix4>()?;
+    let r_mean_k = read_array_i64(npz, "R_mean_k")?.into_dimensionality::<Ix4>()?;
+    let r_matmul = read_array_i64(npz, "R_matmul_k1x")?.into_dimensionality::<Ix4>()?;
 
-    // 4차원 변환
-    let a_4 = a_arr.into_dimensionality::<Ix4>().context("a must be 4D")?;
-    let b_4 = b_arr.into_dimensionality::<Ix4>().context("b must be 4D")?;
-    let c_4 = c_arr.into_dimensionality::<Ix4>().context("c must be 4D")?;
-    let div_4 = div_arr.into_dimensionality::<Ix4>().context("div must be 4D")?;
-    let rem_4 = rem_arr.into_dimensionality::<Ix4>().context("rem must be 4D")?;
-
-    let shape = a_4.shape();
-    let (batch, num_head, seq_len, head_dim) = (shape[0], shape[1], shape[2], shape[3]);
-    let b_cols = b_4.shape()[3];
-    let c_cols = c_4.shape()[3];
-
-    // 2. 가변 배열 생성 및 채우기
-    let mut a_f = vec![vec![vec![vec![F::zero(); head_dim]; seq_len]; num_head]; batch];
-    let mut b_f = vec![vec![vec![vec![F::zero(); b_cols]; head_dim]; num_head]; batch];
-    let mut c_f = vec![vec![vec![vec![F::zero(); c_cols]; seq_len]; num_head]; batch];
-    let mut div_f = vec![vec![vec![vec![F::zero(); c_cols]; seq_len]; num_head]; batch];
-    let mut rem_f = vec![vec![vec![vec![F::zero(); c_cols]; seq_len]; num_head]; batch];
-
-    for ((n, h, i, k), val) in a_4.indexed_iter() { a_f[n][h][i][k] = F::from(*val); }
-    for ((n, h, k, i), val) in b_4.indexed_iter() { b_f[n][h][k][i] = F::from(*val); }
-    for ((n, h, i, j), val) in c_4.indexed_iter() { c_f[n][h][i][j] = F::from(*val); }
-    for ((n, h, i, j), val) in div_4.indexed_iter() { div_f[n][h][i][j] = F::from(*val); }
-    for ((n, h, i, j), val) in rem_4.indexed_iter() { rem_f[n][h][i][j] = F::from(*val); }
-
-    // 3. 스칼라 값 로드 (input_0, c_0_converted)
-    let input0_name = format!("input_0{}", suffix);
-    let c0_name = format!("c_0_converted{}", suffix);
-
-    let input_0 = F::from(npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&format!("{}.npy", input0_name))
-        .or_else(|_| npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&input0_name))
-        .map(|a| a.iter().next().copied().unwrap_or(0))
-        .unwrap_or(0));
-
-    let c_0_converted = F::from(npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&format!("{}.npy", c0_name))
-        .or_else(|_| npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&c0_name))
-        .map(|a| a.iter().next().copied().unwrap_or(0))
-        .unwrap_or(0));
-
-    Ok(FreivaldsCircuit {
-        a: a_f,
-        b: b_f,
-        c: c_f,
-        r: r_challenge,
-        remainder: rem_f,
-        div: div_f,
-        input_0,
-        c_0_converted,
-        multiplier: multiplier_global,
+    // 2. 양자화 파라미터 및 챌린지 로드
+    // int/float 타입을 필드 요소(F)로 변환
+    let z_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_q.npy")?.into_scalar();
+    let z_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_k.npy")?.into_scalar();
+    let z_y = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_y1.npy")?.into_scalar();
+    let m_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k1.npy")?.into_scalar();
+    let m_prime = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k1.npy")?.into_scalar();
+    
+    Ok(MatmulBundle {
+        q_q: to_field_4d(&q_q),
+        q_k: to_field_4d(&q_k),
+        q_y_sim: to_field_4d(&q_y_sim),
+        r_mean_k: to_field_4d(&r_mean_k),
+        r_matmul: to_field_4d(&r_matmul),
+        z_q: F::from(z_q),
+        z_k: F::from(z_k),
+        z_y: F::from(z_y),
+        m_k1: F::from(m_k1),
+        m_prime: F::from(m_prime),
+        r_challenge
     })
-}
+}*/

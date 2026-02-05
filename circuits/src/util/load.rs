@@ -5,13 +5,43 @@ use ark_std::{One};
 use ark_ff::PrimeField;
 use anyhow::{Context, Result};
 use ndarray_npy::NpzReader;
-use ndarray::{Array4, ArrayD, Ix4, Array2, Array0};
+use ndarray::{Array4, ArrayD, Ix4, Array2, Array0, IxDyn};
 use num_bigint::BigInt;
 
 //  npz 파일에서 unsigned 64비트 배열을 읽어오는 함수
 pub fn read_array_u64(npz: &mut NpzReader<File>, key: &str) -> Result<ArrayD<u64>, anyhow::Error> {
     let arr = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>(&format!("{}.npy", key))?;
     Ok(arr)
+}
+
+pub fn read_array_i64(npz: &mut NpzReader<File>, name: &str) -> Result<ArrayD<i64>, Box<dyn Error>> {
+    let key = format!("{}.npy", name);
+    let arr = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>(&key)?;
+    Ok(arr.into_owned().into_dimensionality().unwrap())
+}
+
+/// ndarray::Array4<u64> 데이터를 Vec<Vec<Vec<Vec<F>>>> 형태로 변환
+pub fn to_field_4d<F: PrimeField>(arr: &ndarray::Array4<i64>) -> Vec<Vec<Vec<Vec<F>>>> {
+    let (batch, head, seq, dim) = arr.dim();
+    let mut out_batch = Vec::with_capacity(batch);
+
+    for b in 0..batch {
+        let mut out_head = Vec::with_capacity(head);
+        for h in 0..head {
+            let mut out_seq = Vec::with_capacity(seq);
+            for s in 0..seq {
+                let mut out_dim = Vec::with_capacity(dim);
+                for d in 0..dim {
+                    // u64 값을 필드 요소 F로 변환
+                    out_dim.push(F::from(arr[[b, h, s, d]]));
+                }
+                out_seq.push(out_dim);
+            }
+            out_head.push(out_seq);
+        }
+        out_batch.push(out_head);
+    }
+    out_batch
 }
 
 /// npz 파일에서 데이터 로드하기[test/freivalds_proof_runner.rs 전용]

@@ -10,6 +10,9 @@ pub mod constraints;
 /// ReLU activation function gadget.
 pub mod relu;
 
+/// GeLU activation function gadget.
+pub mod gelu;
+
 pub use constraints::*;
 pub use relu::*;
 
