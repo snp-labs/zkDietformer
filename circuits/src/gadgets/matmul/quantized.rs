@@ -193,7 +193,7 @@ pub fn transpose_matrix<F: PrimeField>(m: &MatrixVar<F>) -> MatrixVar<F> {
     Ok(())
 }*/
 
-pub fn enforce_zen_matmul_logic<F: PrimeField>(
+pub fn enforce_freivald<F: PrimeField>(
     w_matrix: &MatrixVar<F>,        
     x_matrix_t: &MatrixVar<F>,      
     q_y_sim_head: &MatrixVar<F>,    

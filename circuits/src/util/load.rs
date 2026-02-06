@@ -21,7 +21,7 @@ pub fn read_array_i64(npz: &mut NpzReader<File>, name: &str) -> Result<ArrayD<i6
 }
 
 /// ndarray::Array4<u64> 데이터를 Vec<Vec<Vec<Vec<F>>>> 형태로 변환
-pub fn to_field_4d<F: PrimeField>(arr: &ndarray::Array4<i64>) -> Vec<Vec<Vec<Vec<F>>>> {
+pub fn to_field_4d_i64<F: PrimeField>(arr: &Array4<i64>) -> Vec<Vec<Vec<Vec<F>>>> {
     let (batch, head, seq, dim) = arr.dim();
     let mut out_batch = Vec::with_capacity(batch);
 
@@ -36,6 +36,101 @@ pub fn to_field_4d<F: PrimeField>(arr: &ndarray::Array4<i64>) -> Vec<Vec<Vec<Vec
                     out_dim.push(F::from(arr[[b, h, s, d]]));
                 }
                 out_seq.push(out_dim);
+            }
+            out_head.push(out_seq);
+        }
+        out_batch.push(out_head);
+    }
+    out_batch
+}
+
+pub fn to_field_4d_u64<F: PrimeField>(arr: &Array4<u64>) -> Vec<Vec<Vec<Vec<F>>>> {
+    let (b, h, s, l) = arr.dim();
+    let mut res_b = Vec::with_capacity(b);
+    for i in 0..b {
+        let mut res_h = Vec::with_capacity(h);
+        for j in 0..h {
+            let mut res_s = Vec::with_capacity(s);
+            for k in 0..s {
+                let mut res_l = Vec::with_capacity(l);
+                for m in 0..l {
+                    res_l.push(F::from(arr[[i, j, k, m]]));
+                }
+                res_s.push(res_l);
+            }
+            res_h.push(res_s);
+        }
+        res_b.push(res_h);
+    }
+    res_b
+}
+
+pub fn to_field_5d_i64<F: PrimeField>(arr: &ArrayD<i64>) -> Vec<Vec<Vec<Vec<Vec<F>>>>> {
+    let shape = arr.shape();
+    let (seg, b, h, s, l) = (shape[0], shape[1], shape[2], shape[3], shape[4]);
+    let mut res_seg = Vec::with_capacity(seg);
+
+    for i in 0..seg {
+        let mut res_b = Vec::with_capacity(b);
+        for j in 0..b {
+            let mut res_h = Vec::with_capacity(h);
+            for k in 0..h {
+                let mut res_s = Vec::with_capacity(s);
+                for m in 0..s {
+                    let mut res_l = Vec::with_capacity(l);
+                    for n in 0..l {
+                        res_l.push(F::from(arr[[i, j, k, m, n]]));
+                    }
+                    res_s.push(res_l);
+                }
+                res_h.push(res_s);
+            }
+            res_b.push(res_h);
+        }
+        res_seg.push(res_b);
+    }
+    res_seg
+}
+
+pub fn to_field_5d_u64<F: PrimeField>(arr: &ArrayD<u64>) -> Vec<Vec<Vec<Vec<Vec<F>>>>> {
+    let shape = arr.shape();
+    let (seg, b, h, s, l) = (shape[0], shape[1], shape[2], shape[3], shape[4]);
+    let mut res_seg = Vec::with_capacity(seg);
+
+    for i in 0..seg {
+        let mut res_b = Vec::with_capacity(b);
+        for j in 0..b {
+            let mut res_h = Vec::with_capacity(h);
+            for k in 0..h {
+                let mut res_s = Vec::with_capacity(s);
+                for m in 0..s {
+                    let mut res_l = Vec::with_capacity(l);
+                    for n in 0..l {
+                        res_l.push(F::from(arr[[i, j, k, m, n]]));
+                    }
+                    res_s.push(res_l);
+                }
+                res_h.push(res_s);
+            }
+            res_b.push(res_h);
+        }
+        res_seg.push(res_b);
+    }
+    res_seg
+}
+
+/// ndarray::Array3<u64> 데이터를 Vec<Vec<Vec<F>>> 형태로 변환 (B, H, S)
+pub fn to_field_3d_u64<F: PrimeField>(arr: &ndarray::Array3<u64>) -> Vec<Vec<Vec<F>>> {
+    let (batch, head, seq) = arr.dim();
+    let mut out_batch = Vec::with_capacity(batch);
+
+    for b in 0..batch {
+        let mut out_head = Vec::with_capacity(head);
+        for h in 0..head {
+            let mut out_seq = Vec::with_capacity(seq);
+            for s in 0..seq {
+                // u64 값을 필드 요소 F로 변환
+                out_seq.push(F::from(arr[[b, h, s]]));
             }
             out_head.push(out_seq);
         }

@@ -1,4 +1,6 @@
 use crate::config::{K_SEGMENTS, LIMB_BITS}; 
+use crate::gadgets::matmul::constraints::MatrixVar;
+use crate::gadgets::matmul::quantized::new_matrix_witness_4d;
 use std::fs::File;
 use std::path::Path;
 use std::error::Error;
@@ -12,181 +14,181 @@ use ark_r1cs_std::{
     prelude::{AllocVar, EqGadget},
 };
 
-
-/// 128비트 정수(u128) 하나를 고정된 비트 크기(limb_bits)단위를 가지는 k 세그먼트로 분해함.
-pub fn decompose_to_limbs_dynamic(mut unsigned: u128, limb_bits: usize, k_segments: usize) -> Vec<u128> {
-    let limb_mask: u128 = if limb_bits >= 128 { !0u128 } else { (1u128 << limb_bits) - 1u128 }; 
-    let mut limbs = vec![0u128; k_segments];
-    for k in 0..k_segments {
-        limbs[k] = (unsigned >> (k * limb_bits)) & limb_mask;
-    }
-    limbs
+pub struct SoftmaxWitnessVar<F: PrimeField> {
+    pub limbs: Vec<MatrixVar<F>>,      
+    pub exp_limbs: Vec<MatrixVar<F>>,  
+    pub exp_total: MatrixVar<F>,       
+    pub softmax_res: MatrixVar<F>,     
+    pub quotients: Vec<MatrixVar<F>>,   // [3][S][L] 중간 몫
+    pub remainders: Vec<MatrixVar<F>>,  // [4][S][L] 나머지
+    pub softmax_rem: MatrixVar<F>,
 }
 
-pub fn build_softmax_witnesses<F: PrimeField>(
-    matmul_ints: Vec<Vec<i128>>, // rows x cols
-    tables: &Vec<Vec<F>>,        // tables[k][limb_value]
-    limb_bits: usize,
-) -> (
-    Vec<Vec<Vec<Vec<F>>>>,                  // matmul_outputs: [batch=1][head=1][rows][cols]
-    Vec<Vec<Vec<Vec<Vec<F>>>>>,            // limbs:   [batch=1][head=1][rows][cols][K] as Vec for dynamic K
-    Vec<Vec<Vec<Vec<Vec<F>>>>>,            // exp_limb_vals: per-limb exp lookup value (Field)
-    Vec<Vec<Vec<Vec<F>>>>,                  // softmax_outputs same dims (normalized)
-) {
-    let rows = matmul_ints.len();
-    let cols = if rows > 0 { matmul_ints[0].len() } else { 0 };
-
-    let k_segments = tables.len();
-    // row length (table width)
-    let table_width = if k_segments > 0 { tables[0].len() } else { 0 };
-
-    // matmul_outputs as F
-    let mut matmul_outputs_field = vec![vec![vec![vec![F::zero(); cols]; rows]; 1]; 1];
-
-    // limbs / exp_limb_vals / softmax outputs (use Vec to hold K dynamically)
-    let mut limbs_field = vec![vec![vec![vec![vec![F::zero(); 0]; cols]; rows]; 1]; 1];
-    let mut exp_limb_vals_field = vec![vec![vec![vec![vec![F::zero(); 0]; cols]; rows]; 1]; 1];
-    let mut softmax_outputs_field = vec![vec![vec![vec![F::zero(); cols]; rows]; 1]; 1];
-
-    // initialize inner K-size vectors
-    for n in 0..1 {
-        for h in 0..1 {
-            for i in 0..rows {
-                for j in 0..cols {
-                    limbs_field[n][h][i][j] = vec![F::zero(); k_segments];
-                    exp_limb_vals_field[n][h][i][j] = vec![F::zero(); k_segments];
-                }
-            }
-        }
-    }
-
-    // First pass: decompose and lookup, store per-element exp_product in softmax_outputs_field
-    for i in 0..rows {
-        for j in 0..cols {
-            let val = matmul_ints[i][j];
-            if val < 0 {
-                panic!("Negative matmul output encountered (value={}) — implement signed mapping if needed", val);
-            }
-            let unsigned = val as u128;
-            let limbs = decompose_to_limbs_dynamic(unsigned, limb_bits, k_segments);
-
-            // convert matmul output to F (assume non-negative)
-            let x_f = F::from(unsigned);
-            matmul_outputs_field[0][0][i][j] = x_f;
-
-            // limbs -> to field; also look up per-limb exp fixed-point value from tables
-            let mut exp_prod = F::one();
-            for k in 0..k_segments {
-                let limb_val = limbs[k];
-                // bounds check: ensure limb_val < table_width
-                if (limb_val as usize) >= table_width {
-                    panic!(
-                        "limb value {} out of bounds for table width {}. \
-                         Check limb_bits used when generating tables (current limb_bits={}).",
-                        limb_val, table_width, limb_bits
-                    );
-                }
-                let limb_fe = F::from(limb_val);
-                limbs_field[0][0][i][j][k] = limb_fe;
-
-                // tables[k] is row k, index by limb_val
-                let e_val = tables[k][limb_val as usize];
-                exp_limb_vals_field[0][0][i][j][k] = e_val;
-
-                exp_prod *= e_val;
-            }
-
-            // store exp product for normalization later
-            softmax_outputs_field[0][0][i][j] = exp_prod;
-        }
-    }
-
-    // normalize per-row: s = exp_prod / sum_j exp_prod_j
-    for i in 0..rows {
-        let mut denom = F::zero();
-        for j in 0..cols {
-            denom += softmax_outputs_field[0][0][i][j];
-        }
-        for j in 0..cols {
-            let s = softmax_outputs_field[0][0][i][j] / denom;
-            softmax_outputs_field[0][0][i][j] = s;
-        }
-    }
-
-    (
-        matmul_outputs_field, // 이게 생 값. limb단위로 decompose하기 전
-        limbs_field, // 각 k segment번째 테이블 인덱스, 2^?까지 적용한 값임
-        exp_limb_vals_field, // 하나의 e^i에 대하여 세그먼트 나누어서 저장, e^한 상태임.
-        softmax_outputs_field, // 소프트 맥스 결과 e^i / sum 모든 e
-    )
-}
-
-/// Softmax 연산 데이터 묶음
-#[derive(Clone)]
-pub struct SoftmaxBundle<F: PrimeField> {
-    pub matmul_outputs: Vec<Vec<Vec<Vec<F>>>>,
-    pub limbs: Vec<Vec<Vec<Vec<[F; K_SEGMENTS]>>>>,
-    pub exp_limb_vals: Vec<Vec<Vec<Vec<[F; K_SEGMENTS]>>>>,
-    pub softmax_outputs: Vec<Vec<Vec<Vec<F>>>>,
-}
-
-/// 개별 Batch/Head의 Softmax 제약 조건을 생성하는 가젯 함수
-pub fn enforce_softmax<F: PrimeField>(
+pub fn new_matrix_witness_5d<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
-    bundle: &SoftmaxBundle<F>,
-) -> Result<(), SynthesisError> {
-    let batch_size = bundle.matmul_outputs.len();
-    if batch_size == 0 { return Ok(()); }
-    let head_size = bundle.matmul_outputs[0].len();
+    data: &Vec<Vec<Vec<Vec<Vec<F>>>>>,
+) -> Vec<Vec<Vec<MatrixVar<F>>>> {
+    data.iter()
+        .map(|d4| new_matrix_witness_4d(cs.clone(), d4))
+        .collect()
+}
 
-    for n in 0..batch_size {
-        for h in 0..head_size {
-            let rows = bundle.matmul_outputs[n][h].len();
-            let cols = if rows > 0 { bundle.matmul_outputs[n][h][0].len() } else { 0 };
-
-            for i in 0..rows {
-                let mut exp_prods_vars: Vec<FpVar<F>> = Vec::with_capacity(cols);
-                let mut softmax_vars: Vec<FpVar<F>> = Vec::with_capacity(cols);
-
-                for j in 0..cols {
-                    // 1. 입력 및 Limb 할당/재조립 검증
-                    let x_var = FpVar::new_witness(cs.clone(), || Ok(bundle.matmul_outputs[n][h][i][j]))?;
-                    let mut recomposed = FpVar::zero();
-                    let mut mul_const = 1u128;
-
-                    for k in 0..K_SEGMENTS {
-                        let l_v = FpVar::new_witness(cs.clone(), || Ok(bundle.limbs[n][h][i][j][k]))?;
-                        recomposed += l_v * FpVar::Constant(F::from(mul_const));
-                        mul_const <<= LIMB_BITS;
-                    }
-                    recomposed.enforce_equal(&x_var)?;
-
-                    // 2. Per-limb exponent 곱 계산
-                    let mut exp_prod_var = FpVar::Constant(F::one());
-                    for k in 0..K_SEGMENTS {
-                        let e_var = FpVar::new_witness(cs.clone(), || Ok(bundle.exp_limb_vals[n][h][i][j][k]))?;
-                        exp_prod_var *= e_var;
-                    }
-                    exp_prods_vars.push(exp_prod_var);
-
-                    // 3. Softmax 결과 Witness 할당
-                    let s_var = FpVar::new_witness(cs.clone(), || Ok(bundle.softmax_outputs[n][h][i][j]))?;
-                    softmax_vars.push(s_var);
-                }
-
-                // 4. Softmax 수식 검증 (분모 * Softmax = 분자)
-                let mut denom = FpVar::zero();
-                for ep in &exp_prods_vars { denom += ep; }
-
-                for (s_var, ep_var) in softmax_vars.iter().zip(exp_prods_vars.iter()) {
-                    (s_var * &denom).enforce_equal(ep_var)?;
-                }
-
-                // 5. 합계 1 검증
-                let mut sum_soft = FpVar::zero();
-                for s in &softmax_vars { sum_soft += s; }
-                sum_soft.enforce_equal(&FpVar::Constant(F::one()))?;
+// load.rs 또는 constraints.rs에 추가
+pub fn new_matrix_witness_3d<F: PrimeField>(
+    cs: ConstraintSystemRef<F>,
+    data: &Vec<Vec<Vec<F>>>,
+) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
+    let mut out_b = Vec::with_capacity(data.len());
+    for b in 0..data.len() {
+        let mut out_h = Vec::with_capacity(data[b].len());
+        for h in 0..data[b].len() {
+            let mut out_s = Vec::with_capacity(data[b][h].len());
+            for s in 0..data[b][h].len() {
+                out_s.push(FpVar::new_witness(cs.clone(), || Ok(data[b][h][s]))?);
             }
+            out_h.push(out_s);
+        }
+        out_b.push(out_h);
+    }
+    Ok(out_b)
+}
+
+pub fn get_softmax_witness_at<F: PrimeField>(
+    b: usize,
+    h: usize,
+    limbs_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
+    exp_limbs_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
+    exp_total_all: &Vec<Vec<MatrixVar<F>>>,
+    softmax_all: &Vec<Vec<MatrixVar<F>>>,
+    quotients_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
+    remainders_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
+    softmax_rem_all: &Vec<Vec<MatrixVar<F>>>,
+) -> SoftmaxWitnessVar<F> {
+    let mut limbs = Vec::new();
+    let mut exp_limbs = Vec::new();
+    let mut quotients = Vec::new();
+    let mut remainders = Vec::new();
+
+    for seg in 0..limbs_all.len() {
+        limbs.push(limbs_all[seg][b][h].clone());
+        exp_limbs.push(exp_limbs_all[seg][b][h].clone());
+    }
+    for seg in 0..quotients_all.len() {
+        quotients.push(quotients_all[seg][b][h].clone());
+    }
+    for seg in 0..remainders_all.len() {
+        remainders.push(remainders_all[seg][b][h].clone());
+    }
+
+    SoftmaxWitnessVar {
+        limbs,
+        exp_limbs,
+        quotients,
+        exp_total: exp_total_all[b][h].clone(),
+        softmax_res: softmax_all[b][h].clone(),
+        remainders,
+        softmax_rem: softmax_rem_all[b][h].clone(),
+    }
+}
+
+// constraints.rs
+
+pub fn enforce_softmax<F: PrimeField>(
+    q_sim: &MatrixVar<F>,       // [S][L]
+    r_matmul: &MatrixVar<F>,    // [S][L]
+    limbs: &[MatrixVar<F>],     // [K_SEGMENTS] 리스트, 각 Matrix는 [S][L]
+    exp_limbs: &[MatrixVar<F>], // [K_SEGMENTS] 리스트
+    q_exp: &[MatrixVar<F>],     // [K_SEGMENTS-2] 리스트
+    r_exp: &[MatrixVar<F>],     // [K_SEGMENTS-1] 리스트
+    exp_total: &MatrixVar<F>,    // [S][L]
+    exp_sum: &[FpVar<F>],       // [S] (L축 합계)
+    p_k1: &MatrixVar<F>,         // [S][L]
+    r_div: &MatrixVar<F>,        // [S][L]
+    frac_bits: usize,
+    two_k: &FpVar<F>,
+) -> Result<(), SynthesisError> {
+    let s_len = q_sim.len();
+    let l_len = q_sim[0].len();
+    let frac_scale = F::from(1u128 << frac_bits);
+
+    for i in 0..s_len {
+        for j in 0..l_len {
+            // 1. Bit-Decomposition (Limb) 검증 [cite: 203]
+            let mut x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
+            let mut limb_sum = FpVar::zero();
+            for k in 0..5 {
+                limb_sum += &limbs[k][i][j] * F::from(1u128 << (16 * k));
+            }
+            x_recovered.enforce_equal(&limb_sum)?;
+
+            // 2. Remainder-based Exp Multiplication 
+            let mut current_val = exp_limbs[0][i][j].clone();
+            for k in 0..4 {
+                let lhs = &current_val * &exp_limbs[k+1][i][j];
+                let next_val = if k == 3 { exp_total[i][j].clone() } else { q_exp[k][i][j].clone() };
+                let rhs = (&next_val * frac_scale) + &r_exp[k][i][j];
+                lhs.enforce_equal(&rhs)?;
+                current_val = next_val;
+            }
+
+            // 3. Division Check (나머지 기반 나눗셈) 
+            let lhs_div = &exp_total[i][j] * frac_scale;
+            let rhs_div = (&p_k1[i][j] * &exp_sum[i]) + &r_div[i][j];
+            lhs_div.enforce_equal(&rhs_div)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn enforce_softmax_without_sum<F: PrimeField>(
+    q_sim: &MatrixVar<F>,
+    r_matmul: &MatrixVar<F>,
+    limbs: &[MatrixVar<F>],
+    exp_limbs: &[MatrixVar<F>],
+    q_exp: &[MatrixVar<F>],
+    r_exp: &[MatrixVar<F>],
+    exp_total: &MatrixVar<F>,    // [S][L]
+    p_k1: &MatrixVar<F>,
+    r_div: &MatrixVar<F>,
+    frac_bits: usize,
+    two_k: &FpVar<F>,
+) -> Result<(), SynthesisError> {
+    let s_len = q_sim.len();
+    let l_len = q_sim[0].len();
+    let frac_scale = F::from(1u128 << frac_bits);
+
+    for i in 0..s_len {
+        // --- 내부에서 직접 Sum 계산 ---
+        // 각 행(i)의 모든 열(j)에 있는 exp_total 값을 합산합니다.
+        let mut row_exp_sum = FpVar::zero();
+        for j in 0..l_len {
+            row_exp_sum += &exp_total[i][j];
+        }
+
+        for j in 0..l_len {
+            // 1. Bit-Decomposition (Limb) 검증
+            let mut x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
+            let mut limb_sum = FpVar::zero();
+            for k in 0..5 {
+                limb_sum += &limbs[k][i][j] * F::from(1u128 << (16 * k));
+            }
+            x_recovered.enforce_equal(&limb_sum)?;
+
+            // 2. Remainder-based Exp Multiplication
+            let mut current_val = exp_limbs[0][i][j].clone();
+            for k in 0..4 {
+                let lhs = &current_val * &exp_limbs[k+1][i][j];
+                let next_val = if k == 3 { exp_total[i][j].clone() } else { q_exp[k][i][j].clone() };
+                let rhs = (&next_val * frac_scale) + &r_exp[k][i][j];
+                lhs.enforce_equal(&rhs)?;
+                current_val = next_val;
+            }
+
+            // 3. Division Check (계산된 row_exp_sum 사용)
+            // (exp_total << 32) == (P * row_exp_sum) + R_div
+            let lhs_div = &exp_total[i][j] * frac_scale;
+            let rhs_div = (&p_k1[i][j] * &row_exp_sum) + &r_div[i][j];
+            lhs_div.enforce_equal(&rhs_div)?;
         }
     }
     Ok(())

@@ -1,8 +1,8 @@
-use crate::{config::{SOFTMAX_C, SOFTMAX_M}, gadgets::matmul::quantized::MatmulData}; 
+use crate::{config::{SOFTMAX_C, SOFTMAX_M}, gadgets::matmul::quantized::MatmulData, util::load::{to_field_5d_i64, to_field_5d_u64}}; 
 use std::{fs::File, ops::{AddAssign, Mul},path::Path, str::FromStr};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
-use ndarray::{ArrayD, IxDyn, Ix0, Ix4, Array2, Ix2, IxDynImpl, arr0};
+use ndarray::{ArrayD, IxDyn, Ix0, Ix4, Array2, Ix2, Ix3, IxDynImpl, arr0};
 use ndarray_npy::{NpzReader, NpzWriter};
 use ark_std::{UniformRand, log2, marker::PhantomData, rand::{Rng, SeedableRng, rngs::StdRng}};
 use ark_bn254::{Bn254, Fr, G1Projective};
@@ -13,24 +13,26 @@ use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use num_bigint::BigInt;
 use crate::{
     cc_snark::cc_gro::{CcGroth16, prepare_verifying_key},
-    circuits::{softmax_circuit::{SoftmaxCircuit}},
     gadgets::{
-        activation::gelu::{enforce_gelu, GeluBundle},
         matmul::{
             constraints::{new_matrix_witness, MatrixVar}, 
             quantized::{
-                enforce_zen_matmul_logic, 
+                enforce_freivald, 
                 ZenParams, 
                 new_matrix_witness_4d, 
                 transpose_matrix, 
                 gen_challenge_vector,
                 compute_circuit_landmarks
             },},
-        softmax::constraints::{SoftmaxBundle, enforce_softmax},
-        layernorm::constraints::{LayerNormBundle, enforce_layernorm},
-    
+        softmax::{
+            constraints::{get_softmax_witness_at, 
+                enforce_softmax, 
+                new_matrix_witness_3d,
+                enforce_softmax_without_sum
+            },
+        }
     }, util::{
-        load::{read_array_i64, to_field_4d},
+        load::{read_array_i64, to_field_4d_i64, to_field_4d_u64, to_field_3d_u64},
     }, 
 };
 use ark_std::fs;
@@ -83,8 +85,23 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub m_prime_k3: F,
     pub z_sim_k3: F,
 
+    // softmax(Kernel1)
+    pub limbs_k1: Vec<Vec<Vec<Vec<Vec<F>>>>>,     // [K_SEGMENTS, B, H, S, L]
+    pub exp_limbs_k1: Vec<Vec<Vec<Vec<Vec<F>>>>>, // [K_SEGMENTS, B, H, S, L]
+    pub q_exp_k1: Vec<Vec<Vec<Vec<Vec<F>>>>>,     // [K_SEGMENTS-2, B, H, S, L] (중간 몫)
+    pub r_exp_k1: Vec<Vec<Vec<Vec<Vec<F>>>>>,     // [K_SEGMENTS-1, B, H, S, L] (중간 나머지)
+    pub exp_total_k1: Vec<Vec<Vec<Vec<F>>>>,      // 소프트맥스 분자 (최종 지수 합)
+    pub exp_sum_k1: Vec<Vec<Vec<F>>>,            // 소프트맥스 분모 (L 방향 합계)
+    pub p_k1: Vec<Vec<Vec<Vec<F>>>>,              // 최종 확률 P (몫)
+    pub r_div_k1: Vec<Vec<Vec<Vec<F>>>>,          // 나눗셈 나머지 R
+
+
+    pub frac_bits: usize,
+    pub limb_bits: usize,
+    pub k_segments: usize,
     pub r_challenge: F, 
     pub seg_size: usize,
+    pub k_bits: usize,
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
@@ -111,7 +128,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             r_matmul: new_matrix_witness_4d(cs.clone(), &self.r_matmul_k3),
         };
 
-        // 3. 파라미터 설정
+        // 3. 프리발드 파라미터 설정
         let params_k1 = ZenParams {
             m: FpVar::Constant(self.m_k1), m_prime: FpVar::Constant(self.m_prime_k1),
             z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.z_sim_k1),
@@ -128,7 +145,19 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             two_k: two_k.clone(),
         };
 
+        // 4. 소프트맥스 결과 데이터 할당
+        let limbs_vars = self.limbs_k1.iter().map(|l| new_matrix_witness_4d(cs.clone(), l));
+        let exp_limbs_vars = self.exp_limbs_k1.iter().map(|e| new_matrix_witness_4d(cs.clone(), e));
+        let q_exp_vars = self.q_exp_k1.iter().map(|q| new_matrix_witness_4d(cs.clone(), q));
+        let r_exp_vars = self.r_exp_k1.iter().map(|r| new_matrix_witness_4d(cs.clone(), r));
 
+        let exp_total_var = new_matrix_witness_4d(cs.clone(), &self.exp_total_k1);
+        let p_k1_var = new_matrix_witness_4d(cs.clone(), &self.p_k1);
+        let r_div_var = new_matrix_witness_4d(cs.clone(), &self.r_div_k1);
+        let exp_sum_var = new_matrix_witness_3d(cs.clone(), &self.exp_sum_k1)?; // 3차원 할당 함수 사용
+
+        let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
+        
         for b in 0..q_proc.len() {
             // 해당 배치의 Landmarks 계산
             let k_landmarks = compute_circuit_landmarks(cs.clone(), &k_proc[b], &r_mean_k1[b], self.seg_size)?;
@@ -138,7 +167,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let k_l_t = transpose_matrix(&k_landmarks[h]);
                 let r_pows_k1 = gen_challenge_vector(&r_var, k1_data.q_sim[b][h][0].len());
                 // Kernel 1
-                enforce_zen_matmul_logic(
+                enforce_freivald(
                     &q_proc[b][h], 
                     &k_l_t, 
                     &k1_data.q_sim[b][h], 
@@ -149,8 +178,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 // Kernel 2
                 let q_l_h = &q_landmarks[h];
-                let r_pows_k2 = gen_challenge_vector(&r_var, k2_data.q_sim[b][h][0].len());
-                enforce_zen_matmul_logic(
+                let r_pows_k2: Vec<FpVar<F>> = gen_challenge_vector(&r_var, k2_data.q_sim[b][h][0].len());
+                enforce_freivald(
                     q_l_h, 
                     &k_l_t, 
                     &k2_data.q_sim[b][h], 
@@ -161,7 +190,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 let k_full_t = transpose_matrix(&k_proc[b][h]);
                 let r_pows_k3 = gen_challenge_vector(&r_var, k3_data.q_sim[b][h][0].len()); 
-                enforce_zen_matmul_logic(
+                enforce_freivald(
                     &q_landmarks[h], 
                     &k_full_t, 
                     &k3_data.q_sim[b][h], 
@@ -169,6 +198,22 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &params_k3, 
                     &r_pows_k3
                 )?;
+
+                // Softmax Kernel 1 검증
+                enforce_softmax_without_sum(
+                    &k1_data.q_sim[b][h], 
+                    &k1_data.r_matmul[b][h],
+                    &limbs_vars.clone().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &exp_limbs_vars.clone().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &q_exp_vars.clone().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &r_exp_vars.clone().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &exp_total_var[b][h],
+                    &p_k1_var[b][h],
+                    &r_div_var[b][h],
+                    self.frac_bits,
+                    &two_k_var,
+                )?;
+                
             }
         }
 
@@ -216,35 +261,71 @@ where
     let m_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k3.npy")?.into_scalar();
     let m_prime_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k3.npy")?.into_scalar();
     let z_sim_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k3.npy")?.into_scalar();
+
+    let limbs_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("limbs_k1.npy")?; // [5, B, H, S, L]
+    let exp_limbs_k1 = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("exp_limbs_k1.npy")?;
+    let q_exp_k1 = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("Q_exp_k1.npy")?;
+    let r_exp_k1 = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("R_exp_k1.npy")?;
+    let exp_total_k1 = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("exp_total_k1.npy")?.into_dimensionality()?;
+    let exp_sum_k1_4d = npz.by_name::<ndarray::OwnedRepr<u64>, Ix4>("exp_sum_k1.npy")?;
+    // exp_sum_k1 was stored with shape (B, H, S, 1). Convert to (B, H, S) by dropping the last axis.
+    let shape4: (usize, usize, usize, usize) = exp_sum_k1_4d.dim();
+    let (b_dim, h_dim, s_dim, last_dim) = (shape4.0, shape4.1, shape4.2, shape4.3);
+    if last_dim != 1 {
+        return Err(anyhow::anyhow!("exp_sum_k1 last dimension expected to be 1, got {}", last_dim));
+    }
+    // into_shape will work because total elements match
+    let exp_sum_k1_3d = exp_sum_k1_4d.into_shape((b_dim, h_dim, s_dim))?; // Ix3
+    let p_k1 = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("P_k1.npy")?.into_dimensionality()?;
+    let r_div_k1 = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("R_div_k1.npy")?.into_dimensionality()?;
+
+    let frac_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
+    let limb_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("limb_bits.npy")?.into_scalar() as usize;
+    let k_segments = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("k_segments.npy")?.into_scalar() as usize;
+    let k_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
     // 6. NystromAttentionCircuit 인스턴스 생성
     Ok(NystromAttentionCircuit {
-        q_q: to_field_4d(&q_q),
-        q_k: to_field_4d(&q_k),
+        q_q: to_field_4d_i64(&q_q),
+        q_k: to_field_4d_i64(&q_k),
         z_q: E::ScalarField::from(z_q),
         z_k: E::ScalarField::from(z_k),
 
-        r_mean_k1: to_field_4d(&r_mean_k1),
-        q_sim_k1: to_field_4d(&q_sim_k1),
-        r_matmul_k1: to_field_4d(&r_matmul_k1),
+        r_mean_k1: to_field_4d_i64(&r_mean_k1),
+        q_sim_k1: to_field_4d_i64(&q_sim_k1),
+        r_matmul_k1: to_field_4d_i64(&r_matmul_k1),
         m_k1: E::ScalarField::from(m_k1),
         m_prime_k1: E::ScalarField::from(m_prime_k1),
         z_sim_k1: E::ScalarField::from(z_sim_k1),
 
-        r_mean_k2: to_field_4d(&r_mean_k2),
-        q_sim_k2: to_field_4d(&q_sim_k2),
-        r_matmul_k2: to_field_4d(&r_matmul_k2),
+        r_mean_k2: to_field_4d_i64(&r_mean_k2),
+        q_sim_k2: to_field_4d_i64(&q_sim_k2),
+        r_matmul_k2: to_field_4d_i64(&r_matmul_k2),
         m_k2: E::ScalarField::from(m_k2),
         m_prime_k2: E::ScalarField::from(m_prime_k2),
         z_sim_k2: E::ScalarField::from(z_sim_k2),
 
-        q_sim_k3: to_field_4d(&q_sim_k3), 
-        r_matmul_k3: to_field_4d(&r_matmul_k3), 
+        q_sim_k3: to_field_4d_i64(&q_sim_k3), 
+        r_matmul_k3: to_field_4d_i64(&r_matmul_k3), 
         m_k3: E::ScalarField::from(m_k3), 
         m_prime_k3: E::ScalarField::from(m_prime_k3), 
         z_sim_k3: E::ScalarField::from(z_sim_k3),
-        
+
+        // Softmax Kernel 1
+        limbs_k1: to_field_5d_i64(&limbs_k1),
+        exp_limbs_k1: to_field_5d_u64(&exp_limbs_k1),
+        q_exp_k1: to_field_5d_u64(&q_exp_k1),
+        r_exp_k1: to_field_5d_u64(&r_exp_k1),
+        exp_total_k1: to_field_4d_u64(&exp_total_k1),
+        exp_sum_k1: to_field_3d_u64(&exp_sum_k1_3d),
+        p_k1: to_field_4d_u64(&p_k1),
+        r_div_k1: to_field_4d_u64(&r_div_k1),
+
+        frac_bits: frac_bits,
+        limb_bits: limb_bits,
+        k_segments: k_segments,
         r_challenge: r,
         seg_size: seg,
+        k_bits: k_bits,
     })
 
     

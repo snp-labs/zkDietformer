@@ -64,7 +64,7 @@ def sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits=22):
     Q_y_sim = (numerator >> k_bits)
     R = numerator % (1 << k_bits) # Remainder Matrix 
     
-    return Q_y_sim.astype(np.int32), R.astype(np.int64)
+    return Q_y_sim.astype(np.int32), R.astype(np.int64), M_prime
 
 def _to_u64(arr):
     return arr.astype(np.uint64)

@@ -36,20 +36,34 @@ def debug_circuit_consistency(npz_path, k_bits=22):
         print(f"  ✅ Head {h}: K-Landmark {'Passed' if k_ok else 'FAILED'}, Q-Landmark {'Passed' if q_ok else 'FAILED'}")
 
     # [Step 2] Kernel 1 검증 (Q * K_L^T)
-    print("\n[Step 2] Verifying Kernel 1 Equality (Q * K_L^T)...")
-    verify_matmul_zen(Q_q, Q_landmarks_k, data['Q_sim_k1'], data['R_matmul_k1'], 
-                      int(data['M_k1']), int(data['M_prime_k1']), z_q, z_k, two_k)
+    kernels = [
+        ("Kernel 1", data['Q_sim_k1']),
+        ("Kernel 2", data['Q_sim_k2']),
+        ("Kernel 3", data['Q_sim_k3'])
+    ]
 
-    # [Step 3] Kernel 2 검증 (Q_L * K_L^T)
-    print("\n[Step 3] Verifying Kernel 2 Equality (Q_L * K_L^T)...")
-    verify_matmul_zen(Q_landmarks_q, Q_landmarks_k, data['Q_sim_k2'], data['R_matmul_k2'], 
-                      int(data['M_k2']), int(data['M_prime_k2']), z_q, z_k, two_k)
-    
+    for name, q_sim in kernels:
+        print(f"\n[Step] Verifying {name}...")
+        
+        # --- 음수 판별 코드 추가 ---
+        min_val = np.min(q_sim)
+        if min_val < 0:
+            print(f"  ❌ {name} Negative Value Detected! Min: {min_val}")
+            print(f"     (ZEN 설계 위반: z_y 또는 M_prime 설정이 너무 낮습니다.)") 
+        else:
+            print(f"  ✅ {name} All values are non-negative. (ZEN 설계 준수)") 
+        # -----------------------
 
-    # [Step 4] Kernel 3 검증 (Q_L * K^T)
-    print("\n[Step 4] Verifying Kernel 3 Equality (Q_L * K^T)...")
-    verify_matmul_zen(Q_landmarks_q, Q_k, data['Q_sim_k3'], data['R_matmul_k3'], 
-                      int(data['M_k3']), int(data['M_prime_k3']), z_q, z_k, two_k)
+        # 기존 검증 로직 호출
+        if name == "Kernel 1":
+            verify_matmul_zen(Q_q, Q_landmarks_k, data['Q_sim_k1'], data['R_matmul_k1'], 
+                              int(data['M_k1']), int(data['M_prime_k1']), z_q, z_k, two_k)
+        elif name == "Kernel 2":
+            verify_matmul_zen(Q_landmarks_q, Q_landmarks_k, data['Q_sim_k2'], data['R_matmul_k2'], 
+                              int(data['M_k2']), int(data['M_prime_k2']), z_q, z_k, two_k)
+        else:
+            verify_matmul_zen(Q_landmarks_q, Q_k, data['Q_sim_k3'], data['R_matmul_k3'], 
+                              int(data['M_k3']), int(data['M_prime_k3']), z_q, z_k, two_k)
 
 def verify_matmul_zen(W, X, Y_sim, R_mat, M, M_prime, z_w, z_x, two_k):
     """Freivalds 알고리즘 기반 ZEN 수식 검증"""
