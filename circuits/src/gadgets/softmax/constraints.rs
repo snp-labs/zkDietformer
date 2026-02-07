@@ -14,96 +14,53 @@ use ark_r1cs_std::{
     prelude::{AllocVar, EqGadget},
 };
 
-pub struct SoftmaxWitnessVar<F: PrimeField> {
-    pub limbs: Vec<MatrixVar<F>>,      
-    pub exp_limbs: Vec<MatrixVar<F>>,  
-    pub exp_total: MatrixVar<F>,       
-    pub softmax_res: MatrixVar<F>,     
-    pub quotients: Vec<MatrixVar<F>>,   // [3][S][L] 중간 몫
-    pub remainders: Vec<MatrixVar<F>>,  // [4][S][L] 나머지
-    pub softmax_rem: MatrixVar<F>,
+#[derive(Clone)]
+pub struct SoftmaxBundle<F: PrimeField> {
+    pub limbs: Vec<Vec<Vec<Vec<Vec<F>>>>>,
+    pub exp_limbs: Vec<Vec<Vec<Vec<Vec<F>>>>>,
+    pub q_exp: Vec<Vec<Vec<Vec<Vec<F>>>>>,
+    pub r_exp: Vec<Vec<Vec<Vec<Vec<F>>>>>,
+    pub exp_total: Vec<Vec<Vec<Vec<F>>>>,
+    pub p: Vec<Vec<Vec<Vec<F>>>>,
+    pub r_div: Vec<Vec<Vec<Vec<F>>>>,
 }
 
-pub fn new_matrix_witness_5d<F: PrimeField>(
-    cs: ConstraintSystemRef<F>,
-    data: &Vec<Vec<Vec<Vec<Vec<F>>>>>,
-) -> Vec<Vec<Vec<MatrixVar<F>>>> {
-    data.iter()
-        .map(|d4| new_matrix_witness_4d(cs.clone(), d4))
-        .collect()
-}
-
-// load.rs 또는 constraints.rs에 추가
-pub fn new_matrix_witness_3d<F: PrimeField>(
-    cs: ConstraintSystemRef<F>,
-    data: &Vec<Vec<Vec<F>>>,
-) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
-    let mut out_b = Vec::with_capacity(data.len());
-    for b in 0..data.len() {
-        let mut out_h = Vec::with_capacity(data[b].len());
-        for h in 0..data[b].len() {
-            let mut out_s = Vec::with_capacity(data[b][h].len());
-            for s in 0..data[b][h].len() {
-                out_s.push(FpVar::new_witness(cs.clone(), || Ok(data[b][h][s]))?);
-            }
-            out_h.push(out_s);
-        }
-        out_b.push(out_h);
-    }
-    Ok(out_b)
-}
-
-pub fn get_softmax_witness_at<F: PrimeField>(
-    b: usize,
-    h: usize,
-    limbs_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
-    exp_limbs_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
-    exp_total_all: &Vec<Vec<MatrixVar<F>>>,
-    softmax_all: &Vec<Vec<MatrixVar<F>>>,
-    quotients_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
-    remainders_all: &Vec<Vec<Vec<MatrixVar<F>>>>,
-    softmax_rem_all: &Vec<Vec<MatrixVar<F>>>,
-) -> SoftmaxWitnessVar<F> {
-    let mut limbs = Vec::new();
-    let mut exp_limbs = Vec::new();
-    let mut quotients = Vec::new();
-    let mut remainders = Vec::new();
-
-    for seg in 0..limbs_all.len() {
-        limbs.push(limbs_all[seg][b][h].clone());
-        exp_limbs.push(exp_limbs_all[seg][b][h].clone());
-    }
-    for seg in 0..quotients_all.len() {
-        quotients.push(quotients_all[seg][b][h].clone());
-    }
-    for seg in 0..remainders_all.len() {
-        remainders.push(remainders_all[seg][b][h].clone());
-    }
-
-    SoftmaxWitnessVar {
-        limbs,
-        exp_limbs,
-        quotients,
-        exp_total: exp_total_all[b][h].clone(),
-        softmax_res: softmax_all[b][h].clone(),
-        remainders,
-        softmax_rem: softmax_rem_all[b][h].clone(),
+impl<F: PrimeField> SoftmaxBundle<F> {
+    pub fn alloc_vars(&self, cs: ConstraintSystemRef<F>) -> Result<SoftmaxVarBundle<F>, SynthesisError> {
+        Ok(SoftmaxVarBundle {
+            limbs: self.limbs.iter().map(|l| new_matrix_witness_4d(cs.clone(), l)).collect(),
+            exp_limbs: self.exp_limbs.iter().map(|e| new_matrix_witness_4d(cs.clone(), e)).collect(),
+            q_exp: self.q_exp.iter().map(|q| new_matrix_witness_4d(cs.clone(), q)).collect(),
+            r_exp: self.r_exp.iter().map(|r| new_matrix_witness_4d(cs.clone(), r)).collect(),
+            exp_total: new_matrix_witness_4d(cs.clone(), &self.exp_total),
+            p: new_matrix_witness_4d(cs.clone(), &self.p),
+            r_div: new_matrix_witness_4d(cs.clone(), &self.r_div),
+        })
     }
 }
 
-// constraints.rs
+#[derive(Clone)]
+pub struct SoftmaxVarBundle<F: PrimeField> {
+    pub limbs: Vec<Vec<Vec<MatrixVar<F>>>>,      // [C][B][H][S][L]
+    pub exp_limbs: Vec<Vec<Vec<MatrixVar<F>>>>,
+    pub q_exp: Vec<Vec<Vec<MatrixVar<F>>>>,
+    pub r_exp: Vec<Vec<Vec<MatrixVar<F>>>>,
+    pub exp_total: Vec<Vec<MatrixVar<F>>>,       
+    pub p: Vec<Vec<MatrixVar<F>>>,
+    pub r_div: Vec<Vec<MatrixVar<F>>>,
+}
 
-pub fn enforce_softmax<F: PrimeField>(
-    q_sim: &MatrixVar<F>,       // [S][L]
-    r_matmul: &MatrixVar<F>,    // [S][L]
-    limbs: &[MatrixVar<F>],     // [K_SEGMENTS] 리스트, 각 Matrix는 [S][L]
-    exp_limbs: &[MatrixVar<F>], // [K_SEGMENTS] 리스트
-    q_exp: &[MatrixVar<F>],     // [K_SEGMENTS-2] 리스트
-    r_exp: &[MatrixVar<F>],     // [K_SEGMENTS-1] 리스트
-    exp_total: &MatrixVar<F>,    // [S][L]
-    exp_sum: &[FpVar<F>],       // [S] (L축 합계)
-    p_k1: &MatrixVar<F>,         // [S][L]
-    r_div: &MatrixVar<F>,        // [S][L]
+pub fn enforce_softmax_sum<F: PrimeField>(
+    q_sim: &MatrixVar<F>,       
+    r_matmul: &MatrixVar<F>,    
+    limbs: &[MatrixVar<F>],     
+    exp_limbs: &[MatrixVar<F>], 
+    q_exp: &[MatrixVar<F>],     
+    r_exp: &[MatrixVar<F>],     
+    exp_total: &MatrixVar<F>,    
+    exp_sum: &[FpVar<F>],       
+    p_k1: &MatrixVar<F>,         
+    r_div: &MatrixVar<F>,        
     frac_bits: usize,
     two_k: &FpVar<F>,
 ) -> Result<(), SynthesisError> {
@@ -113,7 +70,7 @@ pub fn enforce_softmax<F: PrimeField>(
 
     for i in 0..s_len {
         for j in 0..l_len {
-            // 1. Bit-Decomposition (Limb) 검증 [cite: 203]
+            // 1. Bit-Decomposition (Limb) 검증
             let mut x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
             let mut limb_sum = FpVar::zero();
             for k in 0..5 {
@@ -140,14 +97,14 @@ pub fn enforce_softmax<F: PrimeField>(
     Ok(())
 }
 
-pub fn enforce_softmax_without_sum<F: PrimeField>(
+pub fn enforce_softmax<F: PrimeField>(
     q_sim: &MatrixVar<F>,
     r_matmul: &MatrixVar<F>,
     limbs: &[MatrixVar<F>],
     exp_limbs: &[MatrixVar<F>],
     q_exp: &[MatrixVar<F>],
     r_exp: &[MatrixVar<F>],
-    exp_total: &MatrixVar<F>,    // [S][L]
+    exp_total: &MatrixVar<F>,    
     p_k1: &MatrixVar<F>,
     r_div: &MatrixVar<F>,
     frac_bits: usize,
@@ -158,8 +115,7 @@ pub fn enforce_softmax_without_sum<F: PrimeField>(
     let frac_scale = F::from(1u128 << frac_bits);
 
     for i in 0..s_len {
-        // --- 내부에서 직접 Sum 계산 ---
-        // 각 행(i)의 모든 열(j)에 있는 exp_total 값을 합산합니다.
+        // 각 행(i)의 모든 열(j)에 있는 exp_total 값을 합산
         let mut row_exp_sum = FpVar::zero();
         for j in 0..l_len {
             row_exp_sum += &exp_total[i][j];

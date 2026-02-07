@@ -76,11 +76,31 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     table_path = generate_softmax_tables("outputs", s_q, s_k, k_bits, FRAC_BITS)
     sm_tables = np.load(table_path)['tables'] 
 
+    ### softmax(kernel)
     limbs_k1, exp_limbs_k1 = extract_exp_from_segments(Q_y1_sim, R_matmul_k1, sm_tables, k_bits)
     exp_total_k1, Q_exp_k1, R_exp_k1 = combine_exp_limbs(exp_limbs_k1, FRAC_BITS)
     exp_sum_k1 = np.sum(exp_total_k1, axis=-1, keepdims=True)
     P_k1 = (exp_total_k1 << FRAC_BITS) // exp_sum_k1
     R_div_k1 = (exp_total_k1 << FRAC_BITS) % exp_sum_k1
+
+    ### softmax(kernel2) 
+    limbs_k2, exp_limbs_k2 = extract_exp_from_segments(Q_y2_sim, R_matmul_k2, sm_tables, k_bits)
+    exp_total_k2, Q_exp_k2, R_exp_k2 = combine_exp_limbs(exp_limbs_k2, FRAC_BITS)
+    exp_sum_k2 = np.sum(exp_total_k2, axis=-1, keepdims=True)
+    P_k2 = (exp_total_k2 << FRAC_BITS) // exp_sum_k2
+    R_div_k2 = (exp_total_k2 << FRAC_BITS) % exp_sum_k2
+
+    ### softmax(kernel3) 
+    mask = debug['mask'] # [B, S]
+    mask_4d = mask[:, None, None, :].astype(np.int64) # [B, 1, 1, S]
+    Q_sim_k3_masked = Q_sim_k3 * mask_4d
+
+    limbs_k3, exp_limbs_k3 = extract_exp_from_segments(Q_sim_k3_masked, R_matmul_k3, sm_tables, k_bits)
+    exp_total_k3, Q_exp_k3, R_exp_k3 = combine_exp_limbs(exp_limbs_k3, FRAC_BITS)
+    exp_sum_k3 = np.sum(exp_total_k3, axis=-1, keepdims=True)
+    P_k3 = (exp_total_k3 << FRAC_BITS) // exp_sum_k3
+    R_div_k3 = (exp_total_k3 << FRAC_BITS) % exp_sum_k3
+
 
     np.savez_compressed(
         out_npz_path,
@@ -118,12 +138,30 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         exp_sum_k1=exp_sum_k1.astype(np.uint64),
         P_k1=P_k1.astype(np.uint64),
         R_div_k1=R_div_k1.astype(np.uint64),
+        ### softmax(kernel2)
+        limbs_k2=limbs_k2.astype(np.int64), 
+        exp_limbs_k2=exp_limbs_k2.astype(np.uint64),
+        Q_exp_k2=np.stack(Q_exp_k2, axis=0).astype(np.uint64),
+        R_exp_k2=np.stack(R_exp_k2, axis=0).astype(np.uint64),
+        exp_total_k2=exp_total_k2.astype(np.uint64),
+        exp_sum_k2=exp_sum_k2.astype(np.uint64),
+        P_k2=P_k2.astype(np.uint64),
+        R_div_k2=R_div_k2.astype(np.uint64),
+        ### softmax(kernel3)
+        limbs_k3=limbs_k3.astype(np.int64), 
+        exp_limbs_k3=exp_limbs_k3.astype(np.uint64),
+        Q_exp_k3=np.stack(Q_exp_k3, axis=0).astype(np.uint64),
+        R_exp_k3=np.stack(R_exp_k3, axis=0).astype(np.uint64), # 변수명 소문자 주의
+        exp_total_k3=exp_total_k3.astype(np.uint64),
+        P_k3=P_k3.astype(np.uint64), # 변수명 p_k3로 통일
+        R_div_k3=R_div_k3.astype(np.uint64),
         ### 추가 정보
         sm_tables=sm_tables,
         frac_bits=np.int32(FRAC_BITS),
         limb_bits=np.int32(LIMB_BITS),
         k_segments=np.int32(K_SEGMENTS),
         seg_size=np.int64(seg),
-        k_bits=np.int32(k_bits)
+        k_bits=np.int32(k_bits),
+        mask=mask.astype(np.int64)
     )
     

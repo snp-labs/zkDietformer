@@ -4,8 +4,17 @@ use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::R1CSVar;
-use crate::gadgets::dot_prod::constraints::*;
-use crate::gadgets::matmul::constraints::*;
+use crate::gadgets::{dot_prod::constraints::*, matmul::constraints::*};
+
+#[derive(Clone)]
+pub struct MatmulBundle<F: PrimeField> {
+    pub r_mean: Vec<Vec<Vec<Vec<F>>>>,
+    pub q_sim: Vec<Vec<Vec<Vec<F>>>>,
+    pub r_matmul: Vec<Vec<Vec<Vec<F>>>>,
+    pub m: F,
+    pub m_prime: F,
+    pub z_sim: F,
+}
 
 #[derive(Clone)]
 pub struct ZenParams<F: PrimeField> {
@@ -21,6 +30,34 @@ pub struct ZenParams<F: PrimeField> {
 pub struct MatmulData<F: PrimeField> {
     pub q_sim: Vec<Vec<MatrixVar<F>>>,
     pub r_matmul: Vec<Vec<MatrixVar<F>>>,
+}
+
+impl<F: PrimeField> MatmulBundle<F> {
+    pub fn alloc_and_setup(
+        &self, 
+        cs: ConstraintSystemRef<F>, 
+        z_q: F, 
+        z_k: F, 
+        two_k: &FpVar<F>
+    ) -> (MatmulData<F>, ZenParams<F>) {
+        // 1. 위트니스 할당
+        let data = MatmulData {
+            q_sim: new_matrix_witness_4d(cs.clone(), &self.q_sim),
+            r_matmul: new_matrix_witness_4d(cs, &self.r_matmul),
+        };
+
+        // 2. 파라미터 설정
+        let params = ZenParams {
+            m: FpVar::Constant(self.m),
+            m_prime: FpVar::Constant(self.m_prime),
+            z_w: FpVar::Constant(z_q),
+            z_x: FpVar::Constant(z_k),
+            z_y: FpVar::Constant(self.z_sim),
+            two_k: two_k.clone(),
+        };
+
+        (data, params)
+    }
 }
 
 pub fn new_matrix_witness_4d<F: PrimeField>(

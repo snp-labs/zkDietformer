@@ -17,7 +17,7 @@ static SOFTMAX_CACHE: OnceLock<Array2<u64>> = OnceLock::new();
 /// 파일에서 테이블을 한 번만 로드하는 헬퍼 함수
 fn get_or_init_softmax_cache(c: usize, m: usize) -> &'static Array2<u64> {
     SOFTMAX_CACHE.get_or_init(|| {
-        let lookup_npz_path = "tmp_tables/embedded_softmax_for_lookup.npz".to_string();
+        let lookup_npz_path = "outputs/softmax_tables.npz".to_string();
         let path = Path::new(&lookup_npz_path);
 
         let file = File::open(path)
@@ -133,8 +133,8 @@ mod test {
     const WIDTH: usize = 1 << SEG_LIMB_BITS;
 
     fn setup_test_npz() {
-        let dir = "tmp_tables";
-        let path = "tmp_tables/embedded_softmax_for_lookup.npz";
+        let dir = "outputs";
+        let path = "outputs/softmax_tables.npz";
         fs::create_dir_all(dir).unwrap();
 
         if !Path::new(path).exists() {

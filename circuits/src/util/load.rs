@@ -119,7 +119,7 @@ pub fn to_field_5d_u64<F: PrimeField>(arr: &ArrayD<u64>) -> Vec<Vec<Vec<Vec<Vec<
     res_seg
 }
 
-/// ndarray::Array3<u64> 데이터를 Vec<Vec<Vec<F>>> 형태로 변환 (B, H, S)
+
 pub fn to_field_3d_u64<F: PrimeField>(arr: &ndarray::Array3<u64>) -> Vec<Vec<Vec<F>>> {
     let (batch, head, seq) = arr.dim();
     let mut out_batch = Vec::with_capacity(batch);
@@ -137,6 +137,20 @@ pub fn to_field_3d_u64<F: PrimeField>(arr: &ndarray::Array3<u64>) -> Vec<Vec<Vec
         out_batch.push(out_head);
     }
     out_batch
+}
+
+
+pub fn to_field_2d_i64<F: PrimeField>(arr: &ndarray::Array2<i64>) -> Vec<Vec<F>> {
+    let (rows, cols) = arr.dim();
+    let mut out = Vec::with_capacity(rows);
+    for i in 0..rows {
+        let mut row = Vec::with_capacity(cols);
+        for j in 0..cols {
+            row.push(F::from(arr[[i, j]]));
+        }
+        out.push(row);
+    }
+    out
 }
 
 /// 테이블 로드하기 (필드 요소로 변환)
