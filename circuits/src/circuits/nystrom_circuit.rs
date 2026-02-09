@@ -2,7 +2,7 @@
 use std::{time::Instant, fs::File, ops::{AddAssign, Mul},path::Path, str::FromStr};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
-use ndarray::{ArrayD, IxDyn, Ix0, Ix4, Array2, Ix2, Ix3, IxDynImpl, arr0};
+use ndarray::{ArrayD, IxDyn, Ix0, Ix1, Ix4, Array2, Ix2, Ix3, IxDynImpl, arr0};
 use ndarray_npy::{NpzReader, NpzWriter};
 use ark_std::{fs, UniformRand, log2, marker::PhantomData, rand::{Rng, SeedableRng, rngs::StdRng}};
 use ark_bn254::{Bn254, Fr, G1Projective};
@@ -14,31 +14,17 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    config::{SOFTMAX_C, SOFTMAX_M}, gadgets::matmul::quantized::MatmulData, util::load::{to_field_5d_i64, to_field_5d_u64},
-    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key},
-    gadgets::{
-        matmul::{
-            constraints::{new_matrix_witness, MatrixVar}, 
-            quantized::{
-                enforce_freivald, 
-                ZenParams, 
-                new_matrix_witness_4d, 
-                transpose_matrix, 
-                gen_challenge_vector,
-                compute_circuit_landmarks, MatmulBundle}},
-        softmax::{constraints::{enforce_softmax, SoftmaxBundle},}
-    }, util::{load::{read_array_i64, to_field_4d_i64, to_field_4d_u64, to_field_3d_u64, to_field_2d_i64}}, 
-    lasso::{
+    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{SOFTMAX_C, SOFTMAX_M}, 
+    gadgets::{matmul::{constraints::{MatrixVar, new_matrix_witness}, 
+    quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
             surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
         },
         subtables::{
-            and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
-            softmax::SoftmaxSubtableStrategy,
-            SubtableStrategy,
+            SubtableStrategy, and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
-    },
+    }, util::load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64}
 };
 
 type G1 = G1Projective;
@@ -46,32 +32,12 @@ type G1 = G1Projective;
 pub struct NystromAttentionCircuit<F: PrimeField> {
     // 공통 입력 (한 번만 로드)
     pub q_q: Vec<Vec<Vec<Vec<F>>>>,       
-    pub q_k: Vec<Vec<Vec<Vec<F>>>>,       
+    pub q_k: Vec<Vec<Vec<Vec<F>>>>,     
+    pub q_v: Vec<Vec<Vec<Vec<F>>>>,  
     pub z_q: F,      
-    pub z_k: F,      
-    
-    // Kernel 1
-    /*pub r_mean_k1: Vec<Vec<Vec<Vec<F>>>>, 
-    pub q_sim_k1: Vec<Vec<Vec<Vec<F>>>>,
-    pub r_matmul_k1: Vec<Vec<Vec<Vec<F>>>>,
-    pub m_k1: F,
-    pub m_prime_k1: F,
-    pub z_sim_k1: F,
+    pub z_k: F, 
+    pub z_v: F,
 
-    // Kernel 2
-    pub r_mean_k2: Vec<Vec<Vec<Vec<F>>>>,
-    pub q_sim_k2: Vec<Vec<Vec<Vec<F>>>>,
-    pub r_matmul_k2: Vec<Vec<Vec<Vec<F>>>>,
-    pub m_k2: F,
-    pub m_prime_k2: F,
-    pub z_sim_k2: F,
-
-    // Kernel 3
-    pub q_sim_k3: Vec<Vec<Vec<Vec<F>>>>,
-    pub r_matmul_k3: Vec<Vec<Vec<Vec<F>>>>,
-    pub m_k3: F,
-    pub m_prime_k3: F,
-    pub z_sim_k3: F,*/
     pub matmul1: MatmulBundle<F>,
     pub matmul2: MatmulBundle<F>,
     pub matmul3: MatmulBundle<F>,
@@ -80,6 +46,12 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub sm1: SoftmaxBundle<F>,
     pub sm2: SoftmaxBundle<F>,
     pub sm3: SoftmaxBundle<F>,
+
+    pub pseudo_inv: PseudoinverseBundle<F>,
+
+    pub matmul_temp: MatmulBundle<F>,
+    pub matmul_mid: MatmulBundle<F>,
+    pub matmul_x: MatmulBundle<F>,
 
     pub frac_bits: usize,
     pub limb_bits: usize,
@@ -92,7 +64,7 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
-        let two_k = FpVar::Constant(F::from(1u64 << 22));
+        let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
 
         // 1. 공통 입력 및 위트니스 할당 ([B][H][S][D])
         let q_proc = new_matrix_witness_4d(cs.clone(), &self.q_q);
@@ -101,45 +73,20 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let r_mean_k2 = new_matrix_witness_4d(cs.clone(), &self.matmul2.r_mean);
 
         // 2. Kernel 결과 데이터 할당
-        /*let k1_data = MatmulData {
-            q_sim: new_matrix_witness_4d(cs.clone(), &self.matmul1.q_sim),
-            r_matmul: new_matrix_witness_4d(cs.clone(), &self.matmul1.r_matmul),
-        };
-        let k2_data = MatmulData {
-            q_sim: new_matrix_witness_4d(cs.clone(), &self.matmul2.q_sim),
-            r_matmul: new_matrix_witness_4d(cs.clone(), &self.matmul2.r_matmul),
-        };
-        let k3_data = MatmulData {
-            q_sim: new_matrix_witness_4d(cs.clone(), &self.matmul3.q_sim),
-            r_matmul: new_matrix_witness_4d(cs.clone(), &self.matmul3.r_matmul),
-        };
-
-        // 3. 프리발드 파라미터 설정
-        let params_k1 = ZenParams {
-            m: FpVar::Constant(self.matmul1.m), m_prime: FpVar::Constant(self.matmul1.m_prime),
-            z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.matmul1.z_sim),
-            two_k: two_k.clone(),
-        };
-        let params_k2 = ZenParams {
-            m: FpVar::Constant(self.matmul2.m), m_prime: FpVar::Constant(self.matmul2.m_prime),
-            z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.matmul2.z_sim),
-            two_k: two_k.clone(),
-        };
-        let params_k3 = ZenParams {
-            m: FpVar::Constant(self.matmul3.m), m_prime: FpVar::Constant(self.matmul3.m_prime),
-            z_w: FpVar::Constant(self.z_q), z_x: FpVar::Constant(self.z_k), z_y: FpVar::Constant(self.matmul3.z_sim),
-            two_k: two_k.clone(),
-        };*/
-        let (k1_data, params_k1) = self.matmul1.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k);
-        let (k2_data, params_k2) = self.matmul2.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k);
-        let (k3_data, params_k3) = self.matmul3.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k);
+        let (k1_data, params_k1) = self.matmul1.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k_var);
+        let (k2_data, params_k2) = self.matmul2.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k_var);
+        let (k3_data, params_k3) = self.matmul3.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k_var);
 
         let mask_var = new_matrix_witness(cs.clone(), &self.mask);
         let sm1_vars = self.sm1.alloc_vars(cs.clone())?;
         let sm2_vars = self.sm2.alloc_vars(cs.clone())?;
         let sm3_vars = self.sm3.alloc_vars(cs.clone())?;
 
-        let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
+        // temp
+        let v_proc = new_matrix_witness_4d(cs.clone(), &self.q_v); 
+        let (temp_data, params_temp) = self.matmul_temp.alloc_and_setup(cs.clone(), F::zero(), self.z_v, &two_k_var);
+        let (mid_data, params_mid) = self.matmul_mid.alloc_and_setup(cs.clone(), F::zero(), self.pseudo_inv.z_inv, &two_k_var);
+        let (x_data, params_x) = self.matmul_x.alloc_and_setup(cs.clone(), self.matmul_mid.z_sim, self.matmul_temp.z_sim, &two_k_var);
         
         for b in 0..q_proc.len() {
             // 해당 배치의 Landmarks 계산
@@ -150,14 +97,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let k_l_t = transpose_matrix(&k_landmarks[h]);
                 let r_pows_k1 = gen_challenge_vector(&r_var, k1_data.q_sim[b][h][0].len());
                 // Kernel 1
-                enforce_freivald(
+                /*enforce_freivald(
                     &q_proc[b][h], 
                     &k_l_t, 
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h], 
                     &params_k1, 
                     &r_pows_k1
-                )?;
+                )?;*/
 
                 // Kernel 2
                 let q_l_h = &q_landmarks[h];
@@ -173,7 +120,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 let k_full_t = transpose_matrix(&k_proc[b][h]);
                 let r_pows_k3 = gen_challenge_vector(&r_var, k3_data.q_sim[b][h][0].len()); 
-                enforce_freivald(
+                /*enforce_freivald(
                     &q_landmarks[h], 
                     &k_full_t, 
                     &k3_data.q_sim[b][h], 
@@ -210,7 +157,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm2_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                )?;
+                )?;*/
 
                 // Kernel 3 Matmul 결과인 k3_data.q_sim[b][h]는 [L][S] 형태입니다.
                 let zero_var = FpVar::zero();
@@ -233,7 +180,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     }
                 }
 
-                enforce_softmax(
+                /*enforce_softmax(
                     &masked_q_sim_k3, // 마스킹 적용됨
                     &k3_data.r_matmul[b][h],
                     &sm3_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
@@ -245,8 +192,115 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm3_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
+                )?;*/
+
+                // moore-penrose
+                let q_inv_var = new_matrix_witness_4d(cs.clone(), &self.pseudo_inv.q_inv);
+                let q_y_vars = self.pseudo_inv.q_y_intermediates.iter()
+                    .map(|q_step| new_matrix_witness_4d(cs.clone(), q_step))
+                    .collect::<Vec<_>>();
+                let r_inv_vars = self.pseudo_inv.r_inv_remainders.iter()
+                    .map(|r_step| new_matrix_witness_4d(cs.clone(), r_step))
+                    .collect::<Vec<_>>();
+
+                let z_zero = FpVar::zero();
+                let z_inv = FpVar::Constant(self.pseudo_inv.z_inv);
+
+                let mut inv_params = Vec::new();
+                for i in 0..4 {
+                    let (zw, zx, zy) = match i {
+                        0 => (&z_zero, &z_inv, &z_zero), 
+                        1 => (&z_zero, &z_zero, &z_zero), 
+                        2 => (&z_inv, &z_zero, &z_inv),  
+                        3 => (&z_inv, &z_inv, &z_inv),   
+                        _ => unreachable!(),
+                    };
+
+                    inv_params.push(ZenParams {
+                        m: FpVar::Constant(self.pseudo_inv.m_inv[i]),
+                        m_prime: FpVar::Constant(self.pseudo_inv.m_prime_inv[i]),
+                        z_w: zw.clone(),
+                        z_x: zx.clone(),
+                        z_y: zy.clone(),
+                        two_k: two_k_var.clone(),
+                    });
+                }
+
+                let r_pows_inv = gen_challenge_vector(&r_var, q_inv_var[b][h].len());
+
+                // A * A_inv * A = A
+                // Step 1: P_k2 * Q_inv_k2 = Q_y1
+                enforce_freivald(
+                    &sm2_vars.p[b][h], 
+                    &q_inv_var[b][h], 
+                    &q_y_vars[0][b][h], 
+                    &r_inv_vars[0][b][h], 
+                    &inv_params[0], 
+                    &r_pows_inv
+                )?;
+
+                // Step 2: Q_y1 * P_k2 = P_k2
+                enforce_freivald(
+                    &q_y_vars[0][b][h], 
+                    &sm2_vars.p[b][h], 
+                    &q_y_vars[1][b][h],
+                    &r_inv_vars[1][b][h], 
+                    &inv_params[1], 
+                    &r_pows_inv
                 )?;
                 
+                // A_inv * A * A_inv = A_inv
+                // Step 2-1: Q_inv (A+) * P_k2 (A) = Q_y3
+                enforce_freivald(
+                    &q_inv_var[b][h],             
+                    &sm2_vars.p[b][h], 
+                    &q_y_vars[2][b][h],             
+                    &r_inv_vars[2][b][h],        
+                    &inv_params[2],              
+                    &r_pows_inv
+                )?;
+
+                // Step 2-2: Q_y3 * Q_inv (A+) = Q_y4
+                enforce_freivald(
+                    &q_y_vars[2][b][h],            
+                    &q_inv_var[b][h],
+                    &q_y_vars[3][b][h],             
+                    &r_inv_vars[3][b][h],       
+                    &inv_params[3],             
+                    &r_pows_inv
+                )?;
+
+                let r_pows_temp = gen_challenge_vector(&r_var, temp_data.q_sim[b][h][0].len());
+                enforce_freivald(
+                    &sm3_vars.p[b][h],            
+                    &v_proc[b][h],                
+                    &temp_data.q_sim[b][h],       
+                    &temp_data.r_matmul[b][h],    
+                    &params_temp, 
+                    &r_pows_temp                  
+                )?;
+
+                let r_pows_mid = gen_challenge_vector(&r_var, mid_data.q_sim[b][h][0].len()); // 길이 L
+                enforce_freivald(
+                    &sm1_vars.p[b][h],        
+                    &q_inv_var[b][h],         
+                    &mid_data.q_sim[b][h],    
+                    &mid_data.r_matmul[b][h], 
+                    &params_mid, 
+                    &r_pows_mid
+                )?;
+
+
+                let r_pows_x = gen_challenge_vector(&r_var, x_data.q_sim[b][h][0].len()); // 길이 D
+                enforce_freivald(
+                    &mid_data.q_sim[b][h],    
+                    &temp_data.q_sim[b][h],   
+                    &x_data.q_sim[b][h],      
+                    &x_data.r_matmul[b][h],  
+                    &params_x, 
+                    &r_pows_x
+                )?;
+            
             }
         }
 
@@ -274,26 +328,6 @@ where
     let seg= npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("seg_size.npy")?.into_scalar() as usize;
 
     // 4. Kernel 1 데이터 로드
-    /*let r_mean_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_mean_k1.npy")?.into_dimensionality()?;
-    let q_sim_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_sim_k1.npy")?.into_dimensionality()?;
-    let r_matmul_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_matmul_k1.npy")?.into_dimensionality()?;
-    let m_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k1.npy")?.into_scalar();
-    let m_prime_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k1.npy")?.into_scalar();
-    let z_sim_k1 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k1.npy")?.into_scalar();
-
-    // 5. Kernel 2 데이터 로드
-    let r_mean_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_mean_k2.npy")?.into_dimensionality()?;
-    let q_sim_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_sim_k2.npy")?.into_dimensionality()?;
-    let r_matmul_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_matmul_k2.npy")?.into_dimensionality()?;
-    let m_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k2.npy")?.into_scalar();
-    let m_prime_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k2.npy")?.into_scalar();
-    let z_sim_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k2.npy")?.into_scalar();
-
-    let q_sim_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_sim_k3.npy")?.into_dimensionality()?;
-    let r_matmul_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("R_matmul_k3.npy")?.into_dimensionality()?;
-    let m_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_k3.npy")?.into_scalar();
-    let m_prime_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("M_prime_k3.npy")?.into_scalar();
-    let z_sim_k3 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_sim_k3.npy")?.into_scalar();*/
     let load_matmul = |npz: &mut NpzReader<File>, suffix: &str, has_rmean: bool| -> Result<MatmulBundle<E::ScalarField>> {
         Ok(MatmulBundle {
             // 커널 3처럼 r_mean이 없는 경우 빈 벡터 할당
@@ -336,32 +370,50 @@ where
     let k_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
     let mask_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix2>("mask.npy")?.into_dimensionality()?;
 
+    // Pseudoinverse 관련 데이터 로드
+    let q_inv_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_inv_k2.npy")?.into_dimensionality()?;
+    let z_inv_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_inv_k2.npy")?.into_scalar();
+
+    // M_inv_all (4개), M_prime_inv_all (4개)
+    let m_inv_all = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("M_inv_all.npy")?;
+    let m_prime_inv_all = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("M_prime_inv_all.npy")?;
+    let q_y_inv_raw = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("Q_y_inv_intermediates.npy")?;
+    let r_inv_raw = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("R_inv_remainders.npy")?;
+
+    let pseudo_inv = PseudoinverseBundle {
+        q_inv: to_field_4d_i64(&q_inv_k2),
+        z_inv: E::ScalarField::from(z_inv_k2),
+        m_inv: [
+            E::ScalarField::from(m_inv_all[0]),
+            E::ScalarField::from(m_inv_all[1]),
+            E::ScalarField::from(m_inv_all[2]),
+            E::ScalarField::from(m_inv_all[3]),
+        ],
+        m_prime_inv: [
+            E::ScalarField::from(m_prime_inv_all[0]),
+            E::ScalarField::from(m_prime_inv_all[1]),
+            E::ScalarField::from(m_prime_inv_all[2]),
+            E::ScalarField::from(m_prime_inv_all[3]),
+        ],
+        q_y_intermediates: to_field_5d_i64(&q_y_inv_raw),
+        r_inv_remainders: to_field_5d_i64(&r_inv_raw),
+    };
+
+    let q_v = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_v.npy")?.into_dimensionality()?;
+    let z_v = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_v.npy")?.into_scalar();
+    let matmul_temp = load_matmul(&mut npz, "temp", false)?;
+    let matmul_mid = load_matmul(&mut npz, "mid", false)?; // P_k1 @ Q_inv_k2
+    let matmul_x = load_matmul(&mut npz, "x", false)?;     // mid @ temp
+
     // 6. NystromAttentionCircuit 인스턴스 생성
     Ok(NystromAttentionCircuit {
         q_q: to_field_4d_i64(&q_q),
         q_k: to_field_4d_i64(&q_k),
+        q_v: to_field_4d_i64(&q_v),
         z_q: E::ScalarField::from(z_q),
         z_k: E::ScalarField::from(z_k),
+        z_v: E::ScalarField::from(z_v),
 
-        /*r_mean_k1: to_field_4d_i64(&r_mean_k1),
-        q_sim_k1: to_field_4d_i64(&q_sim_k1),
-        r_matmul_k1: to_field_4d_i64(&r_matmul_k1),
-        m_k1: E::ScalarField::from(m_k1),
-        m_prime_k1: E::ScalarField::from(m_prime_k1),
-        z_sim_k1: E::ScalarField::from(z_sim_k1),
-
-        r_mean_k2: to_field_4d_i64(&r_mean_k2),
-        q_sim_k2: to_field_4d_i64(&q_sim_k2),
-        r_matmul_k2: to_field_4d_i64(&r_matmul_k2),
-        m_k2: E::ScalarField::from(m_k2),
-        m_prime_k2: E::ScalarField::from(m_prime_k2),
-        z_sim_k2: E::ScalarField::from(z_sim_k2),
-
-        q_sim_k3: to_field_4d_i64(&q_sim_k3), 
-        r_matmul_k3: to_field_4d_i64(&r_matmul_k3), 
-        m_k3: E::ScalarField::from(m_k3), 
-        m_prime_k3: E::ScalarField::from(m_prime_k3), 
-        z_sim_k3: E::ScalarField::from(z_sim_k3),*/
         matmul1: matmul1,
         matmul2: matmul2,
         matmul3: matmul3,
@@ -369,6 +421,11 @@ where
         sm1: sm1,
         sm2: sm2,
         sm3: sm3,
+
+        pseudo_inv,
+        matmul_temp,
+        matmul_mid,
+        matmul_x,
 
         frac_bits: frac_bits,
         limb_bits: limb_bits,

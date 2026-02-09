@@ -32,6 +32,27 @@ pub struct MatmulData<F: PrimeField> {
     pub r_matmul: Vec<Vec<MatrixVar<F>>>,
 }
 
+#[derive(Clone)]
+pub struct PseudoinverseBundle<F: PrimeField> {
+    pub q_inv: Vec<Vec<Vec<Vec<F>>>>,
+    pub z_inv: F,
+    pub m_inv: [F; 4],       // M_inv1, 2, 3, 4
+    pub m_prime_inv: [F; 4], // M_prime_inv1, 2, 3, 4
+    pub q_y_intermediates: Vec<Vec<Vec<Vec<Vec<F>>>>>, // [Y1, Y3]
+    pub r_inv_remainders: Vec<Vec<Vec<Vec<Vec<F>>>>>,  // [R1, R2, R3, R4]
+}
+
+pub fn new_matrix_witness_4d<F: PrimeField>(
+    cs: ConstraintSystemRef<F>, 
+    data: &Vec<Vec<Vec<Vec<F>>>>
+) -> Vec<Vec<MatrixVar<F>>> {
+    data.iter().map(|heads| {
+        heads.iter().map(|matrix| {
+            new_matrix_witness(cs.clone(), matrix)
+        }).collect()
+    }).collect()
+}
+
 impl<F: PrimeField> MatmulBundle<F> {
     pub fn alloc_and_setup(
         &self, 
@@ -58,17 +79,6 @@ impl<F: PrimeField> MatmulBundle<F> {
 
         (data, params)
     }
-}
-
-pub fn new_matrix_witness_4d<F: PrimeField>(
-    cs: ConstraintSystemRef<F>, 
-    data: &Vec<Vec<Vec<Vec<F>>>>
-) -> Vec<Vec<MatrixVar<F>>> {
-    data.iter().map(|heads| {
-        heads.iter().map(|matrix| {
-            new_matrix_witness(cs.clone(), matrix)
-        }).collect()
-    }).collect()
 }
 
 pub fn gen_challenge_vector<F: PrimeField>(
@@ -148,8 +158,8 @@ pub fn compute_grouped_rhs<F: PrimeField>(
     let constant_term = (&n_dim * z_q * z_k) + m_prime_var;
 
     // 프리발드 최적화: G1*r = Q_w * (Q_x_t * r)
-    let qxt_r = mat_vec_mul(q_x_t, r_vec)?; // [D]
-    let g1_r = mat_vec_mul(q_w, &qxt_r)?;   // [S]
+    let qxt_r = mat_vec_mul(q_x_t, r_vec)?; 
+    let g1_r = mat_vec_mul(q_w, &qxt_r)?;   
 
     // G2*r = (z_k * Q_w) * r_sum
     let r_sum: FpVar<F> = r_vec.iter().sum();
@@ -239,7 +249,7 @@ pub fn enforce_freivald<F: PrimeField>(
     r_pows: &[FpVar<F>],
 ) -> Result<(), SynthesisError> {
     
-    // 1. LHS 계산: (Q_y * 2^k + R) * r
+    // 1. LHS : (Q_y * 2^k + R) * r
     let qy_r = mat_vec_mul(q_y_sim_head, r_pows)?; 
     let r_mat_r = mat_vec_mul(r_matmul_head, r_pows)?;
     
@@ -250,7 +260,7 @@ pub fn enforce_freivald<F: PrimeField>(
         })
         .collect();
 
-    // 2. RHS 계산: M * (G1 - G2 - G3 + Const) * r
+    // 2. RHS : M * (G1 - G2 - G3 + Const) * r
     let rhs = compute_grouped_rhs(
         w_matrix, 
         x_matrix_t, 

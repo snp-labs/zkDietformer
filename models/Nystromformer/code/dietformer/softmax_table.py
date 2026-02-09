@@ -8,16 +8,12 @@ K_SEGMENTS = 5
 LIMB_BITS = 16
 LIMB_SIZE = 1 << LIMB_BITS
 UINT64_MAX = (1 << 64) - 1
-FRAC_BITS = 32
+FRAC_BITS = 16
 
 def float_to_fixed(x, frac_bits):
-    # 1. NaN/Inf 사전 방어
     x_safe = np.nan_to_num(x, nan=0.0, posinf=float(UINT64_MAX), neginf=0.0)
-    
-    # 2. 스케일링 (float64 범위 내 연산)
     scaled = x_safe * float(1 << frac_bits)
     
-    # 3. UINT64 범위 클리핑
     scaled = np.clip(scaled, 0, float(UINT64_MAX))
     return scaled.astype(np.uint64)
 
@@ -79,19 +75,14 @@ def extract_exp_from_segments(Q_sim, R_mat, sm_tables, k_bits):
 
 
 def combine_exp_limbs(exp_limbs_list, frac_bits=32):
-    exp_total = exp_limbs_list[0].astype(object)
+    exp_total = exp_limbs_list[0].astype(object) 
     
-    inter_quotients = [] # 중간 몫 (다음 곱셈의 입력)
-    inter_remainders = [] # 중간 나머지 (서킷 검증용)
+    inter_quotients = [] 
+    inter_remainders = [] 
 
-    # 2. 순차적 곱셈: exp_total = exp_total * e^xk / 2^frac_bits
     for k in range(1, len(exp_limbs_list)):
-        # (A * B) 실행 -> 소수점 비트가 2 * frac_bits가 됨
         product = exp_total * exp_limbs_list[k].astype(object)
-        
-        # 소수점 위치를 원래대로(frac_bits) 돌리기 위한 연산
-        # 서킷에서는 나누기 대신 이 몫(Q)과 나머지(R)의 관계를 검증함
-        quotient = product >> frac_bits
+        quotient = product >> frac_bits 
         remainder = product % (1 << frac_bits)
         
         inter_remainders.append(remainder)

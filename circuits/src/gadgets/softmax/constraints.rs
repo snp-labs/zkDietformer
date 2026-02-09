@@ -41,7 +41,7 @@ impl<F: PrimeField> SoftmaxBundle<F> {
 
 #[derive(Clone)]
 pub struct SoftmaxVarBundle<F: PrimeField> {
-    pub limbs: Vec<Vec<Vec<MatrixVar<F>>>>,      // [C][B][H][S][L]
+    pub limbs: Vec<Vec<Vec<MatrixVar<F>>>>,      
     pub exp_limbs: Vec<Vec<Vec<MatrixVar<F>>>>,
     pub q_exp: Vec<Vec<Vec<MatrixVar<F>>>>,
     pub r_exp: Vec<Vec<Vec<MatrixVar<F>>>>,
@@ -50,6 +50,7 @@ pub struct SoftmaxVarBundle<F: PrimeField> {
     pub r_div: Vec<Vec<MatrixVar<F>>>,
 }
 
+// ERASE
 pub fn enforce_softmax_sum<F: PrimeField>(
     q_sim: &MatrixVar<F>,       
     r_matmul: &MatrixVar<F>,    
@@ -70,7 +71,6 @@ pub fn enforce_softmax_sum<F: PrimeField>(
 
     for i in 0..s_len {
         for j in 0..l_len {
-            // 1. Bit-Decomposition (Limb) 검증
             let mut x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
             let mut limb_sum = FpVar::zero();
             for k in 0..5 {
@@ -78,7 +78,6 @@ pub fn enforce_softmax_sum<F: PrimeField>(
             }
             x_recovered.enforce_equal(&limb_sum)?;
 
-            // 2. Remainder-based Exp Multiplication 
             let mut current_val = exp_limbs[0][i][j].clone();
             for k in 0..4 {
                 let lhs = &current_val * &exp_limbs[k+1][i][j];
@@ -88,7 +87,6 @@ pub fn enforce_softmax_sum<F: PrimeField>(
                 current_val = next_val;
             }
 
-            // 3. Division Check (나머지 기반 나눗셈) 
             let lhs_div = &exp_total[i][j] * frac_scale;
             let rhs_div = (&p_k1[i][j] * &exp_sum[i]) + &r_div[i][j];
             lhs_div.enforce_equal(&rhs_div)?;

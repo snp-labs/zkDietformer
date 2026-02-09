@@ -101,6 +101,81 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     P_k3 = (exp_total_k3 << FRAC_BITS) // exp_sum_k3
     R_div_k3 = (exp_total_k3 << FRAC_BITS) % exp_sum_k3
 
+    ### Pseudoinverse
+    inv_k2_real = debug['inv_kernel_2']
+    s_inv, z_inv = get_quantization_params(inv_k2_real)
+    Q_inv_k2 = quantize_tensor(inv_k2_real, s_inv, z_inv).astype(np.int64)
+
+    # A는 Softmax 결과인 P_k2를 사용
+    A_q = P_k2.astype(np.int64)
+    z_p2 = 0 
+    s_p2 = 1.0 / (1 << FRAC_BITS) 
+
+    ### [조건 1] A * A+ * A = A
+    # 1-1. Y1 = A @ A+ 
+    M_inv1 = get_m_constant(s_p2, s_inv, s_p2, k=k_bits)
+    Q_y1, R_inv1, M_prime_inv1 = sign_bit_grouping_matmul(
+        A_q, z_p2, Q_inv_k2, z_inv, z_p2, M_inv1, k_bits
+    )
+    
+    # 1-2. Q_y2 = Y1 @ A (최종적으로 A_q와 값이 비슷해야 함)
+    M_inv2 = get_m_constant(s_p2, s_p2, s_p2, k=k_bits)
+    Q_y2, R_inv2, M_prime_inv2 = sign_bit_grouping_matmul(
+        Q_y1, z_p2, A_q, z_p2, z_p2, M_inv2, k_bits 
+    )
+
+    ### [조건 2] A+ * A * A+ = A+
+    # 2-1. Y3 = A+ @ A
+    M_inv3 = get_m_constant(s_inv, s_p2, s_inv, k=k_bits)
+    Q_y3, R_inv3, M_prime_inv3 = sign_bit_grouping_matmul(
+        Q_inv_k2, z_inv, A_q, z_p2, z_inv, M_inv3, k_bits
+    )
+    
+    # 2-2. Q_y4 = Y3 @ A+ 
+    M_inv4 = get_m_constant(s_inv, s_inv, s_inv, k=k_bits)
+    Q_y4, R_inv4, M_prime_inv4 = sign_bit_grouping_matmul(
+        Q_y3, z_inv, Q_inv_k2, z_inv, z_inv, M_inv4, k_bits
+    )
+
+    ### temp
+    V_real = debug['V']
+    s_v, z_v = get_quantization_params(V_real)
+    Q_v = quantize_tensor(V_real, s_v, z_v)
+
+    temp_real = debug['temp']
+    s_sim_temp, z_sim_temp = get_quantization_params(temp_real)
+    
+    z_pk3 = 0
+    s_pk3 = 1.0 / (1 << FRAC_BITS)
+
+    M_temp = get_m_constant(s_pk3, s_v, s_sim_temp, k=k_bits)
+    
+    Q_sim_temp, R_matmul_temp, M_prime_temp = sign_bit_grouping_matmul(
+        P_k3.astype(np.int64), z_pk3, Q_v.astype(np.int64), z_v, z_sim_temp, M_temp, k_bits
+    )
+
+    ### mid
+    mid_real = debug['mid']
+    s_mid, z_sim_mid = get_quantization_params(mid_real)
+    
+    z_pk1 = 0
+    s_pk1 = 1.0 / (1 << FRAC_BITS)
+
+    M_mid = get_m_constant(s_pk1, s_inv, s_mid, k=k_bits)
+    
+    Q_sim_mid, R_matmul_mid, M_prime_mid = sign_bit_grouping_matmul(
+        P_k1.astype(np.int64), z_pk1, Q_inv_k2.astype(np.int64), z_inv, z_sim_mid, M_mid, k_bits
+    )
+
+    ### X
+    X_real = debug['X']
+    s_x, z_sim_x = get_quantization_params(X_real)
+    
+    M_x = get_m_constant(s_mid, s_sim_temp, s_x, k=k_bits)
+    
+    Q_sim_x, R_matmul_x, M_prime_x = sign_bit_grouping_matmul(
+        Q_sim_mid.astype(np.int64), z_sim_mid, Q_sim_temp.astype(np.int64), z_sim_temp, z_sim_x, M_x, k_bits
+    )
 
     np.savez_compressed(
         out_npz_path,
@@ -151,10 +226,37 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         limbs_k3=limbs_k3.astype(np.int64), 
         exp_limbs_k3=exp_limbs_k3.astype(np.uint64),
         Q_exp_k3=np.stack(Q_exp_k3, axis=0).astype(np.uint64),
-        R_exp_k3=np.stack(R_exp_k3, axis=0).astype(np.uint64), # 변수명 소문자 주의
+        R_exp_k3=np.stack(R_exp_k3, axis=0).astype(np.uint64), 
         exp_total_k3=exp_total_k3.astype(np.uint64),
-        P_k3=P_k3.astype(np.uint64), # 변수명 p_k3로 통일
+        P_k3=P_k3.astype(np.uint64), 
         R_div_k3=R_div_k3.astype(np.uint64),
+        ### moore-penrose (Pseudoinverse)
+        Q_inv_k2=Q_inv_k2.astype(np.int64),
+        z_inv_k2=np.int64(z_inv),
+        M_inv_all=np.array([M_inv1, M_inv2, M_inv3, M_inv4], dtype=np.int64),
+        M_prime_inv_all=np.array([M_prime_inv1, M_prime_inv2, M_prime_inv3, M_prime_inv4], dtype=np.int64),
+        Q_y_inv_intermediates=np.stack([Q_y1, Q_y2, Q_y3, Q_y4], axis=0).astype(np.int64),
+        R_inv_remainders=np.stack([R_inv1, R_inv2, R_inv3, R_inv4], axis=0).astype(np.int64),
+        ### temp
+        Q_v=Q_v.astype(np.int64),
+        z_v=np.int64(z_v),
+        Q_sim_temp=Q_sim_temp.astype(np.int64),
+        R_matmul_temp=R_matmul_temp.astype(np.int64),
+        M_temp=np.int64(M_temp),
+        M_prime_temp=np.int64(M_prime_temp),
+        z_sim_temp=np.int64(z_sim_temp),
+        ### mid = P_k1 @ Q_inv_k2
+        Q_sim_mid=Q_sim_mid.astype(np.int64),
+        R_matmul_mid=R_matmul_mid.astype(np.int64),
+        M_mid=np.int64(M_mid),
+        M_prime_mid=np.int64(M_prime_mid),
+        z_sim_mid=np.int64(z_sim_mid),
+        ### X = mid @ temp
+        Q_sim_x=Q_sim_x.astype(np.int64),
+        R_matmul_x=R_matmul_x.astype(np.int64),
+        M_x=np.int64(M_x),
+        M_prime_x=np.int64(M_prime_x),
+        z_sim_x=np.int64(z_sim_x),
         ### 추가 정보
         sm_tables=sm_tables,
         frac_bits=np.int32(FRAC_BITS),

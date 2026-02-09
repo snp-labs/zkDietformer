@@ -12,7 +12,6 @@ def debug_final_witness(npz_path):
     frac_bits = int(data['frac_bits'])
     k_segments = int(data['k_segments'])
     
-    # 1. ZEN Matmul (Kernel 1) 검증
     print("\n[Check 1] ZEN Matmul Logic (Kernel 1)")
     min_q = np.min(data['Q_sim_k1'])
     if min_q < 0:
@@ -20,7 +19,6 @@ def debug_final_witness(npz_path):
     else:
         print(f"  ✅ All Matmul results are non-negative. Min: {min_q}")
 
-    # 2. Softmax Limb 분해 검증
     print("\n[Check 2] Softmax Bit-Decomposition (Limb Extraction)")
     X_recovered = (data['Q_sim_k1'].astype(object) << k_bits) + data['R_matmul_k1'].astype(object)
     limbs = data['limbs_k1'] 
@@ -33,7 +31,6 @@ def debug_final_witness(npz_path):
     else:
         print("  ❌ X Decomposition Failed!")
 
-    # 3. 고정소수점 지수 곱셈 검증 (인덱스 오류 수정본)
     print("\n[Check 3] Fixed-point Exponential Combination")
     exp_limbs = data['exp_limbs_k1'] 
     Q_exp = data['Q_exp_k1']         
@@ -44,7 +41,6 @@ def debug_final_witness(npz_path):
     all_step_ok = True
     for k in range(k_segments - 1):
         lhs = current_val * exp_limbs[k+1].astype(object)
-        # 마지막 단계는 Q_exp 배열이 아닌 final_exp_total과 비교
         target_q = final_exp_total if k == k_segments - 2 else Q_exp[k].astype(object)
         rhs = (target_q << frac_bits) + R_exp[k].astype(object)
         
@@ -57,7 +53,6 @@ def debug_final_witness(npz_path):
     if all_step_ok:
         print("  ✅ Remainder-based Exp multiplication: Passed")
 
-    # 4. 소프트맥스 나눗셈 검증
     print("\n[Check 4] Final Softmax Division (P * Sum + R)")
     numerator = data['exp_total_k1'].astype(object) << frac_bits
     denominator = data['exp_sum_k1'].astype(object)
