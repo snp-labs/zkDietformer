@@ -10,6 +10,7 @@ use crate::lasso::{
     and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
     softmax::SoftmaxSubtableStrategy,
     SubtableStrategy,
+    layernorm::RMSNormSubtableStrategy
   },
   utils::math::Math,
   utils::random::RandomTape,
@@ -106,5 +107,14 @@ e2e_test!(
   Fr,
   /* C= */ 2,
   /* M= */ 256, // 1 << 8 (SEG_LIMB_BITS)
+  /* sparsity= */ 16
+);
+e2e_test!(
+  prove_1d_rmsnorm,
+  RMSNormSubtableStrategy,
+  G1Projective,
+  Fr,
+  /* C= */ 1,
+  /* M= */ 65536, // 1 << 16 (TABLE_SIZE)
   /* sparsity= */ 16
 );

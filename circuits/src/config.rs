@@ -9,3 +9,6 @@ pub const LIMB_BASE: u128 = 1u128 << LIMB_BITS;
 // 내가 만든 서브테이블 SPEC과 동일하게 맞춰 주어야 함.
 pub const SOFTMAX_C: usize = 5;   // number of segments (C)
 pub const SOFTMAX_M: usize = 65536; // table width (M) - must be a power of two/ limb bits = 16
+
+pub const RMSNORM_C: usize = 1; 
+pub const RMSNORM_M: usize = 65536; // 1 << 16

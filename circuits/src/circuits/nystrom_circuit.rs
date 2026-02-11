@@ -15,7 +15,8 @@ use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
     cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{SOFTMAX_C, SOFTMAX_M}, 
-    gadgets::{matmul::{constraints::{MatrixVar, new_matrix_witness}, 
+    gadgets::{
+        matmul::{constraints::{MatrixVar, new_matrix_witness}, 
     quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
@@ -300,7 +301,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &params_x, 
                     &r_pows_x
                 )?;
-            
             }
         }
 
@@ -405,7 +405,6 @@ where
     let matmul_mid = load_matmul(&mut npz, "mid", false)?; // P_k1 @ Q_inv_k2
     let matmul_x = load_matmul(&mut npz, "x", false)?;     // mid @ temp
 
-    // 6. NystromAttentionCircuit 인스턴스 생성
     Ok(NystromAttentionCircuit {
         q_q: to_field_4d_i64(&q_q),
         q_k: to_field_4d_i64(&q_k),

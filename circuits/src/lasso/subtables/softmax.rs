@@ -5,8 +5,6 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::OnceLock; // 메모리 캐싱을 위해 추가
 use ndarray::{Array2, Ix2};
-
-use crate::util::load::load_tables;
 use super::SubtableStrategy;
 
 pub enum SoftmaxSubtableStrategy {}
