@@ -1,91 +1,72 @@
-use anyhow::Context;
 use ark_ff::PrimeField;
-use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::{FieldVar, fp::FpVar};
-use ark_r1cs_std::alloc::AllocVar;
 use ark_relations::r1cs::SynthesisError;
 use ark_relations::r1cs::ConstraintSystemRef;
 use super::{ActivationFunction, ActivationGadget, constraints};
-
+use ark_r1cs_std::alloc::AllocVar;
+use ark_r1cs_std::eq::EqGadget;
 #[derive(Clone)]
-pub struct GeluBundle<F: PrimeField> {
-    pub inputs_q: Vec<F>,
-    pub limbs: Vec<Vec<F>>, // 림브로 분해된 입력 값들
-    pub exp_limb_vals: Vec<Vec<F>>,
-    pub sigmoid_outputs: Vec<F>,
-    pub sigmoid_remainders: Vec<F>, // 추가적인 시그모이드 잔여값
-    pub gelu_outputs: Vec<F>,
-    pub gelu_remainders: Vec<F>,
-    pub input_0: F,
-    pub scale_input: F,
-    pub frac_bits: u32,
-    pub multiplier: F,
+pub struct GeLUBundle<F: PrimeField> {
+    pub z_in: F,                  // Linear1의 출력 제로포인트 (GeLU의 입력 영점)
+    pub sigmoid_table_val: Vec<Vec<Vec<F>>>, // [B][S][D] 테이블 조회 결과
+    pub acc_gelu: Vec<Vec<Vec<F>>>,          // (Q_in - z_in) * sigmoid_val
+    pub m_gelu: F,
+    pub m_prime_gelu: F,
+    pub q_out_sim: Vec<Vec<Vec<F>>>,         // 최종 GeLU 출력 정수
+    pub r_out_gelu: Vec<Vec<Vec<F>>>,        // 최종 GeLU 시프트 나머지
 }
 
 pub fn enforce_gelu<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
-    bundle: &GeluBundle<F>,
-) -> Result<(), SynthesisError> {
-    let n = bundle.inputs_q.len();
-    let f = bundle.frac_bits;
-    let k_segments = bundle.limbs[0].len() as u32;
+    q_in_vars: &Vec<Vec<Vec<FpVar<F>>>>,  // Linear1 출력 Wire
+    r_in_vars: &Vec<Vec<Vec<FpVar<F>>>>,  // Linear1 나머지 Wire (고정밀 인덱스용)
+    bundle: &GeLUBundle<F>,
+    k_bits: usize,
+    frac_bits: usize,
+) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
+    let z_in_var = FpVar::new_constant(cs.clone(), bundle.z_in)?;
+    let m_var = FpVar::new_constant(cs.clone(), bundle.m_gelu)?;
+    let m_prime_var = FpVar::new_constant(cs.clone(), bundle.m_prime_gelu)?;
+    let two_k = FpVar::new_constant(cs.clone(), F::from(1u128 << k_bits))?;
+    let two_frac = FpVar::new_constant(cs.clone(), F::from(1u128 << frac_bits))?;
 
-    // 1. 스케일 상수 계산
-    // prod_scale = (2^f)^k = 2^(f*k)
-    let prod_scale = F::from(2u64).pow(&[(f * k_segments) as u64]);
-    // target_scale = (2^f)^(k+1) = 2^(f*(k+1))
-    // 이는 sig_q(2^f) * (prod_scale + exp_prod)의 결과와 일치해야 함
-    let target_scale = F::from(2u64).pow(&[(f * (k_segments + 1)) as u64]);
+    let mut all_out_vars = Vec::new();
 
-    let scale_input_var = FpVar::Constant(bundle.scale_input);
-    let input_0_var = FpVar::Constant(bundle.input_0);
+    for b in 0..q_in_vars.len() {
+        let mut batch_vars = Vec::new();
+        for s in 0..q_in_vars[b].len() {
+            let mut seq_vars = Vec::new();
+            for d in 0..q_in_vars[b][s].len() {
+                // 1. 고정밀 인덱스 생성 (Lasso 증명부와 일관성 유지)
+                // index = (Q_in << k) + R_in
+                let _index_var = (&q_in_vars[b][s][d] * &two_k) + &r_in_vars[b][s][d];
 
-    for i in 0..n {
-        // 2. 변수 할당 (Witness Allocation)
-        let x_q_var = FpVar::new_witness(cs.clone(), || Ok(bundle.inputs_q[i]))?;
-        let sig_var = FpVar::new_witness(cs.clone(), || Ok(bundle.sigmoid_outputs[i]))?;
-        let sig_rem_var = FpVar::new_witness(cs.clone(), || Ok(bundle.sigmoid_remainders[i]))?; // 나머지 할당
-        let y_q_var = FpVar::new_witness(cs.clone(), || Ok(bundle.gelu_outputs[i]))?;
-        let y_rem_var = FpVar::new_witness(cs.clone(), || Ok(bundle.gelu_remainders[i]))?;
+                // 2. 테이블 조회 결과 Witness 할당 (실제 Lasso 증명은 별도 수행)
+                let sigmoid_val_var = FpVar::new_witness(cs.clone(), || Ok(bundle.sigmoid_table_val[b][s][d]))?;
 
-        // 3. Limb 재조립 검증 (입력 무결성 체크)
-        // x_q = sum(limb_k * (2^limb_bits)^k)
-        let mut recomposed = FpVar::zero();
-        let mut mul_const = F::one();
-        let limb_base = F::from(1u64 << crate::config::LIMB_BITS);
-        
-        for k_idx in 0..bundle.limbs[i].len() {
-            let l_v = FpVar::new_witness(cs.clone(), || Ok(bundle.limbs[i][k_idx]))?;
-            recomposed += l_v * FpVar::Constant(mul_const);
-            mul_const *= limb_base;
-        }
-        recomposed.enforce_equal(&x_q_var)?;
+                // 3. GeLU 알맹이 계산: acc = (Q_in - z_in) * sigmoid_val
+                let q_in_diff = &q_in_vars[b][s][d] - &z_in_var;
+                let acc_var = &q_in_diff * &sigmoid_val_var;
+                
+                // 파이썬 acc_gelu와 일치하는지 중간 검증
+                let acc_witness = FpVar::new_witness(cs.clone(), || Ok(bundle.acc_gelu[b][s][d]))?;
+                acc_var.enforce_equal(&acc_witness)?;
 
-        // 4. 지수 곱 계산 (누적 스케일 반영)
-        // exp_prod = exp_limb_0 * exp_limb_1 * ... * exp_limb_k
-        let mut exp_prod_var = FpVar::Constant(F::one());
-        for k_idx in 0..bundle.exp_limb_vals[i].len() {
-            let e_v = FpVar::new_witness(cs.clone(), || Ok(bundle.exp_limb_vals[i][k_idx]))?;
-            if k_idx == 0 {
-                exp_prod_var = e_v;
-            } else {
-                exp_prod_var = exp_prod_var * e_v;
+                // 4. Rescaling: numerator = M * (acc + M_prime)
+                let numerator = &m_var * (&acc_witness + &m_prime_var);
+
+                // 5. 최종 결과 검증: numerator = (Q_out << k) + R_out
+                let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out_sim[b][s][d]))?;
+                let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out_gelu[b][s][d]))?;
+                
+                let rhs = (&q_out_var * &two_k) + &r_out_var;
+                numerator.enforce_equal(&rhs)?;
+
+                seq_vars.push(q_out_var);
             }
+            batch_vars.push(seq_vars);
         }
-
-        // 5. Sigmoid 제약: sig_q * (prod_scale + exp_prod) + sig_rem = target_scale
-        let sig_lhs = (&sig_var * &(FpVar::Constant(prod_scale) + &exp_prod_var)) + &sig_rem_var;
-        sig_lhs.enforce_equal(&FpVar::Constant(target_scale))?;
-
-        // 6. GeLU 제약: y_q * (scale_input * multiplier) + y_rem = (x_q - input_0 * multiplier) * sig_q
-        let offset_m = bundle.input_0 * bundle.multiplier;
-        let x_raw_var = &x_q_var - FpVar::Constant(offset_m);
-        let den_var = FpVar::Constant(bundle.scale_input * bundle.multiplier);
-        
-        let gelu_lhs = (y_q_var * den_var) + y_rem_var;
-        let gelu_rhs = x_raw_var * sig_var;
-        gelu_lhs.enforce_equal(&gelu_rhs)?;
+        all_out_vars.push(batch_vars);
     }
-
-    Ok(())
+    Ok(all_out_vars)
 }

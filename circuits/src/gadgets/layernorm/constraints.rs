@@ -17,6 +17,7 @@ pub struct NormBundle<F: PrimeField> {
     pub r_ms: Vec<Vec<Vec<F>>>,       // [B][S][1] - 수정됨
     pub inv_rms: Vec<Vec<Vec<F>>>,    // [B][S][1] - 수정됨
     pub q_gamma: Vec<F>,              // [D]
+    pub z_gamma: F,
     pub q_out: Vec<Vec<Vec<F>>>,      // [B][S][D]
     pub r_out: Vec<Vec<Vec<F>>>,      // [B][S][D]
     pub weight_bits: usize,
@@ -28,7 +29,7 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     dim: usize,
     frac_bits :usize,
     k_bits:usize
-) -> Result<(), SynthesisError> {
+) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
     let two_k = FpVar::new_constant(cs.clone(), F::from(1u128 << k_bits))?;
     let two_total = FpVar::new_constant(cs.clone(), F::from(1u128 << (frac_bits + bundle.weight_bits)))?;
     let dim_var = FpVar::new_constant(cs.clone(), F::from(dim as u128))?;
@@ -36,8 +37,10 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     let m_ms_var = FpVar::new_constant(cs.clone(), bundle.m_ms)?;
     let m_prime_var = FpVar::new_constant(cs.clone(), bundle.m_prime_ms)?;
     let gamma_vars = bundle.q_gamma.iter().map(|g| FpVar::new_witness(cs.clone(), || Ok(*g))).collect::<Result<Vec<_>, _>>()?;
-
+    let z_gamma_var = FpVar::new_constant(cs.clone(), bundle.z_gamma)?;
+    let mut all_q_out_vars = Vec::new();
     for b in 0..bundle.q_ri.len() {
+        let mut batch_q_out_vars = Vec::new();
         for s in 0..bundle.q_ri[b].len() {
             // 1. MS(Mean Square) 입력 준비: sum_sq = sum((Q_ri - z_ri)^2)
             let mut sum_sq_circuit = FpVar::zero();
@@ -65,16 +68,21 @@ pub fn enforce_rmsnorm<F: PrimeField>(
 
             // 4. 최종 출력 검증 (Weight 포함)
             // (Q_diff * inv_rms * Q_gamma) = (Q_out << (frac + weight)) + R_out
+            let mut seq_q_out_vars = Vec::new();
             let inv_rms_var = FpVar::new_witness(cs.clone(), || Ok(bundle.inv_rms[b][s][0]))?;
             for d in 0..q_diff_vars.len() {
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out[b][s][d]))?;
-                
-                let lhs_final = &q_diff_vars[d] * &inv_rms_var * &gamma_vars[d];
+                let q_gamma_signed = &gamma_vars[d] - &z_gamma_var;
+                let lhs_final = &q_diff_vars[d] * &inv_rms_var * &q_gamma_signed;
                 let rhs_final = (&q_out_var * &two_total) + &r_out_var;
                 lhs_final.enforce_equal(&rhs_final)?;
+                seq_q_out_vars.push(q_out_var);
             }
+            batch_q_out_vars.push(seq_q_out_vars);
         }
+        all_q_out_vars.push(batch_q_out_vars);
     }
-    Ok(())
+    
+    Ok(all_q_out_vars)
 }

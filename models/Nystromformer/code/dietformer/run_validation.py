@@ -15,7 +15,7 @@ import utils
 from attention_nystrom import NystromAttention
 from attention_pipeline import process_attn_debug_npz
 from normalization_pipeline import process_normalization_debug_npz
-from model import Approx_RMSNorm
+from model import Approx_RMSNorm, Approx_Linear
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--checkpoint", type = int, help = "checkpoint", dest = "checkpoint", default = None)
@@ -222,19 +222,47 @@ def _capture_and_process_all_intermediates(model, data_loader, save_prefix):
                 print(f"Generated Attention Witness: {witness_path}")
 
         # (B) Approx_RMSNorm 처리
+        # (B) Approx_RMSNorm, Approx_Linear(ff1, ff2), Approx_GeLU 통합 처리
         elif isinstance(m, Approx_RMSNorm):
-            if hasattr(m, "intermediates") and len(m.intermediates) > 0:
-                inter = m.intermediates[-1]
-                file_base = f"{save_prefix}-{name}.npz"
-                debug_path = os.path.join(output_dir, file_base)
+            if "norm1" in name:
+                # 같은 transformer 블록 내의 모든 구성 요소 찾기
+                block_name = name.replace(".norm1", "")
+                ff1_name = f"{block_name}.ff1"
+                act_name = f"{block_name}.act"
+                ff2_name = f"{block_name}.ff2"
                 
-                # 원본 데이터 저장
-                np.savez_compressed(debug_path, **inter)
+                named_mods = dict(wrapper.named_modules())
+                ff1_mod = named_mods.get(ff1_name)
+                act_mod = named_mods.get(act_name)
+                ff2_mod = named_mods.get(ff2_name)
                 
-                # Witness 파이프라인 실행
-                witness_path = debug_path.replace(".npz", ".witness.npz")
-                process_normalization_debug_npz(debug_path, witness_path, k_bits=22)
-                print(f"Generated RMSNorm Witness: {witness_path}")
+                # 모든 모듈의 인터미디엇 데이터가 수집되었는지 확인
+                if all(hasattr(mod, "intermediates") and len(mod.intermediates) > 0 
+                       for mod in [m, ff1_mod, act_mod, ff2_mod] if mod is not None):
+                    
+                    combined_inter = {
+                        **m.intermediates[-1],       # rms_input, ms, rms, rms_output...
+                        **ff1_mod.intermediates[-1], # linear_input, linear_weight, linear_output...
+                        **act_mod.intermediates[-1], # gelu_input, gelu_output
+                    }
+
+                    # ff2는 ff1과 키가 겹치므로 prefix를 붙여서 저장
+                    if ff2_mod:
+                        ff2_data = ff2_mod.intermediates[-1]
+                        combined_inter.update({
+                            f"ff2_{k}": v for k, v in ff2_data.items()
+                        })
+                    
+                    file_base = f"{save_prefix}-{block_name}.norm1_ff1_gelu.npz"
+                    debug_path = os.path.join(output_dir, file_base)
+                    
+                    # 통합 데이터 저장
+                    np.savez_compressed(debug_path, **combined_inter)
+                    
+                    # Witness 파이프라인 실행
+                    witness_path = debug_path.replace(".npz", ".witness.npz")
+                    process_normalization_debug_npz(debug_path, witness_path, k_bits=22)
+                    print(f"Generated Combined (Norm1+FF1+GeLU) Witness: {witness_path}")
 
     # 6. 캡처 비활성화
     for name, m in wrapper.named_modules():

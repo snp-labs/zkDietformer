@@ -54,11 +54,8 @@ def debug_rmsnorm_simulation(output_dir="outputs"):
         # 3) (Q_diff * inv_rms * Q_gamma) = (Q_out << (frac + weight_bits)) + R_out
         Q_diff = (sim['Q_ri_rms'] - sim['z_ri_rms']).astype(object)
         inv_rms = sim['inv_rms_total_rms'].astype(object)
-        Q_gamma = sim['Q_gamma_rms'].astype(object)
-
-        # 파이프라인의 결합 연산 재현
-        # (B, S, D) * (B, S, 1) * (D,) -> 브로드캐스팅 적용
-        full_product = Q_diff * inv_rms * Q_gamma
+        Q_gamma_signed = (sim['Q_gamma_rms'].astype(object) - sim['z_gamma_rms'].astype(object))
+        full_product = Q_diff * inv_rms * Q_gamma_signed #
         
         # Witness에 저장된 결과로 등식 성립 확인
         lhs = (sim['Q_rms_output_sim_rms'].astype(object) << total_shift) + sim['R_rms_output_rms'].astype(object)

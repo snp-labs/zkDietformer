@@ -17,8 +17,8 @@ class Approx_GeLU(nn.Module):
         out = x * torch.sigmoid(1.702 * x)  
         if self.capture_intermediates:
             self.intermediates.append({
-                "input": x.detach().cpu().numpy(),
-                "output": out.detach().cpu().numpy()
+                "gelu_input": x.detach().cpu().numpy(),
+                "gelu_output": out.detach().cpu().numpy()
             })
         return out
 
@@ -53,6 +53,25 @@ class Approx_RMSNorm(nn.RMSNorm):
                 "rms_weight": self.weight.detach().cpu().numpy() if self.elementwise_affine else None,
                 "rms_output": out.detach().cpu().numpy(),
                 "eps": eps_val
+            })
+        return out
+    
+class Approx_Linear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+        super().__init__(in_features, out_features, bias, device, dtype)
+        self.capture_intermediates = True
+        self.intermediates = []
+
+    def forward(self, x):
+        out = super().forward(x)
+
+        if self.capture_intermediates:
+            # y = xW^T + b 형태이므로 가중치를 그대로 저장
+            self.intermediates.append({
+                "linear_input": x.detach().cpu().numpy(),
+                "linear_weight": self.weight.detach().cpu().numpy(),
+                "linear_bias": self.bias.detach().cpu().numpy() if self.bias is not None else None,
+                "linear_output": out.detach().cpu().numpy()
             })
         return out
     
@@ -163,9 +182,9 @@ class Transformer(nn.Module):
         self.dropout1 = torch.nn.Dropout(p = config["dropout_prob"])
         self.norm1 = Approx_RMSNorm(self.dim)
 
-        self.ff1 = nn.Linear(self.dim, self.hidden_dim)
+        self.ff1 = Approx_Linear(self.dim, self.hidden_dim)
         self.act = Approx_GeLU(config)
-        self.ff2 = nn.Linear(self.hidden_dim, self.dim)
+        self.ff2 = Approx_Linear(self.hidden_dim, self.dim)
 
         self.dropout2 = torch.nn.Dropout(p = config["dropout_prob"])
         self.norm2 = Approx_RMSNorm(self.dim)

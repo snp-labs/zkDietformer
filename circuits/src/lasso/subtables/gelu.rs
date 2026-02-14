@@ -1,103 +1,153 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 use ndarray_npy::NpzReader;
 use std::fs::File;
 use std::path::Path;
 use std::sync::OnceLock;
-use ndarray::{Array2, Ix2};
+use ndarray::{Array1, Ix1};
+use crate::lasso::subtables::SubtableStrategy;
 
-use super::SubtableStrategy;
+pub enum GeLUSubtableStrategy {}
 
-pub enum GeluSubtableStrategy {}
+static GELU_CACHE: OnceLock<Array1<u64>> = OnceLock::new();
 
-/// GeLU 양자화 테이블 캐싱 (필드 독립적 u64 데이터)
-static GELU_CACHE: OnceLock<Array2<u64>> = OnceLock::new();
-
-/// 파일에서 GeLU 테이블을 로드하는 헬퍼 함수
-fn get_or_init_gelu_cache(c: usize, m: usize) -> &'static Array2<u64> {
+fn get_or_init_gelu_cache(m: usize) -> &'static Array1<u64> {
     GELU_CACHE.get_or_init(|| {
-        // gelu_table.py에서 생성된 경로와 일치해야 함
-        let lookup_npz_path = "tmp_tables/gelu_tables_quantized.npz".to_string();
-        let path = Path::new(&lookup_npz_path);
-
-        let file = File::open(path)
-            .expect("GeluSubtable: failed to open gelu lookup npz");
+        let lookup_npz_path = "outputs/gelu_tables.npz".to_string();
+        let file = File::open(Path::new(&lookup_npz_path))
+            .expect("GeLU table file not found");
         let mut npz = NpzReader::new(file).expect("failed to create NpzReader");
 
-        let tables_arr_dyn = npz
-            .by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("tables.npy")
-            .expect("npz does not contain gelu tables");
+        let tables_arr_dyn = npz.by_name::<ndarray::OwnedRepr<u64>, ndarray::IxDyn>("table.npy")
+            .expect("npz does not contain table");
 
-        let tables_2d = tables_arr_dyn
-            .into_dimensionality::<Ix2>()
-            .expect("gelu tables must be 2D");
+        let tables_1d = tables_arr_dyn
+            .into_dimensionality::<Ix1>()
+            .expect("gelu tables must be 1D");
 
-        let shape = tables_2d.shape();
-        assert_eq!(shape[0], c, "k_segments mismatch for GeLU");
-        assert_eq!(shape[1], m, "table width mismatch for GeLU");
-
-        tables_2d
+        assert_eq!(tables_1d.len(), m, "GeLU table size mismatch");
+        tables_1d
     })
 }
 
-impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
-    for GeluSubtableStrategy
+impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> 
+    for GeLUSubtableStrategy
 {
-    const NUM_SUBTABLES: usize = C; 
+    const NUM_SUBTABLES: usize = C;
     const NUM_MEMORIES: usize = C;
 
-    fn memory_to_subtable_index(memory_index: usize) -> usize {
-        memory_index
-    }
-
-    fn memory_to_dimension_index(memory_index: usize) -> usize {
-        memory_index
-    }
-
-    /// 테이블 실체화: NPZ의 각 행(Segment)을 필드 요소 벡터로 변환
     fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
-        let tables_2d = get_or_init_gelu_cache(C, M);
-        std::array::from_fn(|i| {
-            tables_2d.row(i).iter().map(|&val| F::from(val)).collect()
+        let tables_1d = get_or_init_gelu_cache(M);
+        std::array::from_fn(|_| {
+            tables_1d.iter().map(|&val| F::from(val)).collect()
         })
     }
 
-    /// MLE 평가: 다항식 확장을 통해 특정 지점의 값을 계산
-    fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
-        let tables_2d = get_or_init_gelu_cache(C, M);
-
-        // MLE 평가를 위한 기저 다항식 계산 (O(M))
-        let compute_eq_evals = |point_slice: &[F]| -> Vec<F> {
-            let b = point_slice.len();
-            let mut evals = vec![F::one(); 1 << b];
-            let mut size = 1;
-            for j in 0..b {
-                let r = point_slice[b - 1 - j];
-                for i in 0..size {
-                    evals[i + size] = evals[i] * r;
-                    evals[i] = evals[i] * (F::one() - r);
-                }
-                size *= 2;
+    fn evaluate_subtable_mle(_subtable_index: usize, point: &Vec<F>) -> F {
+        let table = get_or_init_gelu_cache(M);
+        let b = point.len();
+        let mut evals = vec![F::one(); 1 << b];
+        let mut size = 1;
+        for j in 0..b {
+            let r = point[b - 1 - j];
+            for i in 0..size {
+                evals[i + size] = evals[i] * r;
+                evals[i] = evals[i] * (F::one() - r);
             }
-            evals
-        };
-
-        let chi = compute_eq_evals(point);
+            size *= 2;
+        }
         let mut acc = F::zero();
-        for (idx, &basis) in chi.iter().enumerate() {
-            let entry_u64 = tables_2d[[subtable_index, idx]];
-            acc += F::from(entry_u64) * basis;
+        for (idx, &basis) in evals.iter().enumerate() {
+            acc += F::from(table[idx]) * basis;
         }
         acc
     }
 
-    /// GeLU의 exp(sum(contribs))는 product(exp(contrib))와 같으므로 곱셈 사용
-    fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
-        vals.iter().product()
+    fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F { 
+        vals[0] 
+    }
+    fn g_poly_degree() -> usize { C }
+}
+
+#[cfg(test)]
+mod test {
+    use ark_bn254::Fr;
+    use ndarray_npy::{NpzReader, NpzWriter};
+    use ndarray::{arr0, Ix1, Array1};
+    use std::fs::{self, File};
+    use std::path::Path;
+    use crate::lasso::utils::index_to_field_bitvector;
+    use super::*;
+
+    // GeLU 테이블 스펙 정의
+    const TABLE_BITS: usize = 16;
+    const WIDTH: usize = 1 << TABLE_BITS; // 65536
+    const C_TEST: usize = 1; 
+
+    /// 테스트용 임시 gelu_tables.npz 파일을 생성합니다.
+    fn setup_gelu_test_npz() {
+        let dir = "outputs";
+        let path = "outputs/gelu_tables.npz";
+        fs::create_dir_all(dir).unwrap();
+
+        if !Path::new(path).exists() {
+            let file = File::create(path).unwrap();
+            let mut writer = NpzWriter::new(file);
+            
+            // 테스트용 데이터: index i에 대하여 (i + 500) 값을 저장
+            let data = Array1::<u64>::from_shape_fn(WIDTH, |i| (i + 500) as u64);
+            writer.add_array("table.npy", &data).unwrap();
+            writer.finish().unwrap();
+        }
     }
 
-    /// g 다항식의 차수는 세그먼트 개수 C와 동일함
-    fn g_poly_degree() -> usize {
-        C
+    #[test]
+    fn gelu_materialization_parity() {
+        setup_gelu_test_npz();
+        
+        // 1. materialize_subtables 호출하여 필드 원소 벡터 획득
+        let materialized: [Vec<Fr>; C_TEST] =
+            <GeLUSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::materialize_subtables();
+
+        // 2. 캐시된 원본 데이터와 비교
+        let cache = get_or_init_gelu_cache(WIDTH);
+        
+        assert_eq!(materialized[0].len(), WIDTH);
+        for i in 0..WIDTH {
+            assert_eq!(materialized[0][i], Fr::from(cache[i]));
+        }
+        println!("✅ GeLU Materialization Parity: OK");
+    }
+
+    #[test]
+    fn gelu_mle_eval_test() {
+        setup_gelu_test_npz();
+        
+        let materialized = <GeLUSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::materialize_subtables();
+        
+        // 3. 주요 지점(Boolean Hypercube의 정점)에서 MLE 값이 테이블 값과 일치하는지 확인
+        let test_indices = [0, 1, 1024, 32768, WIDTH - 1];
+        
+        for &idx in test_indices.iter() {
+            // 인덱스를 비트 벡터(Lasso 지점)로 변환
+            let point = index_to_field_bitvector(idx, TABLE_BITS);
+            
+            // MLE 평가 실행
+            let mle_val = <GeLUSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::evaluate_subtable_mle(0, &point);
+            
+            let expected_val = materialized[0][idx];
+            assert_eq!(mle_val, expected_val, "MLE mismatch at index {}", idx);
+        }
+        println!("✅ GeLU MLE Evaluation Test: OK");
+    }
+
+    #[test]
+    fn gelu_combine_is_identity() {
+        // GeLU는 단일 서브테이블을 사용하므로 combine_lookups가 입력 값을 그대로 반환해야 함
+        let val = Fr::from(98765u64);
+        let vals: [Fr; C_TEST] = [val];
+        
+        let combined = <GeLUSubtableStrategy as SubtableStrategy<Fr, C_TEST, WIDTH>>::combine_lookups(&vals);
+        assert_eq!(combined, val);
+        println!("✅ GeLU Combine Lookups (Identity): OK");
     }
 }

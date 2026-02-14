@@ -12,3 +12,6 @@ pub const SOFTMAX_M: usize = 65536; // table width (M) - must be a power of two/
 
 pub const RMSNORM_C: usize = 1; 
 pub const RMSNORM_M: usize = 65536; // 1 << 16
+
+pub const GELU_C: usize = 1;
+pub const GELU_M: usize = 65536; // 65536

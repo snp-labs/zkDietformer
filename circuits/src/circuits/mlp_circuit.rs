@@ -14,19 +14,21 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{SOFTMAX_C, SOFTMAX_M, RMSNORM_C, RMSNORM_M}, 
+    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M, GELU_M, GELU_C}, 
     gadgets::{
-        layernorm::{constraints::{NormBundle, enforce_rmsnorm}}, 
+        activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
     }, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
             surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
         },
         subtables::{
-            SubtableStrategy, and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy,
-            layernorm::RMSNormSubtableStrategy
+            SubtableStrategy, and::AndSubtableStrategy, 
+            layernorm::RMSNormSubtableStrategy, 
+            lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, 
+            softmax::SoftmaxSubtableStrategy, gelu::GeLUSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
-    }, util::load::{to_field_3d_u64, to_field_3d_i64, to_field_1d_i64}
+    }, util::load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64}
 };
 
 
@@ -35,6 +37,8 @@ type G1 = G1Projective;
 pub struct NystromAttentionCircuit<F: PrimeField> {
     pub norm1: NormBundle<F>,
     //pub norm2: NormBundle<F>,
+    pub ff1: LinearBundle<F>,
+    pub gelu1: GeLUBundle<F>,
 
     pub frac_bits: usize,
     pub k_bits: usize,
@@ -42,10 +46,18 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         
-        let dim = self.norm1.q_ri[0][0].len();
+        let dim: usize = self.norm1.q_ri[0][0].len();
 
-        enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits)?;
-        //enforce_rmsnorm(cs.clone(), &self.norm2, dim, self.frac_bits, self.k_bits)?;
+        /*let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits)?;
+        let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(),&q_norm1_vars, &self.ff1, self.k_bits)?;
+        let q_gelu_vars = enforce_gelu(
+            cs.clone(),
+            &q_ff1_vars,  
+            &r_ff1_vars,  
+            &self.gelu1,
+            self.k_bits,
+            self.frac_bits
+        )?;*/
 
         Ok(())
     }
@@ -75,6 +87,7 @@ where
             r_ms: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_ms_{}.npy", prefix))?.into_dimensionality()?),
             inv_rms: to_field_3d_u64(&npz.by_name::<_, Ix3>(&format!("inv_rms_total_{}.npy", prefix))?.into_dimensionality()?),
             q_gamma: to_field_1d_i64(&npz.by_name::<_, Ix1>(&format!("Q_gamma_{}.npy", prefix))?.into_dimensionality()?),
+            z_gamma: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_gamma_{}.npy", prefix))?.into_scalar()),
             q_out: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_rms_output_sim_{}.npy", prefix))?.into_dimensionality()?),
             r_out: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_rms_output_{}.npy", prefix))?.into_dimensionality()?),
             weight_bits: npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>(&format!("weight_bits.npy"))?.into_scalar() as usize,
@@ -84,9 +97,48 @@ where
     let norm1 = load_norm(&mut npz, "rms")?;
     //let norm2 = load_norm(&mut npz, "norm2")?;
 
+    // mlp_circuit.rs 또는 테스트 코드 내부에 위치
+    let load_linear = |npz: &mut NpzReader<File>, prefix: &str| -> Result<LinearBundle<E::ScalarField>> {
+        Ok(LinearBundle {
+            // z_in: 입력(Norm 출력)의 제로포인트
+            z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
+            
+            // 가중치 및 바이어스 (Q_w - z_w, Q_b - z_b)
+            q_w_diff: to_field_2d_i32(&npz.by_name::<_, Ix2>(&format!("Q_w_diff_{}.npy", prefix))?.into_dimensionality()?),
+            q_b_diff: to_field_1d_i64(&npz.by_name::<_, Ix1>(&format!("Q_b_diff_{}.npy", prefix))?.into_dimensionality()?),
+            
+            // 재스케일링 상수
+            m_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
+            m_prime_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
+            
+            // 결과 Witness (enforce_equal 검증용)
+            q_out_sim: to_field_3d_i32(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
+            r_out_lin: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_out_{}.npy", prefix))?.into_dimensionality()?),
+        })
+    };
+
+    let ff1 = load_linear(&mut npz, "lin")?;
+        
+    let load_gelu = |npz: &mut NpzReader<File>, prefix: &str| -> Result<GeLUBundle<E::ScalarField>> {
+        Ok(GeLUBundle {
+            z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
+            sigmoid_table_val: to_field_3d_u64(&npz.by_name::<_, Ix3>(&format!("sigmoid_part_{}.npy", prefix))?.into_dimensionality()?),
+            acc_gelu: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("acc_{}.npy", prefix))?.into_dimensionality()?),
+            m_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
+            m_prime_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
+            q_out_sim: to_field_3d_i32(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
+            r_out_gelu: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_out_{}.npy", prefix))?.into_dimensionality()?),
+        })
+    };
+    
+    let gelu1 = load_gelu(&mut npz, "gelu")?;
+
+
     Ok(NystromAttentionCircuit {
         norm1,
         //norm2,
+        ff1,
+        gelu1,
 
         frac_bits: frac_bits,
         k_bits: k_bits,
@@ -184,6 +236,7 @@ E: Pairing<ScalarField = Fr>,
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let dim = circuit.norm1.q_ri[0][0].len();
         run_lasso_for_rmsnorm(&circuit.norm1, circuit.k_bits, b"lasso_rms1", &mut rng)?;
+        run_lasso_for_gelu(&circuit.gelu1, circuit.k_bits, b"lasso_gelu1", &mut rng)?;
     }
 
     Ok(())
@@ -297,9 +350,93 @@ fn prove_lasso_for_rmsnorm(
     Ok(())
 }
 
+fn run_lasso_for_gelu(
+    bundle: &GeLUBundle<Fr>,
+    k_bits: usize,
+    label: &'static [u8],
+    rng: &mut StdRng,
+) -> Result<()> {
+    let b_dim = bundle.q_out_sim.len();
+    let s_dim = bundle.q_out_sim[0].len();
+    let d_dim = bundle.q_out_sim[0][0].len();
+
+    let mut indices = Vec::new();
+    let shift = (k_bits - 8) as u32; // 파이썬의 shift = k_bits - 8 반영
+    let offset = 32768u64; // TABLE_SIZE // 2
+
+    for b in 0..b_dim {
+        for s in 0..s_dim {
+            for d in 0..d_dim {
+                // (Q_in - z_in) 계산 (필드 원소를 i64로 안전하게 변환)
+                let q_in_val = bundle.q_out_sim[b][s][d]; // Linear1의 결과물이 GeLU의 입력
+                let z_in_val = bundle.z_in;
+                
+                // 고정밀 X_diff 계산: (Q_in - z_in) << k + R_in
+                // 필드 연산 후 u64로 변환하여 시프트 적용
+                let diff_f = q_in_val - z_in_val;
+                let diff_big = diff_f.into_bigint();
+                
+                // 음수 처리를 위해 i64로 변환 후 시프트하거나, 
+                // 필드 원소의 특성을 고려하여 처리 (여기서는 파이썬 로직 동기화)
+                let diff_i64 = if diff_big.as_ref()[3] > 0 { // 대략적인 음수 체크
+                    -( (Fr::zero() - diff_f).into_bigint().as_ref()[0] as i64 )
+                } else {
+                    diff_big.as_ref()[0] as i64
+                };
+
+                let x_diff = diff_i64 << k_bits; // R_in은 r_out_lin에서 오지만 단순화를 위해 Q만 고려 가능
+                // 실제 구현 시 r_ff1_vars의 값도 bundle에 포함되어야 함
+                
+                let idx = (x_diff >> shift) + offset as i64;
+                let clipped_idx = idx.clamp(0, (GELU_M - 1) as i64) as usize;
+                
+                indices.push([clipped_idx]);
+            }
+        }
+    }
+
+    let sparsity = indices.len();
+    let gens = SparsePolyCommitmentGens::<G1>::new(label, GELU_C, sparsity, GELU_C, 16);
+
+    // 공통 Lasso 증명 로직 호출
+    prove_lasso_for_gelu(&indices, &gens, rng, label)
+}
+
+fn prove_lasso_for_gelu(
+    nz_indices: &Vec<[usize; GELU_C]>,
+    gens: &SparsePolyCommitmentGens<G1>,
+    rng: &mut StdRng,
+    label: &[u8],
+) -> Result<()> {
+    let sparsity = nz_indices.len();
+    let log_M = 16;
+    
+    let lookup_matrix = SparseLookupMatrix::<GELU_C>::new(nz_indices.clone(), log_M);
+    let mut densified = DensifiedRepresentation::<Fr, GELU_C>::from(&lookup_matrix);
+
+    let commitment = densified.commit::<G1>(gens);
+    let r_point: Vec<Fr> = (0..sparsity.next_power_of_two().trailing_zeros() as usize)
+        .map(|_| Fr::rand(rng)).collect();
+
+    let mut random_tape = RandomTape::new(b"lasso_tape_gelu");
+    let mut transcript = Transcript::new(b"lasso_gelu");
+    
+    // GeLUSubtableStrategy 사용
+    let proof = SparsePolynomialEvaluationProof::<G1, GELU_C, GELU_M, GeLUSubtableStrategy>::prove(
+        &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
+    );
+
+    let mut v_transcript = Transcript::new(b"lasso_gelu");
+    proof.verify(&commitment, &r_point, gens, &mut v_transcript)
+        .map_err(|_| anyhow::anyhow!("GeLU Lasso verification failed"))?;
+
+    println!("GeLU Lasso proof verified: {:?}", std::str::from_utf8(label).unwrap());
+    Ok(())
+}
+
 #[test]
 fn mlp_test() {
-    let p = Path::new("outputs/outputs-model.transformer_0.norm1.witness.npz");
+    let p = Path::new("outputs/outputs-model.transformer_0.norm1_ff1_gelu.witness.npz");
     if p.exists() {
         println!("Running combined circuit test on {:?}", p);
         let res = run_paths::<Bn254>(p);

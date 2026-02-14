@@ -49,6 +49,20 @@ pub fn to_field_2d_i64<F: PrimeField>(arr: &ndarray::Array2<i64>) -> Vec<Vec<F>>
 }
 
 
+pub fn to_field_2d_i32<F: PrimeField>(arr: &ndarray::Array2<i32>) -> Vec<Vec<F>> {
+    let (rows, cols) = arr.dim();
+    let mut out = Vec::with_capacity(rows);
+    for i in 0..rows {
+        let mut row = Vec::with_capacity(cols);
+        for j in 0..cols {
+            row.push(F::from(arr[[i, j]]));
+        }
+        out.push(row);
+    }
+    out
+}
+
+
 pub fn to_field_3d_u64<F: PrimeField>(arr: &ndarray::Array3<u64>) -> Vec<Vec<Vec<F>>> {
     let (batch, head, seq) = arr.dim();
     let mut out_batch = Vec::with_capacity(batch);
@@ -69,6 +83,24 @@ pub fn to_field_3d_u64<F: PrimeField>(arr: &ndarray::Array3<u64>) -> Vec<Vec<Vec
 }
 
 pub fn to_field_3d_i64<F: PrimeField>(arr: &ndarray::Array3<i64>) -> Vec<Vec<Vec<F>>> {
+    let (batch, head, seq) = arr.dim();
+    let mut out_batch = Vec::with_capacity(batch);
+
+    for b in 0..batch {
+        let mut out_head = Vec::with_capacity(head);
+        for h in 0..head {
+            let mut out_seq = Vec::with_capacity(seq);
+            for s in 0..seq {
+                out_seq.push(F::from(arr[[b, h, s]]));
+            }
+            out_head.push(out_seq);
+        }
+        out_batch.push(out_head);
+    }
+    out_batch
+}
+
+pub fn to_field_3d_i32<F: PrimeField>(arr: &ndarray::Array3<i32>) -> Vec<Vec<Vec<F>>> {
     let (batch, head, seq) = arr.dim();
     let mut out_batch = Vec::with_capacity(batch);
 
