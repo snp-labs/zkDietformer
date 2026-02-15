@@ -23,6 +23,8 @@ pub struct SoftmaxBundle<F: PrimeField> {
     pub exp_total: Vec<Vec<Vec<Vec<F>>>>,
     pub p: Vec<Vec<Vec<Vec<F>>>>,
     pub r_div: Vec<Vec<Vec<Vec<F>>>>,
+    pub r_sm: Vec<Vec<Vec<Vec<F>>>>,
+    pub m_sm: F,
 }
 
 impl<F: PrimeField> SoftmaxBundle<F> {
@@ -35,6 +37,8 @@ impl<F: PrimeField> SoftmaxBundle<F> {
             exp_total: new_matrix_witness_4d(cs.clone(), &self.exp_total),
             p: new_matrix_witness_4d(cs.clone(), &self.p),
             r_div: new_matrix_witness_4d(cs.clone(), &self.r_div),
+            r_sm: new_matrix_witness_4d(cs.clone(), &self.r_sm),
+            m_sm: FpVar::new_constant(cs.clone(), self.m_sm)?,
         })
     }
 }
@@ -48,100 +52,58 @@ pub struct SoftmaxVarBundle<F: PrimeField> {
     pub exp_total: Vec<Vec<MatrixVar<F>>>,       
     pub p: Vec<Vec<MatrixVar<F>>>,
     pub r_div: Vec<Vec<MatrixVar<F>>>,
+    pub r_sm: Vec<Vec<MatrixVar<F>>>, 
+    pub m_sm: FpVar<F>,
 }
 
-// ERASE
-pub fn enforce_softmax_sum<F: PrimeField>(
+pub fn enforce_softmax<F: PrimeField>(
     q_sim: &MatrixVar<F>,       
     r_matmul: &MatrixVar<F>,    
+    r_sm: &MatrixVar<F>,        
+    m_sm: &FpVar<F>,            
     limbs: &[MatrixVar<F>],     
     exp_limbs: &[MatrixVar<F>], 
     q_exp: &[MatrixVar<F>],     
     r_exp: &[MatrixVar<F>],     
     exp_total: &MatrixVar<F>,    
-    exp_sum: &[FpVar<F>],       
-    p_k1: &MatrixVar<F>,         
+    p_out: &MatrixVar<F>,        
     r_div: &MatrixVar<F>,        
     frac_bits: usize,
-    two_k: &FpVar<F>,
+    two_k: &FpVar<F>,           
 ) -> Result<(), SynthesisError> {
     let s_len = q_sim.len();
     let l_len = q_sim[0].len();
     let frac_scale = F::from(1u128 << frac_bits);
 
     for i in 0..s_len {
-        for j in 0..l_len {
-            let mut x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
-            let mut limb_sum = FpVar::zero();
-            for k in 0..5 {
-                limb_sum += &limbs[k][i][j] * F::from(1u128 << (16 * k));
-            }
-            x_recovered.enforce_equal(&limb_sum)?;
-
-            let mut current_val = exp_limbs[0][i][j].clone();
-            for k in 0..4 {
-                let lhs = &current_val * &exp_limbs[k+1][i][j];
-                let next_val = if k == 3 { exp_total[i][j].clone() } else { q_exp[k][i][j].clone() };
-                let rhs = (&next_val * frac_scale) + &r_exp[k][i][j];
-                lhs.enforce_equal(&rhs)?;
-                current_val = next_val;
-            }
-
-            let lhs_div = &exp_total[i][j] * frac_scale;
-            let rhs_div = (&p_k1[i][j] * &exp_sum[i]) + &r_div[i][j];
-            lhs_div.enforce_equal(&rhs_div)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn enforce_softmax<F: PrimeField>(
-    q_sim: &MatrixVar<F>,
-    r_matmul: &MatrixVar<F>,
-    limbs: &[MatrixVar<F>],
-    exp_limbs: &[MatrixVar<F>],
-    q_exp: &[MatrixVar<F>],
-    r_exp: &[MatrixVar<F>],
-    exp_total: &MatrixVar<F>,    
-    p_k1: &MatrixVar<F>,
-    r_div: &MatrixVar<F>,
-    frac_bits: usize,
-    two_k: &FpVar<F>,
-) -> Result<(), SynthesisError> {
-    let s_len = q_sim.len();
-    let l_len = q_sim[0].len();
-    let frac_scale = F::from(1u128 << frac_bits);
-
-    for i in 0..s_len {
-        // 각 행(i)의 모든 열(j)에 있는 exp_total 값을 합산
         let mut row_exp_sum = FpVar::zero();
         for j in 0..l_len {
             row_exp_sum += &exp_total[i][j];
         }
 
         for j in 0..l_len {
-            // 1. Bit-Decomposition (Limb) 검증
-            let mut x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
-            let mut limb_sum = FpVar::zero();
+            let x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
+            
+            let mut scaled_x = FpVar::zero();
             for k in 0..5 {
-                limb_sum += &limbs[k][i][j] * F::from(1u128 << (16 * k));
+                scaled_x += &limbs[k][i][j] * F::from(1u128 << (16 * k));
             }
-            x_recovered.enforce_equal(&limb_sum)?;
 
-            // 2. Remainder-based Exp Multiplication
-            let mut current_val = exp_limbs[0][i][j].clone();
+            let lhs_scale = &x_recovered * m_sm;
+            let rhs_scale = (&scaled_x * two_k) + &r_sm[i][j];
+            lhs_scale.enforce_equal(&rhs_scale)?;
+
+            let mut current_acc = exp_limbs[0][i][j].clone();
             for k in 0..4 {
-                let lhs = &current_val * &exp_limbs[k+1][i][j];
-                let next_val = if k == 3 { exp_total[i][j].clone() } else { q_exp[k][i][j].clone() };
-                let rhs = (&next_val * frac_scale) + &r_exp[k][i][j];
-                lhs.enforce_equal(&rhs)?;
-                current_val = next_val;
+                let lhs_mult = &current_acc * &exp_limbs[k+1][i][j];
+                let next_q = if k == 3 { exp_total[i][j].clone() } else { q_exp[k][i][j].clone() };
+                let rhs_mult = (&next_q * frac_scale) + &r_exp[k][i][j];
+                lhs_mult.enforce_equal(&rhs_mult)?;
+                current_acc = next_q;
             }
 
-            // 3. Division Check (계산된 row_exp_sum 사용)
-            // (exp_total << 32) == (P * row_exp_sum) + R_div
             let lhs_div = &exp_total[i][j] * frac_scale;
-            let rhs_div = (&p_k1[i][j] * &row_exp_sum) + &r_div[i][j];
+            let rhs_div = (&p_out[i][j] * &row_exp_sum) + &r_div[i][j];
             lhs_div.enforce_equal(&rhs_div)?;
         }
     }

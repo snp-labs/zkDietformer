@@ -1,4 +1,3 @@
-
 use std::{time::Instant, fs::File, ops::{AddAssign, Mul},path::Path, str::FromStr};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
@@ -98,14 +97,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let k_l_t = transpose_matrix(&k_landmarks[h]);
                 let r_pows_k1 = gen_challenge_vector(&r_var, k1_data.q_sim[b][h][0].len());
                 // Kernel 1
-                /*enforce_freivald(
+                enforce_freivald(
                     &q_proc[b][h], 
                     &k_l_t, 
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h], 
                     &params_k1, 
                     &r_pows_k1
-                )?;*/
+                )?;
 
                 // Kernel 2
                 let q_l_h = &q_landmarks[h];
@@ -121,7 +120,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 let k_full_t = transpose_matrix(&k_proc[b][h]);
                 let r_pows_k3 = gen_challenge_vector(&r_var, k3_data.q_sim[b][h][0].len()); 
-                /*enforce_freivald(
+                enforce_freivald(
                     &q_landmarks[h], 
                     &k_full_t, 
                     &k3_data.q_sim[b][h], 
@@ -135,6 +134,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 enforce_softmax(
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h],
+                    &sm1_vars.r_sm[b][h],        
+                    &sm1_vars.m_sm,
                     &sm1_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm1_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm1_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
@@ -144,11 +145,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm1_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
+
                 )?;
 
                 enforce_softmax(
                     &k2_data.q_sim[b][h], 
                     &k2_data.r_matmul[b][h],
+                    &sm2_vars.r_sm[b][h],        
+                    &sm2_vars.m_sm,
                     &sm2_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
@@ -158,7 +162,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm2_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                )?;*/
+                )?;
 
                 // Kernel 3 Matmul 결과인 k3_data.q_sim[b][h]는 [L][S] 형태입니다.
                 let zero_var = FpVar::zero();
@@ -181,9 +185,11 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     }
                 }
 
-                /*enforce_softmax(
+                enforce_softmax(
                     &masked_q_sim_k3, // 마스킹 적용됨
                     &k3_data.r_matmul[b][h],
+                    &sm3_vars.r_sm[b][h],        
+                    &sm3_vars.m_sm,
                     &sm3_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm3_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm3_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
@@ -193,7 +199,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm3_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                )?;*/
+                )?;
 
                 // moore-penrose
                 let q_inv_var = new_matrix_witness_4d(cs.clone(), &self.pseudo_inv.q_inv);
@@ -323,9 +329,9 @@ where
     // 3. 공통 입력 로드
     let q_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_q.npy")?.into_dimensionality()?;
     let q_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_k.npy")?.into_dimensionality()?;
-    let z_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_q.npy")?.into_scalar();
-    let z_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_k.npy")?.into_scalar();
-    let seg= npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("seg_size.npy")?.into_scalar() as usize;
+    let z_q = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_q.npy")?.into_scalar();
+    let z_k = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_k.npy")?.into_scalar();
+    let seg= npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("seg_size.npy")?.into_scalar() as usize;
 
     // 4. Kernel 1 데이터 로드
     let load_matmul = |npz: &mut NpzReader<File>, suffix: &str, has_rmean: bool| -> Result<MatmulBundle<E::ScalarField>> {
@@ -338,9 +344,9 @@ where
             },
             q_sim: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("Q_sim_{}.npy", suffix))?.into_dimensionality()?),
             r_matmul: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("R_matmul_{}.npy", suffix))?.into_dimensionality()?),
-            m: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_{}.npy", suffix))?.into_scalar()),
-            m_prime: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_prime_{}.npy", suffix))?.into_scalar()),
-            z_sim: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_sim_{}.npy", suffix))?.into_scalar()),
+            m: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", suffix))?.into_scalar()),
+            m_prime: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", suffix))?.into_scalar()),
+            z_sim: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_sim_{}.npy", suffix))?.into_scalar()),
         })
     };
 
@@ -357,6 +363,8 @@ where
             exp_total: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("exp_total_{}.npy", suffix))?.into_dimensionality()?),
             p: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("P_{}.npy", suffix))?.into_dimensionality()?),
             r_div: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("R_div_{}.npy", suffix))?.into_dimensionality()?),
+            r_sm: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("r_sm_{}.npy", suffix))?.into_dimensionality()?),
+            m_sm: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("M_sm.npy")?.into_scalar()), // 또는 커널별 suffix 적용
         })
     };
 
@@ -364,19 +372,19 @@ where
     let sm2 = load_softmax(&mut npz, "k2")?;
     let sm3 = load_softmax(&mut npz, "k3")?;
 
-    let frac_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
-    let limb_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("limb_bits.npy")?.into_scalar() as usize;
-    let k_segments = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("k_segments.npy")?.into_scalar() as usize;
-    let k_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
+    let frac_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
+    let limb_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("limb_bits.npy")?.into_scalar() as usize;
+    let k_segments = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_segments.npy")?.into_scalar() as usize;
+    let k_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
     let mask_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix2>("mask.npy")?.into_dimensionality()?;
 
     // Pseudoinverse 관련 데이터 로드
     let q_inv_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_inv_k2.npy")?.into_dimensionality()?;
-    let z_inv_k2 = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_inv_k2.npy")?.into_scalar();
+    let z_inv_k2 = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_inv_k2.npy")?.into_scalar();
 
     // M_inv_all (4개), M_prime_inv_all (4개)
-    let m_inv_all = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("M_inv_all.npy")?;
-    let m_prime_inv_all = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("M_prime_inv_all.npy")?;
+    let m_inv_all = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("M_inv_all.npy")?;
+    let m_prime_inv_all = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("M_prime_inv_all.npy")?;
     let q_y_inv_raw = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("Q_y_inv_intermediates.npy")?;
     let r_inv_raw = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("R_inv_remainders.npy")?;
 
@@ -400,7 +408,7 @@ where
     };
 
     let q_v = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_v.npy")?.into_dimensionality()?;
-    let z_v = npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>("z_v.npy")?.into_scalar();
+    let z_v = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_v.npy")?.into_scalar();
     let matmul_temp = load_matmul(&mut npz, "temp", false)?;
     let matmul_mid = load_matmul(&mut npz, "mid", false)?; // P_k1 @ Q_inv_k2
     let matmul_x = load_matmul(&mut npz, "x", false)?;     // mid @ temp
@@ -640,7 +648,7 @@ fn run_lasso_bundle(
 }
 
 #[test]
-fn combined_full_witness_test() {
+fn attention_test() {
     let p = Path::new("outputs/outputs-model.transformer_0.mha.attn.witness.npz");
     if p.exists() {
         println!("Running combined circuit test on {:?}", p);

@@ -17,18 +17,14 @@ def float_to_fixed(x, frac_bits):
     scaled = np.clip(scaled, 0, float(UINT64_MAX))
     return scaled.astype(np.uint64)
 
-def generate_softmax_tables(out_dir, s_q, s_k, k_bits=22, frac_bits=32):
+def generate_softmax_tables(out_dir, k_bits=22, frac_bits=32):
     os.makedirs(out_dir, exist_ok=True)
-    
-    unit_scale = (float(s_q) * float(s_k)) / float(1 << k_bits)
-    if unit_scale == 0:
-        unit_scale = 1e-15
     
     tables = []
     for k in range(K_SEGMENTS):
         weight = float(1 << (LIMB_BITS * k))
         limb_vals = np.arange(LIMB_SIZE, dtype=np.float64)
-        real_x = limb_vals * weight * unit_scale
+        real_x = limb_vals * weight
         
         real_x = np.clip(real_x, None, 20.0)
         exps = np.exp(real_x)
@@ -36,7 +32,7 @@ def generate_softmax_tables(out_dir, s_q, s_k, k_bits=22, frac_bits=32):
         fixed_exps = float_to_fixed(exps, frac_bits)
         tables.append(fixed_exps)
         
-        print(f"Segment {k}: weight=2^{LIMB_BITS*k}, unit_scale={unit_scale:.20f}")
+        print(f"Segment {k}: weight=2^{LIMB_BITS*k}")
 
     stacked = np.stack(tables, axis=0)
     out_path = os.path.join(out_dir, "softmax_tables.npz")
@@ -44,22 +40,23 @@ def generate_softmax_tables(out_dir, s_q, s_k, k_bits=22, frac_bits=32):
         out_path,
         tables=stacked,
         frac_bits=np.int32(frac_bits),
-        s_q=np.float64(s_q),
-        s_k=np.float64(s_k),
         k_bits=np.int32(k_bits)
     )
     print(f"✅ ZEN Softmax tables saved to {out_path}")
     return out_path
 
 
-def extract_exp_from_segments(Q_sim, R_mat, sm_tables, k_bits):
+def extract_exp_from_segments(Q_sim, R_mat, sm_tables, M_sm, k_bits):
 
     X = (Q_sim.astype(object) << k_bits) + R_mat.astype(object)
-    
+    scaled_product = X * M_sm # 테이블 인덱스와 맞추기 위하여 곱하긴 곱해야 함.
+    scaled_x = scaled_product >> k_bits
+    r_sm = scaled_product % (1 << k_bits)
+
     limbs = []
     mask = (1 << LIMB_BITS) - 1
     for i in range(K_SEGMENTS):
-        limb = (X >> (LIMB_BITS * i)) & mask
+        limb = (scaled_x >> (LIMB_BITS * i)) & mask
         limbs.append(limb.astype(np.int64))
     
     limbs_stacked = np.stack(limbs, axis=0)
@@ -71,7 +68,7 @@ def extract_exp_from_segments(Q_sim, R_mat, sm_tables, k_bits):
         
     exp_limbs_stacked = np.stack(exp_limbs, axis=0)
     
-    return limbs_stacked, exp_limbs_stacked
+    return limbs_stacked, exp_limbs_stacked, r_sm
 
 
 def combine_exp_limbs(exp_limbs_list, frac_bits=32):
