@@ -48,8 +48,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         
         let dim: usize = self.norm1.q_ri[0][0].len();
 
-        /*let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits)?;
-        let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(),&q_norm1_vars, &self.ff1, self.k_bits)?;
+        let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits)?;
+        /*let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(),&q_norm1_vars, &self.ff1, self.k_bits)?;
         let q_gelu_vars = enforce_gelu(
             cs.clone(),
             &q_ff1_vars,  
@@ -71,26 +71,28 @@ where
     let f = File::open(path).context(format!("opening witness npz {:?}", path))?;
     let mut npz = NpzReader::new(f)?;
 
-    let k_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
-    let frac_bits = npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
+    let k_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
+    let frac_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
     
     let load_norm = |npz: &mut NpzReader<File>, prefix: &str| -> Result<NormBundle<E::ScalarField>> {
         Ok(NormBundle {
             q_ri: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_ri_{}.npy", prefix))?.into_dimensionality()?),
-            z_ri: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_ri_{}.npy", prefix))?.into_scalar()),
+            z_ri: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_ri_{}.npy", prefix))?.into_scalar()),
             sum_sq: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("sum_sq_{}.npy", prefix))?.into_dimensionality()?),
-            m_ms: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_ms_{}.npy", prefix))?.into_scalar()),
-            m_prime_ms: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_prime_ms_{}.npy", prefix))?.into_scalar()),
+            m_ms: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_ms_{}.npy", prefix))?.into_scalar()),
+            m_prime_ms: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_ms_{}.npy", prefix))?.into_scalar()),
             shifted_val: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("shifted_val_{}.npy", prefix))?.into_dimensionality()?),
             r_shift: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_shift_{}.npy", prefix))?.into_dimensionality()?),
             q_ms_sim: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_ms_sim_{}.npy", prefix))?.into_dimensionality()?),
             r_ms: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_ms_{}.npy", prefix))?.into_dimensionality()?),
             inv_rms: to_field_3d_u64(&npz.by_name::<_, Ix3>(&format!("inv_rms_total_{}.npy", prefix))?.into_dimensionality()?),
             q_gamma: to_field_1d_i64(&npz.by_name::<_, Ix1>(&format!("Q_gamma_{}.npy", prefix))?.into_dimensionality()?),
-            z_gamma: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_gamma_{}.npy", prefix))?.into_scalar()),
+            z_gamma: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_gamma_{}.npy", prefix))?.into_scalar()),
             q_out: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_rms_output_sim_{}.npy", prefix))?.into_dimensionality()?),
             r_out: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_rms_output_{}.npy", prefix))?.into_dimensionality()?),
-            weight_bits: npz.by_name::<ndarray::OwnedRepr<i32>, Ix0>(&format!("weight_bits.npy"))?.into_scalar() as usize,
+            m_rms_idx: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
+            m_norm: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_norm_{}.npy", prefix))?.into_scalar()),
+            m_prime_norm: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_norm_{}.npy", prefix))?.into_scalar()),
         })
     };
     
@@ -101,15 +103,15 @@ where
     let load_linear = |npz: &mut NpzReader<File>, prefix: &str| -> Result<LinearBundle<E::ScalarField>> {
         Ok(LinearBundle {
             // z_in: 입력(Norm 출력)의 제로포인트
-            z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
+            z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
             
             // 가중치 및 바이어스 (Q_w - z_w, Q_b - z_b)
             q_w_diff: to_field_2d_i32(&npz.by_name::<_, Ix2>(&format!("Q_w_diff_{}.npy", prefix))?.into_dimensionality()?),
             q_b_diff: to_field_1d_i64(&npz.by_name::<_, Ix1>(&format!("Q_b_diff_{}.npy", prefix))?.into_dimensionality()?),
             
             // 재스케일링 상수
-            m_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
-            m_prime_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
+            m_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
+            m_prime_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
             
             // 결과 Witness (enforce_equal 검증용)
             q_out_sim: to_field_3d_i32(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
@@ -121,13 +123,14 @@ where
         
     let load_gelu = |npz: &mut NpzReader<File>, prefix: &str| -> Result<GeLUBundle<E::ScalarField>> {
         Ok(GeLUBundle {
-            z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
+            z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
             sigmoid_table_val: to_field_3d_u64(&npz.by_name::<_, Ix3>(&format!("sigmoid_part_{}.npy", prefix))?.into_dimensionality()?),
             acc_gelu: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("acc_{}.npy", prefix))?.into_dimensionality()?),
-            m_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
-            m_prime_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<i64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
-            q_out_sim: to_field_3d_i32(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
+            m_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
+            m_prime_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
+            q_out_sim: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
             r_out_gelu: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_out_{}.npy", prefix))?.into_dimensionality()?),
+            m_gelu_idx: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_gelu_idx.npy"))?.into_scalar()),
         })
     };
     
@@ -236,7 +239,20 @@ E: Pairing<ScalarField = Fr>,
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let dim = circuit.norm1.q_ri[0][0].len();
         run_lasso_for_rmsnorm(&circuit.norm1, circuit.k_bits, b"lasso_rms1", &mut rng)?;
-        run_lasso_for_gelu(&circuit.gelu1, circuit.k_bits, b"lasso_gelu1", &mut rng)?;
+        run_lasso_for_gelu(
+            &circuit.gelu1, 
+            &circuit.ff1.q_out_sim.iter().map(|batch| {
+                batch.iter().map(|seq| {
+                    seq.iter().map(|val| {
+                        Fr::from((*val).into_bigint().as_ref()[0] as i64)
+                    }).collect::<Vec<Fr>>()
+                }).collect::<Vec<Vec<Fr>>>()
+            }).collect::<Vec<Vec<Vec<Fr>>>>(),
+            &circuit.ff1.r_out_lin, 
+            circuit.k_bits, 
+            b"lasso_gelu1", 
+            &mut rng
+        )?;
     }
 
     Ok(())
@@ -250,30 +266,24 @@ fn run_lasso_for_rmsnorm(
 ) -> Result<()> {
     let b_dim = bundle.q_ms_sim.len();
     let s_dim = bundle.q_ms_sim[0].len();
+    let dim = bundle.q_out[0][0].len();
 
     let mut indices_x = vec![vec![vec![Fr::zero(); 1]; s_dim]; b_dim];
     
+    // 파이썬 로직 동기화: Index = ((shifted_val * M_rms_idx) >> k) // dim
+    let m_idx = bundle.m_rms_idx.into_bigint().as_ref()[0] as u128;
+
     for b in 0..b_dim {
         for s in 0..s_dim {
-            // BigInt에서 직접 limb을 가져올 때, 음수가 양수로 오해되지 않도록 i64로 먼저 해석 후 u64로 변환하거나 
-            // 0보다 작은지 체크하는 것이 안전합니다.
-            let q_ms_bigint = bundle.q_ms_sim[b][s][0].into_bigint();
-            let r_ms_bigint = bundle.r_ms[b][s][0].into_bigint();
+            let val = bundle.shifted_val[b][s][0].into_bigint().as_ref()[0] as u128;
             
-            let q_ms_u64 = q_ms_bigint.as_ref()[0];
-            let r_ms_u64 = r_ms_bigint.as_ref()[0];
-            
-            // 파이썬 rms_table.py의 index = (Q_sim << k_bits) + R_mat 로직을 따름
-            // 단, 이미 Q_ms_sim이 최종 몫이라면 k_bits 시프트가 맞으나, 
-            // 현재 에러 수치로 보아 시프트된 결과값이 이미 들어왔을 가능성이 큼.
-            // 안전하게 범위를 체크하고 clipping을 수행합니다.
-            let mut combined_idx = (q_ms_u64 << k_bits) + r_ms_u64;
+            let numerator = val * m_idx;
+            let scaled = numerator >> k_bits;
+            let mut combined_idx = (scaled / (dim as u128)) as u64;
 
-            // RMSNORM_M 범위를 초과하면 테이블 마지막 인덱스로 고정 (Python의 np.clip과 동기화)
             if combined_idx >= RMSNORM_M as u64 {
                 combined_idx = (RMSNORM_M - 1) as u64;
             }
-            
             indices_x[b][s][0] = Fr::from(combined_idx);
         }
     }
@@ -352,6 +362,8 @@ fn prove_lasso_for_rmsnorm(
 
 fn run_lasso_for_gelu(
     bundle: &GeLUBundle<Fr>,
+    q_in_sim: &Vec<Vec<Vec<Fr>>>, // Passed from Linear output (Q)
+    r_in_lin: &Vec<Vec<Vec<Fr>>>, // Passed from Linear remainder (R)
     k_bits: usize,
     label: &'static [u8],
     rng: &mut StdRng,
@@ -361,44 +373,34 @@ fn run_lasso_for_gelu(
     let d_dim = bundle.q_out_sim[0][0].len();
 
     let mut indices = Vec::new();
-    let shift = (k_bits - 8) as u32; // 파이썬의 shift = k_bits - 8 반영
-    let offset = 32768u64; // TABLE_SIZE // 2
+    let offset = 32768u128; // TABLE_SIZE // 2 for fixed-resolution 0-point
+    let m_gelu_idx = bundle.m_gelu_idx.into_bigint().as_ref()[0] as u128;
 
     for b in 0..b_dim {
         for s in 0..s_dim {
             for d in 0..d_dim {
-                // (Q_in - z_in) 계산 (필드 원소를 i64로 안전하게 변환)
-                let q_in_val = bundle.q_out_sim[b][s][d]; // Linear1의 결과물이 GeLU의 입력
-                let z_in_val = bundle.z_in;
+                // 1. Reconstruct high-precision X_diff: (Q_in - z_in) * 2^k + R_in
+                let q_in_diff = (q_in_sim[b][s][d].into_bigint().as_ref()[0] as i128) 
+                                - (bundle.z_in.into_bigint().as_ref()[0] as i128);
+                let r_in = r_in_lin[b][s][d].into_bigint().as_ref()[0] as i128;
                 
-                // 고정밀 X_diff 계산: (Q_in - z_in) << k + R_in
-                // 필드 연산 후 u64로 변환하여 시프트 적용
-                let diff_f = q_in_val - z_in_val;
-                let diff_big = diff_f.into_bigint();
-                
-                // 음수 처리를 위해 i64로 변환 후 시프트하거나, 
-                // 필드 원소의 특성을 고려하여 처리 (여기서는 파이썬 로직 동기화)
-                let diff_i64 = if diff_big.as_ref()[3] > 0 { // 대략적인 음수 체크
-                    -( (Fr::zero() - diff_f).into_bigint().as_ref()[0] as i64 )
-                } else {
-                    diff_big.as_ref()[0] as i64
-                };
+                let x_diff_full = (q_in_diff << k_bits) + r_in;
 
-                let x_diff = diff_i64 << k_bits; // R_in은 r_out_lin에서 오지만 단순화를 위해 Q만 고려 가능
-                // 실제 구현 시 r_ff1_vars의 값도 bundle에 포함되어야 함
+                // 2. Map to Fixed Table Index: Index = (X_diff * M_gelu_idx >> k) + Offset
+                let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> k_bits;
+                let mut idx = scaled_diff + offset as i128;
+
+                // 3. Clipping to TABLE_SIZE (65536)
+                if idx < 0 { idx = 0; }
+                if idx >= GELU_M as i128 { idx = (GELU_M - 1) as i128; }
                 
-                let idx = (x_diff >> shift) + offset as i64;
-                let clipped_idx = idx.clamp(0, (GELU_M - 1) as i64) as usize;
-                
-                indices.push([clipped_idx]);
+                indices.push([idx as usize]);
             }
         }
     }
 
     let sparsity = indices.len();
     let gens = SparsePolyCommitmentGens::<G1>::new(label, GELU_C, sparsity, GELU_C, 16);
-
-    // 공통 Lasso 증명 로직 호출
     prove_lasso_for_gelu(&indices, &gens, rng, label)
 }
 

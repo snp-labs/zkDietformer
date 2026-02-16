@@ -20,7 +20,9 @@ pub struct NormBundle<F: PrimeField> {
     pub z_gamma: F,
     pub q_out: Vec<Vec<Vec<F>>>,      // [B][S][D]
     pub r_out: Vec<Vec<Vec<F>>>,      // [B][S][D]
-    pub weight_bits: usize,
+    pub m_rms_idx: F,          // 추가: 인덱스 변환용 배수
+    pub m_norm: F,             // 추가: 최종 출력 멀티플라이어
+    pub m_prime_norm: F,       // 추가: 최종 출력 오프셋
 }
 
 pub fn enforce_rmsnorm<F: PrimeField>(
@@ -31,14 +33,17 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     k_bits:usize
 ) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
     let two_k = FpVar::new_constant(cs.clone(), F::from(1u128 << k_bits))?;
-    let two_total = FpVar::new_constant(cs.clone(), F::from(1u128 << (frac_bits + bundle.weight_bits)))?;
     let dim_var = FpVar::new_constant(cs.clone(), F::from(dim as u128))?;
     let z_ri_var = FpVar::new_constant(cs.clone(), bundle.z_ri)?;
     let m_ms_var = FpVar::new_constant(cs.clone(), bundle.m_ms)?;
     let m_prime_var = FpVar::new_constant(cs.clone(), bundle.m_prime_ms)?;
     let gamma_vars = bundle.q_gamma.iter().map(|g| FpVar::new_witness(cs.clone(), || Ok(*g))).collect::<Result<Vec<_>, _>>()?;
     let z_gamma_var = FpVar::new_constant(cs.clone(), bundle.z_gamma)?;
+    let m_norm_var = FpVar::new_constant(cs.clone(), bundle.m_norm)?;
+    let m_prime_norm_var = FpVar::new_constant(cs.clone(), bundle.m_prime_norm)?;
     let mut all_q_out_vars = Vec::new();
+    
+    
     for b in 0..bundle.q_ri.len() {
         let mut batch_q_out_vars = Vec::new();
         for s in 0..bundle.q_ri[b].len() {
@@ -67,16 +72,24 @@ pub fn enforce_rmsnorm<F: PrimeField>(
             shifted_var.enforce_equal(&((&q_ms_var * &dim_var) + &r_ms_var))?;
 
             // 4. 최종 출력 검증 (Weight 포함)
-            // (Q_diff * inv_rms * Q_gamma) = (Q_out << (frac + weight)) + R_out
-            let mut seq_q_out_vars = Vec::new();
             let inv_rms_var = FpVar::new_witness(cs.clone(), || Ok(bundle.inv_rms[b][s][0]))?;
-            for d in 0..q_diff_vars.len() {
+            let mut seq_q_out_vars = Vec::new();
+            
+            for d in 0..bundle.q_ri[b][s].len() {
+                let q_diff_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_ri[b][s][d] - bundle.z_ri))?;
+                let q_gamma_diff = &gamma_vars[d] - &z_gamma_var;
+                
+                // 중간 곱셈 결과 (Q_diff * inv_rms * Q_gamma_diff)
+                let product = &q_diff_var * &inv_rms_var * &q_gamma_diff;
+                
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out[b][s][d]))?;
-                let q_gamma_signed = &gamma_vars[d] - &z_gamma_var;
-                let lhs_final = &q_diff_vars[d] * &inv_rms_var * &q_gamma_signed;
-                let rhs_final = (&q_out_var * &two_total) + &r_out_var;
-                lhs_final.enforce_equal(&rhs_final)?;
+
+                // 등식: M_norm * (product + M_prime_norm) = (Q_out << k) + R_out
+                let lhs = &m_norm_var * (product + &m_prime_norm_var);
+                let rhs = (&q_out_var * &two_k) + &r_out_var;
+                lhs.enforce_equal(&rhs)?;
+                
                 seq_q_out_vars.push(q_out_var);
             }
             batch_q_out_vars.push(seq_q_out_vars);

@@ -87,3 +87,17 @@ def get_softmax_index_multiplier(s_q, s_k, k_bits=22):
     
     assert multiplier >= 0, f"Softmax multiplier must be non-negative, got {multiplier}"
     return multiplier
+
+def get_rms_index_multiplier(s_ms, k_bits=22):
+    # positive check
+    assert s_ms > 0, f"Scales must be positive: s_ri={s_ms}"
+
+    multiplier = int(np.floor(s_ms * (1 << k_bits)))
+    assert multiplier >= 0, f"Softmax multiplier must be non-negative, got {multiplier}"
+    return multiplier
+
+def get_gelu_index_multiplier(s_in, k_bits=22):
+    # GELU_INDEX_SCALE은 gelu_table.py와 동일한 1/512 사용
+    GELU_INDEX_SCALE = 1.0 / (1 << 9)
+    # M = (s_in / GELU_INDEX_SCALE) * 2^k
+    return int(np.floor((s_in / GELU_INDEX_SCALE) * (1 << k_bits)))
