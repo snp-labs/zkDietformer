@@ -1,4 +1,3 @@
-
 use std::{time::Instant, fs::File, ops::{AddAssign, Mul},path::Path, str::FromStr};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
@@ -45,19 +44,17 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        
         let dim: usize = self.norm1.q_ri[0][0].len();
-
+        
         let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits)?;
-        /*let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(),&q_norm1_vars, &self.ff1, self.k_bits)?;
+        let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(),&q_norm1_vars, &self.ff1, self.k_bits)?;
         let q_gelu_vars = enforce_gelu(
             cs.clone(),
             &q_ff1_vars,  
             &r_ff1_vars,  
             &self.gelu1,
             self.k_bits,
-            self.frac_bits
-        )?;*/
+        )?;
 
         Ok(())
     }
