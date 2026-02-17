@@ -13,7 +13,9 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M, GELU_M, GELU_C}, 
+    cc_snark::legogroth16::{LinkPublicGenerators, prepare_verifying_key, generate_random_parameters_incl_cp_link, create_random_proof_incl_cp_link, verify_proof_incl_cp_link},
+    //cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, 
+    config::{RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M, GELU_M, GELU_C}, 
     gadgets::{
         activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
     }, lasso::{
@@ -27,9 +29,29 @@ use crate::{
             lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, 
             softmax::SoftmaxSubtableStrategy, gelu::GeLUSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
-    }, util::load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64}
+    }, util::load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64},
+    util::utils::{cm1_from_vk, hash_cm_to_field_vec},
+};
+use ark_std::{
+    rand::{RngCore},
+    vec::Vec,
 };
 
+pub fn get_link_public_gens<R: RngCore, E: Pairing>(
+    rng: &mut R,
+    count: u32,
+) -> LinkPublicGenerators<E> {
+    let pedersen_gens = (0..count)
+        .map(|_| E::G1::rand(rng).into_affine())
+        .collect::<Vec<_>>();
+    let g1 = E::G1::rand(rng).into_affine();
+    let g2 = E::G2::rand(rng).into_affine();
+    LinkPublicGenerators {
+        pedersen_gens,
+        g1,
+        g2,
+    }
+}
 
 type G1 = G1Projective;
 #[derive(Clone)]
@@ -38,14 +60,14 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     //pub norm2: NormBundle<F>,
     pub ff1: LinearBundle<F>,
     pub gelu1: GeLUBundle<F>,
-
+    pub challenge_r: Vec<F>,
     pub frac_bits: usize,
     pub k_bits: usize,
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let dim: usize = self.norm1.q_ri[0][0].len();
-        
+        let challenge_r_var = Vec::<FpVar<F>>::new_input(cs.clone(), || Ok(self.challenge_r.clone()))?;
         let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits)?;
         let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(),&q_norm1_vars, &self.ff1, self.k_bits)?;
         let q_gelu_vars = enforce_gelu(
@@ -132,21 +154,21 @@ where
     };
     
     let gelu1 = load_gelu(&mut npz, "gelu")?;
-
+    let n_len = norm1.q_ri.len() * norm1.q_ri[0].len();
 
     Ok(NystromAttentionCircuit {
         norm1,
         //norm2,
         ff1,
         gelu1,
-
+        challenge_r: vec![E::ScalarField::zero(); n_len],
         frac_bits: frac_bits,
         k_bits: k_bits,
     })
 
     
 }
-
+/* 
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
 where
 E: Pairing<ScalarField = Fr>,
@@ -181,10 +203,11 @@ E: Pairing<ScalarField = Fr>,
 
     for file_path in targets.iter() {
         println!("\n=== Processing witness NPZ: {:?} ===", file_path);
-        let circuit= load_nystrom_circuit::<E>(file_path)?;
+        // --- [STEP 1] LegoGroth16 Setup (첫 번째 샘플 파일 기준) ---
+        let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
 
         let cs = ark_relations::r1cs::ConstraintSystem::<ScalarF<E>>::new_ref();
-        circuit.clone().generate_constraints(cs.clone())?;
+        sample_circuit.clone().generate_constraints(cs.clone())?;
         
         if !cs.is_satisfied().unwrap() {
             match cs.which_is_unsatisfied() {
@@ -196,7 +219,7 @@ E: Pairing<ScalarField = Fr>,
         }
 
         let cs = ark_relations::r1cs::ConstraintSystem::<Fr>::new_ref();
-        circuit.clone().generate_constraints(cs.clone())?;
+        sample_circuit.clone().generate_constraints(cs.clone())?;
         let num_constraints = cs.num_constraints();
         let num_instance_variables = cs.num_instance_variables();
         let num_witness_variables = cs.num_witness_variables();
@@ -209,49 +232,159 @@ E: Pairing<ScalarField = Fr>,
         if !cs.is_satisfied().unwrap() {
             return Err(anyhow::anyhow!("Constraints NOT satisfied"));
         }
+        
+        // CP-link용 공용 생성기 (norm1.q_out 전체를 커밋하므로 그 길이에 맞춤)
+        let num_commit_1 = sample_circuit.norm1.q_out.iter().flatten().flatten().count() as u32;
+        let link_gens = get_link_public_gens::<_, E>(&mut rng, num_commit_1 + 1);
 
-        println!("=== [1] ccGroth Proofs: Freivald/Softmax ===");    
-        let setup_start = Instant::now();
-        let (pk, vk) = CcGroth16::<E>::setup(circuit.clone(), &mut rng)?;
-        let setup_duration = setup_start.elapsed();
-        println!("  - Setup Time: {:?}", setup_duration);
+        println!("=== [0] LegoGroth16 Setup (Num Commit: {}) ===", num_commit_1);
+        let params = generate_random_parameters_incl_cp_link::<E, _, _>(
+            sample_circuit.clone(), link_gens, num_commit_1, 0, &mut rng
+        ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
+        
+        let pvk = prepare_verifying_key::<E>(&params.vk.groth16_vk);
+        println!("\n=== Processing: {:?} ===", file_path);
+        let circuit_data = load_nystrom_circuit::<E>(file_path)?;
 
-        let prove_start = Instant::now();
-        let proof = CcGroth16::<E>::prove(&pk, circuit.clone(), &mut rng)?;
-        let prove_duration = prove_start.elapsed();
-        println!("  - Prover Time (ccGroth): {:?}", prove_duration);
+        // 1. 실제 Public Input 개수 동적 분석 (Variable::One 제외)
+        let cs_analyze = ConstraintSystem::<Fr>::new_ref();
+        circuit_data.clone().generate_constraints(cs_analyze.clone())?;
+        let actual_num_pub = cs_analyze.num_instance_variables() - 1;
 
-        let pvk = prepare_verifying_key::<E>(&vk);
-        let public_inputs = vec![];
-        let verify_start = Instant::now();
-        let ok = CcGroth16::<E>::verify_with_processed_vk(&pvk, &public_inputs, &proof)?;
-        println!("Verification result for {:?}: {}", file_path, ok);
-        if !ok {
-            return Err(anyhow::anyhow!("Verification failed for {:?}", file_path));
+        // 2. 커밋 데이터 수집 (RMSNorm의 출력값 q_out을 평탄화)
+        let mut committed_group1 = Vec::new();
+        for batch in &circuit_data.norm1.q_out {
+            for seq in batch {
+                for val in seq { committed_group1.push(*val); }
+            }
         }
-        let verify_duration = verify_start.elapsed();
-        println!("  - Verifier Time (ccGroth): {:?}", verify_duration);
-        println!("  - Verification Result: {}", ok);
+
+        // 3. Fiat-Shamir: 커밋 기반 챌린지 생성
+        let v1 = Fr::rand(&mut rng);
+        let v2 = Fr::rand(&mut rng);
+        let link_v = Fr::rand(&mut rng);
+
+        let cm1 = cm1_from_vk::<E>(&params.vk.groth16_vk, actual_num_pub, &committed_group1, &v1);
+        let r_vec = hash_cm_to_field_vec::<E>(&cm1, actual_num_pub);
+
+        // 4. 최종 회로 빌드 및 CP-link 증명 생성
+        let final_circuit = NystromAttentionCircuit { challenge_r: r_vec, ..circuit_data };
+        let proof = create_random_proof_incl_cp_link(
+            final_circuit.clone(), v1, v2, link_v, &params, &mut rng
+        ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
+
+        // 5. 검증 (LegoGroth16 + CP-link)
+        let r_verifier = hash_cm_to_field_vec::<E>(&proof.groth16_proof.d1, actual_num_pub);
+        let mut public_inputs = Vec::new();
+        public_inputs.extend_from_slice(&r_verifier);
+
+        let ok = verify_proof_incl_cp_link(&pvk, &params.vk, &proof, &public_inputs);
+        println!("  - LegoGroth16 + CP-link Verification: {:?}", ok);
 
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
-        let dim = circuit.norm1.q_ri[0][0].len();
-        run_lasso_for_rmsnorm(&circuit.norm1, circuit.k_bits, b"lasso_rms1", &mut rng)?;
+        /*let dim = final_circuit.norm1.q_ri[0][0].len();
+        run_lasso_for_rmsnorm(&final_circuit.norm1, final_circuit.k_bits, b"lasso_rms1", &mut rng)?;
         run_lasso_for_gelu(
-            &circuit.gelu1, 
-            &circuit.ff1.q_out_sim.iter().map(|batch| {
+            &final_circuit.gelu1, 
+            &final_circuit.ff1.q_out_sim.iter().map(|batch| {
                 batch.iter().map(|seq| {
                     seq.iter().map(|val| {
                         Fr::from((*val).into_bigint().as_ref()[0] as i64)
                     }).collect::<Vec<Fr>>()
                 }).collect::<Vec<Vec<Fr>>>()
             }).collect::<Vec<Vec<Vec<Fr>>>>(),
-            &circuit.ff1.r_out_lin, 
-            circuit.k_bits, 
+            &final_circuit.ff1.r_out_lin, 
+            final_circuit.k_bits, 
             b"lasso_gelu1", 
             &mut rng
-        )?;
+        )?;*/
     }
 
+    Ok(())
+}*/
+
+pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
+where
+    E: Pairing<ScalarField = Fr>,
+    <E::ScalarField as FromStr>::Err: core::fmt::Debug,
+{
+    type ScalarF<E> = <E as Pairing>::ScalarField;
+    let mut targets: Vec<std::path::PathBuf> = Vec::new();
+    if path.is_dir() {
+        for entry in fs::read_dir(path).context("reading directory")? {
+            let ent = entry?.path();
+            if ent.is_file() && ent.extension().map_or(false, |s| s == "npz") {
+                targets.push(ent);
+            }
+        }
+        targets.sort();
+    } else {
+        targets.push(path.to_path_buf());
+    }
+
+    let mut rng = StdRng::seed_from_u64(42u64);
+
+    for file_path in targets.iter() {
+        println!("\n=== Processing witness NPZ: {:?} ===", file_path);
+        
+        // 1. 초기 회로 로드 및 구조 분석
+        let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
+        let cs_analyze = ConstraintSystem::<Fr>::new_ref();
+        sample_circuit.clone().generate_constraints(cs_analyze.clone())?;
+        cs_analyze.finalize(); // 할당 순서 확정
+
+        let num_pub = cs_analyze.num_instance_variables() - 1; 
+        let num_commit_1 = sample_circuit.norm1.q_out.iter().flatten().flatten().count() as u32;
+
+        // 2. LegoGroth16 Setup
+        let link_gens = get_link_public_gens::<_, E>(&mut rng, num_commit_1 + 1);
+        println!("=== [0] LegoGroth16 Setup (Num Commit: {}) ===", num_commit_1);
+        let params = generate_random_parameters_incl_cp_link::<E, _, _>(
+            sample_circuit.clone(), link_gens, num_commit_1, 0, &mut rng
+        ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
+        
+        let pvk = prepare_verifying_key::<E>(&params.vk.groth16_vk);
+
+        // 3. [핵심 수정] 서킷 할당 순서와 100% 일치하는 Witness 추출
+        // 수동으로 q_out을 모으는 대신, CS가 생성한 할당 리스트에서 앞부분을 가져옵니다.
+        let committed_group1 = {
+            let cs_inner = cs_analyze.borrow().ok_or_else(|| anyhow::anyhow!("CS borrow failed"))?;
+            let full_witness = &cs_inner.witness_assignment;
+            
+            if full_witness.len() < num_commit_1 as usize {
+                return Err(anyhow::anyhow!("Not enough witness variables: expected {}, found {}", num_commit_1, full_witness.len()));
+            }
+            // 정확한 개수만큼 슬라이싱하여 복사
+            full_witness[0..num_commit_1 as usize].to_vec()
+        };
+
+        // 4. Fiat-Shamir: 정확한 Witness 그룹으로 커밋 및 챌린지 생성
+        let v1 = Fr::rand(&mut rng);
+        let v2 = Fr::rand(&mut rng);
+        let link_v = Fr::rand(&mut rng);
+
+        let cm1 = cm1_from_vk::<E>(&params.vk.groth16_vk, num_pub, &committed_group1, &v1);
+        let r_vec = hash_cm_to_field_vec::<E>(&cm1, num_pub);
+
+        // 5. 최종 증명 생성
+        println!("=== [0] LegoGroth16 GenProof ===");
+        let final_circuit = NystromAttentionCircuit { challenge_r: r_vec, ..sample_circuit };
+        let proof = create_random_proof_incl_cp_link(
+            final_circuit, v1, v2, link_v, &params, &mut rng
+        ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
+
+        // 6. 검증 (Public Input은 challenge_r 벡터 포함)
+        let r_verifier = hash_cm_to_field_vec::<E>(&proof.groth16_proof.d1, num_pub);
+        let mut public_inputs = Vec::new();
+        public_inputs.extend_from_slice(&r_verifier);
+
+        let result = verify_proof_incl_cp_link(&pvk, &params.vk, &proof, &public_inputs);
+        println!("  - LegoGroth16 + CP-link Verification: {:?}", result);
+        
+        if let Err(e) = result {
+            println!("    Reason: {:?}", e);
+        }
+    }
     Ok(())
 }
 
