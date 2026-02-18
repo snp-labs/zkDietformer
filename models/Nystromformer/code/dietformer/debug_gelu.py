@@ -20,7 +20,6 @@ def debug_gelu_constraints(output_dir="outputs"):
         print(f"🔍 GeLU Constraint Debug: {os.path.basename(witness_path)}")
         print("="*70)
 
-        # 데이터 로드
         ref = np.load(debug_path, allow_pickle=True)
         sim = np.load(witness_path, allow_pickle=True)
 
@@ -29,12 +28,10 @@ def debug_gelu_constraints(output_dir="outputs"):
             continue
 
         k = int(sim['k_bits'])
-        # 파이프라인의 total_shift 로직 반영 (k + FRAC_BITS)
         total_shift = k + FRAC_BITS 
 
         # --- [검증 1] 테이블 인덱스 및 시그모이드 조회 검증 ---
         # Eq 1: Index = (( (Q_in - z_in) * 2^k + R_in ) * M_gelu_idx >> k) + Offset
-        # Linear1의 출력(Q_out_sim_lin, R_out_lin)이 GeLU의 입력이 됨
         q_in_diff = (sim['Q_out_sim_lin'].astype(object) - sim['z_in_gelu'].astype(object))
         x_diff_full = (q_in_diff << k) + sim['R_out_lin'].astype(object)
         

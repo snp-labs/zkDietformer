@@ -13,7 +13,6 @@ def debug_final_witness(npz_path):
     k_segments = int(data['k_segments'])
     limb_bits = int(data['limb_bits'])
     
-    # debuging kernel
     p = "_k1" 
     
     print(f"\n[Step 1] ZEN Matmul & Scaling Verification ({p})")
@@ -51,11 +50,9 @@ def debug_final_witness(npz_path):
         multiplier = exp_limbs[k+1].astype(object)
         lhs_mult = current_acc * multiplier
         
-        # 마지막 단계(k=3)에서는 최종 결과(exp_total)를 사용
         if k == k_segments - 2:
             target_q = final_exp_total
         else:
-            # 중간 단계(k=0,1,2)에서는 Q_exp[0], Q_exp[1], Q_exp[2]를 사용
             target_q = Q_exp[k].astype(object) 
             
         rhs_mult = (target_q << frac_bits) + R_exp[k].astype(object)
