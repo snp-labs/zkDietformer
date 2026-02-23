@@ -2,7 +2,7 @@ import hashlib
 import numpy as np
 from quantize import (
     get_quantization_params, quantize_tensor, 
-    get_m_constant, sign_bit_grouping_matmul, get_softmax_index_multiplier
+    get_m_constant, sign_bit_grouping_matmul, get_softmax_index_multiplier, check_neg_torch
 )
 from softmax_table import (
     generate_softmax_tables, 
@@ -10,7 +10,7 @@ from softmax_table import (
     FRAC_BITS, LIMB_BITS, K_SEGMENTS
 )
 
-
+    
 def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     debug = np.load(debug_npz_path, allow_pickle=True)
     
@@ -102,6 +102,9 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     P_k3 = (exp_total_k3 << FRAC_BITS) // exp_sum_k3
     R_div_k3 = (exp_total_k3 << FRAC_BITS) % exp_sum_k3
 
+    check_neg_torch(P_k3, "P_k3")
+    check_neg_torch(R_div_k3, "R_div_k3")
+
     ### Pseudoinverse
     inv_k2_real = debug['inv_kernel_2']
     s_inv, z_inv = get_quantization_params(inv_k2_real)
@@ -151,6 +154,9 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         P_k3.astype(np.int64), z_pk3, Q_v.astype(np.int64), z_v, z_sim_temp, M_temp, k_bits
     )
 
+    check_neg_torch(Q_sim_temp, "Q_sim_temp")
+    check_neg_torch(R_matmul_temp, "R_matmul_temp")
+
     ### mid
     mid_real = debug['mid']
     s_mid, z_sim_mid = get_quantization_params(mid_real)
@@ -164,6 +170,9 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         P_k1.astype(np.int64), z_pk1, Q_inv_k2.astype(np.int64), z_inv, z_sim_mid, M_mid, k_bits
     )
 
+    check_neg_torch(Q_sim_mid, "Q_sim_mid")
+    check_neg_torch(R_matmul_mid, "R_matmul_mid")
+
     ### X
     X_real = debug['X']
     s_x, z_sim_x = get_quantization_params(X_real)
@@ -173,6 +182,9 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_sim_x, R_matmul_x, M_prime_x = sign_bit_grouping_matmul(
         Q_sim_mid.astype(np.int64), z_sim_mid, Q_sim_temp.astype(np.int64), z_sim_temp, z_sim_x, M_x, k_bits
     )
+
+    check_neg_torch(Q_sim_x, "Q_sim_x")
+    check_neg_torch(R_matmul_x, "R_matmul_x")
 
     np.savez_compressed(
         out_npz_path,
@@ -209,7 +221,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         Q_exp_k1=np.stack(Q_exp_k1, axis=0).astype(np.uint64),
         R_exp_k1=np.stack(R_exp_k1, axis=0).astype(np.uint64),
         exp_total_k1=exp_total_k1.astype(np.uint64),
-        exp_sum_k1=exp_sum_k1.astype(np.uint64),
+        exp_sum_k1=exp_sum_k1.astype(np.uint64), # 서킷내에서 사용하지 않음
         P_k1=P_k1.astype(np.uint64),
         R_div_k1=R_div_k1.astype(np.uint64),
         ### softmax(kernel2)
@@ -219,7 +231,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         Q_exp_k2=np.stack(Q_exp_k2, axis=0).astype(np.uint64),
         R_exp_k2=np.stack(R_exp_k2, axis=0).astype(np.uint64),
         exp_total_k2=exp_total_k2.astype(np.uint64),
-        exp_sum_k2=exp_sum_k2.astype(np.uint64),
+        exp_sum_k2=exp_sum_k2.astype(np.uint64), # 서킷내에서 사용하지 않음
         P_k2=P_k2.astype(np.uint64),
         R_div_k2=R_div_k2.astype(np.uint64),
         ### softmax(kernel3)
@@ -229,7 +241,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         Q_exp_k3=np.stack(Q_exp_k3, axis=0).astype(np.uint64),
         R_exp_k3=np.stack(R_exp_k3, axis=0).astype(np.uint64), 
         exp_total_k3=exp_total_k3.astype(np.uint64),
-        exp_sum_k3=exp_sum_k3.astype(np.uint64),
+        exp_sum_k3=exp_sum_k3.astype(np.uint64), # 서킷내에서 사용하지 않음
         P_k3=P_k3.astype(np.uint64), 
         R_div_k3=R_div_k3.astype(np.uint64),
         ### moore-penrose (Pseudoinverse)

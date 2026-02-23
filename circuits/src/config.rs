@@ -15,3 +15,9 @@ pub const RMSNORM_M: usize = 65536; // 1 << 16
 
 pub const GELU_C: usize = 1;
 pub const GELU_M: usize = 65536; // 65536
+
+pub const KBITS_C : usize = 2; // 16비트 전체 + 6비트 컷오프, 총 2개의 서브테이블
+pub const KBITS_M : usize = 65536; // 2^16 = 65536, 16비트 전체를 채우는 테이블 크기
+
+pub const FRACBITS_C : usize = 1; // 16비트 전체를 커버하는 테이블 하나
+pub const FRACBITS_M : usize = 65536; // 2^16 = 65536, 16비트 전체를 채우는 테이블 크기

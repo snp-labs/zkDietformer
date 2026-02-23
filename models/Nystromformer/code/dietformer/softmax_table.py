@@ -83,8 +83,7 @@ def combine_exp_limbs(exp_limbs_list, frac_bits=32):
         remainder = product % (1 << frac_bits)
         
         inter_remainders.append(remainder)
-        if k < len(exp_limbs_list) - 1:
-            inter_quotients.append(quotient)
+        inter_quotients.append(quotient)
         
         exp_total = quotient
 

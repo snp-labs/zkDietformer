@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from quantize import get_quantization_params, quantize_tensor, get_m_constant, get_rms_index_multiplier, get_gelu_index_multiplier
+from quantize import get_quantization_params, quantize_tensor, get_m_constant, get_rms_index_multiplier, get_gelu_index_multiplier, check_neg_torch
 from rms_table import generate_rmsnorm_tables, extract_inv_rms_single, FRAC_BITS
 from gelu_table import generate_gelu_sigmoid_tables, extract_gelu_sigmoid_single
 
@@ -50,6 +50,9 @@ def process_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_rms_output_sim1 = (numerator_norm1 >> k_bits).astype(np.int64)
     R_rms_output1 = (numerator_norm1 % (1 << k_bits)).astype(np.int64)
 
+    check_neg_torch(Q_rms_output_sim1, "Q_rms_output_sim1")
+    check_neg_torch(R_rms_output1, "R_rms_output1")
+
     ### Linear1
     w_lin1 = debug['linear_weight']
     out_lin1 = debug['linear_output'] 
@@ -78,6 +81,10 @@ def process_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_out_sim_lin1 = (numerator_lin1 >> k_bits).astype(np.int32)
     R_out_lin1 = (numerator_lin1 % (1 << k_bits)).astype(np.int64)
 
+    check_neg_torch(numerator_lin1, "numerator_lin1")
+    check_neg_torch(Q_out_sim_lin1, "Q_out_sim_lin1")
+    check_neg_torch(R_out_lin1, "R_out_lin1")
+
     ### Gelu
     gelu_table_path = generate_gelu_sigmoid_tables("outputs", k_bits=k_bits, frac_bits=FRAC_BITS)
     gelu_table = np.load(gelu_table_path)['table']
@@ -97,6 +104,9 @@ def process_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
 
     Q_gelu_out_sim = (numerator_gelu >> k_bits).astype(np.int64)
     R_gelu_out = (numerator_gelu % (1 << k_bits)).astype(np.int64)
+
+    check_neg_torch(Q_gelu_out_sim, "Q_gelu_out_sim")
+    check_neg_torch(R_gelu_out, "R_gelu_out")
 
     ### Linear2
     w_lin2 = debug['linear_weight_ff2']
@@ -120,6 +130,10 @@ def process_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     numerator_lin2 = M_lin2 * (acc2 + M_prime_lin2)
     Q_out_sim_lin2 = (numerator_lin2 >> k_bits).astype(np.int32)
     R_out_lin2 = (numerator_lin2 % (1 << k_bits)).astype(np.int64)
+
+    check_neg_torch(numerator_lin2, "numerator_lin2")
+    check_neg_torch(Q_out_sim_lin2, "Q_out_sim_lin2")
+    check_neg_torch(R_out_lin2, "R_out_lin2")
 
     ### RMSNorm 2
     x_ri2 = debug['rms_input_rms2']
@@ -159,13 +173,16 @@ def process_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_rms_output_sim2 = (numerator_norm2 >> k_bits).astype(np.int64)
     R_rms_output2 = (numerator_norm2 % (1 << k_bits)).astype(np.int64)
 
+    check_neg_torch(Q_rms_output_sim2, "Q_rms_output_sim2")
+    check_neg_torch(R_rms_output2, "R_rms_output2")
+
     np.savez_compressed(
         out_npz_path,
         k_bits=np.uint32(k_bits),
         frac_bits=np.uint32(FRAC_BITS),
         
         # RMS1
-        Q_ri_rms1=Q_ri1, z_ri_rms1=np.uint64(z_ri1), sum_sq_rms1=sum_sq1,
+        Q_ri_rms1=Q_ri1, z_ri_rms1=np.uint64(z_ri1), sum_sq_rms1=sum_sq1, # sum_sq_rms1은 회로 내에서 쓰지 않음
         M_ms_rms1=np.uint64(M_ms1), M_prime_ms_rms1=np.uint64(M_prime_ms1),
         shifted_val_rms1=shifted_val1, R_shift_rms1=R_shift1,
         Q_ms_sim_rms1=Q_ms_sim1, R_ms_rms1=R_ms1,
@@ -183,7 +200,7 @@ def process_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
 
         # GELU
         z_in_gelu=np.uint64(z_out_lin1), sigmoid_part_gelu=sigmoid_part.astype(np.uint64),
-        acc_gelu=acc_gelu.astype(np.int64), M_gelu=np.uint64(M_gelu),
+        acc_gelu=acc_gelu.astype(np.int64), M_gelu=np.uint64(M_gelu), # acc_gelu는 회로 내에서 쓰지 않음
         M_prime_gelu=np.uint64(M_prime_gelu), Q_out_sim_gelu=Q_gelu_out_sim, R_out_gelu=R_gelu_out,
         M_gelu_idx = np.uint64(M_gelu_idx),
 

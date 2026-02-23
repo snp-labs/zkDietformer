@@ -15,7 +15,7 @@ use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
     cc_snark::legogroth16::{LinkPublicGenerators, prepare_verifying_key, generate_random_parameters_incl_cp_link, create_random_proof_incl_cp_link, verify_proof_incl_cp_link},
     //cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, 
-    config::{RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M, GELU_M, GELU_C}, 
+    config::{RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M, GELU_M, GELU_C, KBITS_C, KBITS_M}, 
     gadgets::{
         activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
     }, lasso::{
@@ -29,8 +29,11 @@ use crate::{
             lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, 
             softmax::SoftmaxSubtableStrategy, gelu::GeLUSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
-    }, util::load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64},
-    util::utils::{cm1_from_vk, hash_cm_to_field_vec},
+    }, util::{
+        load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64},
+        utils::{cm1_from_vk, hash_cm_to_field_vec},
+        lookup_mlp::{run_mlp_remainders, run_lasso_for_gelu, run_lasso_for_rmsnorm}
+    }, 
 };
 use ark_std::{
     rand::{RngCore},
@@ -55,7 +58,7 @@ pub fn get_link_public_gens<R: RngCore, E: Pairing>(
 
 type G1 = G1Projective;
 #[derive(Clone)]
-pub struct NystromAttentionCircuit<F: PrimeField> {
+pub struct NystromMLPCircuit<F: PrimeField> {
     pub norm1: NormBundle<F>,
     pub ff1: LinearBundle<F>,
     pub gelu1: GeLUBundle<F>,
@@ -65,7 +68,7 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub frac_bits: usize,
     pub k_bits: usize,
 }
-impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for NystromMLPCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let dim: usize = self.norm1.q_ri[0][0].len();
         let challenge_r_var = Vec::<FpVar<F>>::new_input(cs.clone(), || Ok(self.challenge_r.clone()))?;
@@ -79,7 +82,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     }
 }
 
-pub fn load_nystrom_circuit<E: Pairing>(path: &Path) -> Result<NystromAttentionCircuit<E::ScalarField>>
+pub fn load_nystrom_circuit<E: Pairing>(path: &Path) -> Result<NystromMLPCircuit<E::ScalarField>>
 where
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
@@ -93,7 +96,7 @@ where
         Ok(NormBundle {
             q_ri: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_ri_{}.npy", prefix))?.into_dimensionality()?),
             z_ri: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_ri_{}.npy", prefix))?.into_scalar()),
-            sum_sq: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("sum_sq_{}.npy", prefix))?.into_dimensionality()?),
+            // sum_sq: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("sum_sq_{}.npy", prefix))?.into_dimensionality()?),
             m_ms: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_ms_{}.npy", prefix))?.into_scalar()),
             m_prime_ms: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_ms_{}.npy", prefix))?.into_scalar()),
             shifted_val: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("shifted_val_{}.npy", prefix))?.into_dimensionality()?),
@@ -134,7 +137,7 @@ where
         Ok(GeLUBundle {
             z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
             sigmoid_table_val: to_field_3d_u64(&npz.by_name::<_, Ix3>(&format!("sigmoid_part_{}.npy", prefix))?.into_dimensionality()?),
-            acc_gelu: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("acc_{}.npy", prefix))?.into_dimensionality()?),
+            // acc_gelu: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("acc_{}.npy", prefix))?.into_dimensionality()?),
             m_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
             m_prime_gelu: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
             q_out_sim: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
@@ -149,7 +152,7 @@ where
     let ff2 = load_linear(&mut npz, "lin2")?; 
     let norm2 = load_norm(&mut npz, "rms2")?; 
 
-    Ok(NystromAttentionCircuit {
+    Ok(NystromMLPCircuit {
         norm1,
         ff1,
         gelu1,
@@ -228,9 +231,9 @@ where
 
         // 5. 최종 증명 생성
         println!("=== [0] LegoGroth16 GenProof ===");
-        let final_circuit = NystromAttentionCircuit { challenge_r: r_vec, ..sample_circuit };
+        let final_circuit = NystromMLPCircuit { challenge_r: r_vec, ..sample_circuit };
         let proof = create_random_proof_incl_cp_link(
-            final_circuit, v1, v2, link_v, &params, &mut rng
+            final_circuit.clone(), v1, v2, link_v, &params, &mut rng
         ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
 
         // 6. 검증 (Public Input은 challenge_r 벡터 포함)
@@ -244,186 +247,29 @@ where
         if let Err(e) = result {
             println!("    Reason: {:?}", e);
         }
+
+        println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
+        let dim = final_circuit.norm1.q_ri[0][0].len();
+        run_lasso_for_rmsnorm(&final_circuit.norm1, final_circuit.k_bits, b"lasso_rms1", &mut rng)?;
+        run_lasso_for_gelu(
+            &final_circuit.gelu1, 
+            &final_circuit.ff1.q_out_sim.iter().map(|batch| {
+                batch.iter().map(|seq| {
+                    seq.iter().map(|val| {
+                        Fr::from((*val).into_bigint().as_ref()[0] as i64)
+                    }).collect::<Vec<Fr>>()
+                }).collect::<Vec<Vec<Fr>>>()
+            }).collect::<Vec<Vec<Vec<Fr>>>>(),
+            &final_circuit.ff1.r_out_lin, 
+            final_circuit.k_bits, 
+            b"lasso_gelu1", 
+            &mut rng
+        )?;
+        run_mlp_remainders::<Fr, G1>(&final_circuit, &mut rng)?;
     }
     Ok(())
 }
 
-fn run_lasso_for_rmsnorm(
-    bundle: &NormBundle<Fr>,
-    k_bits: usize,
-    label: &'static [u8],
-    rng: &mut StdRng,
-) -> Result<()> {
-    let b_dim = bundle.q_ms_sim.len();
-    let s_dim = bundle.q_ms_sim[0].len();
-    let dim = bundle.q_out[0][0].len();
-
-    let mut indices_x = vec![vec![vec![Fr::zero(); 1]; s_dim]; b_dim];
-    
-    // 파이썬 로직 동기화: Index = ((shifted_val * M_rms_idx) >> k) // dim
-    let m_idx = bundle.m_rms_idx.into_bigint().as_ref()[0] as u128;
-
-    for b in 0..b_dim {
-        for s in 0..s_dim {
-            let val = bundle.shifted_val[b][s][0].into_bigint().as_ref()[0] as u128;
-            
-            let numerator = val * m_idx;
-            let scaled = numerator >> k_bits;
-            let mut combined_idx = (scaled / (dim as u128)) as u64;
-
-            if combined_idx >= RMSNORM_M as u64 {
-                combined_idx = (RMSNORM_M - 1) as u64;
-            }
-            indices_x[b][s][0] = Fr::from(combined_idx);
-        }
-    }
-    
-    let total_sparsity = b_dim * s_dim;
-    let gens = SparsePolyCommitmentGens::<G1>::new(
-        label,
-        RMSNORM_C,
-        total_sparsity,
-        RMSNORM_C,
-        RMSNORM_M.trailing_zeros() as usize,
-    );
-
-    let start = Instant::now();
-    prove_lasso_for_rmsnorm(&indices_x, &gens, rng, label)?;
-    println!("  - Lasso Total Time (RMSNorm): {:?}", start.elapsed());
-    
-    Ok(())
-}
-
-fn prove_lasso_for_rmsnorm(
-    indices: &Vec<Vec<Vec<Fr>>>,
-    gens: &SparsePolyCommitmentGens<G1>,
-    rng: &mut StdRng,
-    label: &[u8],
-) -> Result<()> {
-    let b_dim = indices.len();
-    let s_dim = indices[0].len();
-
-    let mut nz_indices: Vec<[usize; RMSNORM_C]> = Vec::with_capacity(b_dim * s_dim);
-    
-    for b in 0..b_dim {
-        for s in 0..s_dim {
-            let val_bigint = indices[b][s][0].into_bigint();
-            let limbs = val_bigint.as_ref(); 
-            let idx_u64 = limbs[0]; 
-
-            // 필드 원소가 테이블 크기보다 크면 Lasso 제약 조건을 만족할 수 없음
-            if idx_u64 >= RMSNORM_M as u64 {
-                return Err(anyhow::anyhow!(
-                    "Lasso Index Final Check Failed: index {} >= table size {} at [Batch: {}, Seq: {}]. \
-                    This should have been clipped in run_lasso_for_rmsnorm.", 
-                    idx_u64, RMSNORM_M, b, s
-                ));
-            }
-            
-            nz_indices.push([idx_u64 as usize]);
-        }
-    }
-
-    let sparsity = nz_indices.len();
-    if sparsity == 0 { return Ok(()); }
-
-    let log_M = RMSNORM_M.trailing_zeros() as usize;
-    let lookup_matrix = SparseLookupMatrix::<RMSNORM_C>::new(nz_indices, log_M);
-    let mut densified = DensifiedRepresentation::<Fr, RMSNORM_C>::from(&lookup_matrix);
-
-    let commitment = densified.commit::<G1>(gens);
-    let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
-    let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
-
-    let mut random_tape = RandomTape::new(b"lasso_tape_rms");
-    let mut transcript = Transcript::new(b"lasso_rmsnorm");
-    
-    let proof_lasso = SparsePolynomialEvaluationProof::<G1, RMSNORM_C, RMSNORM_M, RMSNormSubtableStrategy>::prove(
-        &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
-    );
-
-    let mut verifier_transcript = Transcript::new(b"lasso_rmsnorm");
-    proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
-        .map_err(|_| anyhow::anyhow!("Lasso verification failed for: {:?}", std::str::from_utf8(label)))?;
-
-    println!("Lasso proof verified: {:?}", std::str::from_utf8(label).unwrap());
-    Ok(())
-}
-
-fn run_lasso_for_gelu(
-    bundle: &GeLUBundle<Fr>,
-    q_in_sim: &Vec<Vec<Vec<Fr>>>, 
-    r_in_lin: &Vec<Vec<Vec<Fr>>>, 
-    k_bits: usize,
-    label: &'static [u8],
-    rng: &mut StdRng,
-) -> Result<()> {
-    let b_dim = bundle.q_out_sim.len();
-    let s_dim = bundle.q_out_sim[0].len();
-    let d_dim = bundle.q_out_sim[0][0].len();
-
-    let mut indices = Vec::new();
-    let offset = 32768u128; // TABLE_SIZE // 2 for fixed-resolution 0-point
-    let m_gelu_idx = bundle.m_gelu_idx.into_bigint().as_ref()[0] as u128;
-
-    for b in 0..b_dim {
-        for s in 0..s_dim {
-            for d in 0..d_dim {
-                // 1. Reconstruct high-precision X_diff: (Q_in - z_in) * 2^k + R_in
-                let q_in_diff = (q_in_sim[b][s][d].into_bigint().as_ref()[0] as i128) 
-                                - (bundle.z_in.into_bigint().as_ref()[0] as i128);
-                let r_in = r_in_lin[b][s][d].into_bigint().as_ref()[0] as i128;
-                
-                let x_diff_full = (q_in_diff << k_bits) + r_in;
-
-                // 2. Map to Fixed Table Index: Index = (X_diff * M_gelu_idx >> k) + Offset
-                let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> k_bits;
-                let mut idx = scaled_diff + offset as i128;
-
-                // 3. Clipping to TABLE_SIZE (65536)
-                if idx < 0 { idx = 0; }
-                if idx >= GELU_M as i128 { idx = (GELU_M - 1) as i128; }
-                
-                indices.push([idx as usize]);
-            }
-        }
-    }
-
-    let sparsity = indices.len();
-    let gens = SparsePolyCommitmentGens::<G1>::new(label, GELU_C, sparsity, GELU_C, 16);
-    prove_lasso_for_gelu(&indices, &gens, rng, label)
-}
-
-fn prove_lasso_for_gelu(
-    nz_indices: &Vec<[usize; GELU_C]>,
-    gens: &SparsePolyCommitmentGens<G1>,
-    rng: &mut StdRng,
-    label: &[u8],
-) -> Result<()> {
-    let sparsity = nz_indices.len();
-    let log_M = 16;
-    
-    let lookup_matrix = SparseLookupMatrix::<GELU_C>::new(nz_indices.clone(), log_M);
-    let mut densified = DensifiedRepresentation::<Fr, GELU_C>::from(&lookup_matrix);
-
-    let commitment = densified.commit::<G1>(gens);
-    let r_point: Vec<Fr> = (0..sparsity.next_power_of_two().trailing_zeros() as usize)
-        .map(|_| Fr::rand(rng)).collect();
-
-    let mut random_tape = RandomTape::new(b"lasso_tape_gelu");
-    let mut transcript = Transcript::new(b"lasso_gelu");
-    
-    let proof = SparsePolynomialEvaluationProof::<G1, GELU_C, GELU_M, GeLUSubtableStrategy>::prove(
-        &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
-    );
-
-    let mut v_transcript = Transcript::new(b"lasso_gelu");
-    proof.verify(&commitment, &r_point, gens, &mut v_transcript)
-        .map_err(|_| anyhow::anyhow!("GeLU Lasso verification failed"))?;
-
-    println!("GeLU Lasso proof verified: {:?}", std::str::from_utf8(label).unwrap());
-    Ok(())
-}
 
 #[test]
 fn mlp_test() {

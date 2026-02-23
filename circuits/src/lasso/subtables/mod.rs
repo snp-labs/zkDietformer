@@ -27,7 +27,6 @@ pub mod xor;
 pub mod softmax;
 pub mod layernorm;
 pub mod gelu;
-
 #[cfg(test)]
 pub mod test;
 

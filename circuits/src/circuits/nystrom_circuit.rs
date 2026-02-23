@@ -13,7 +13,7 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{SOFTMAX_C, SOFTMAX_M}, 
+    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, 
     gadgets::{
         matmul::{constraints::{MatrixVar, new_matrix_witness}, 
     quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
@@ -24,7 +24,10 @@ use crate::{
         subtables::{
             SubtableStrategy, and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
-    }, util::load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64}
+    }, util::{
+        load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
+        lookup_attention::{verify_all_remainders, prove_lasso_for_softmax},
+    }
 };
 
 type G1 = G1Projective;
@@ -139,8 +142,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm1_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm1_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm1_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm1_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm1_vars.exp_total[b][h],
+                    //&sm1_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    //&sm1_vars.exp_total[b][h],
                     &sm1_vars.p[b][h],
                     &sm1_vars.r_div[b][h],
                     self.frac_bits,
@@ -156,8 +159,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm2_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm2_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm2_vars.exp_total[b][h],
+                    // &sm2_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    // &sm2_vars.exp_total[b][h],
                     &sm2_vars.p[b][h],
                     &sm2_vars.r_div[b][h],
                     self.frac_bits,
@@ -193,8 +196,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm3_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm3_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm3_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm3_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm3_vars.exp_total[b][h],
+                    //&sm3_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    //&sm3_vars.exp_total[b][h],
                     &sm3_vars.p[b][h],
                     &sm3_vars.r_div[b][h],
                     self.frac_bits,
@@ -248,7 +251,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 // Step 2: Q_y1 * P_k2 = P_k2
                 enforce_freivald(
-                    &q_y_vars[0][b][h], 
+                    &q_y_vars[0][b][h], // 이거를 다시
                     &sm2_vars.p[b][h], 
                     &q_y_vars[1][b][h],
                     &r_inv_vars[1][b][h], 
@@ -318,22 +321,18 @@ pub fn load_nystrom_circuit<E: Pairing>(path: &Path) -> Result<NystromAttentionC
 where
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
-    // 1. NPZ 파일 열기
     let f = File::open(path).context(format!("opening witness npz {:?}", path))?;
     let mut npz = NpzReader::new(f)?;
 
-    // 2. 공통 챌린지 값 로드
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let r = E::ScalarField::from(42u64); // 혹은 결정론적 해시 결과값
     
-    // 3. 공통 입력 로드
     let q_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_q.npy")?.into_dimensionality()?;
     let q_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_k.npy")?.into_dimensionality()?;
     let z_q = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_q.npy")?.into_scalar();
     let z_k = npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_k.npy")?.into_scalar();
     let seg= npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("seg_size.npy")?.into_scalar() as usize;
 
-    // 4. Kernel 1 데이터 로드
     let load_matmul = |npz: &mut NpzReader<File>, suffix: &str, has_rmean: bool| -> Result<MatmulBundle<E::ScalarField>> {
         Ok(MatmulBundle {
             // 커널 3처럼 r_mean이 없는 경우 빈 벡터 할당
@@ -447,83 +446,6 @@ where
 }
 
 
-fn prove_lasso_for_softmax(
-    limbs: &Vec<Vec<Vec<Vec<Vec<Fr>>>>>, // [C, B, H, S, L] 구조
-    gens: &SparsePolyCommitmentGens<G1>,
-    rng: &mut StdRng,
-    label: &[u8],
-) -> Result<()> {
-
-    use ark_ff::{BigInteger, PrimeField};
-    // 1. 차원 정보 추출 (파이썬 whole_pipeline.py 저장 규격 기준)
-    let c_seg = limbs.len();          // SOFTMAX_C (5)
-    let b_dim = limbs[0].len();       // Batch
-    let h_dim = limbs[0][0].len();    // Head
-    let s_dim = limbs[0][0][0].len(); // Sequence
-    let l_dim = limbs[0][0][0][0].len(); // Landmark (L)
-
-    // 2. Lasso 입력용 nz_indices 구축 (Sparsity m = B*H*S*L)
-    let mut nz_indices: Vec<[usize; SOFTMAX_C]> = Vec::with_capacity(b_dim * h_dim * s_dim * l_dim);
-    
-    for b in 0..b_dim {
-        for h in 0..h_dim {
-            for s in 0..s_dim {
-                for l in 0..l_dim {
-                    let mut idx_arr = [0usize; SOFTMAX_C];
-                    for seg in 0..c_seg {
-                        // 필드 원소를 16-bit 룩업 인덱스로 변환
-                        let val_bigint = limbs[seg][b][h][s][l].into_bigint();
-                        let bytes = val_bigint.to_bytes_le();
-                        let mut limb_bytes = [0u8; 8];
-                        limb_bytes.copy_from_slice(&bytes[0..8]);
-                        idx_arr[seg] = u64::from_le_bytes(limb_bytes) as usize; //
-                    }
-                    nz_indices.push(idx_arr);
-                }
-            }
-        }
-    }
-
-    let sparsity = nz_indices.len();
-    println!("    * Sparsity (m): {}", sparsity);
-    if sparsity == 0 { return Ok(()); } 
-
-    let log_M = SOFTMAX_M.trailing_zeros() as usize; //
-    let lookup_matrix = SparseLookupMatrix::<SOFTMAX_C>::new(nz_indices, log_M);
-    let mut densified = DensifiedRepresentation::<Fr, SOFTMAX_C>::from(&lookup_matrix);
-
-    let commit_start = Instant::now();
-    let commitment = densified.commit::<G1>(gens);
-    let commit_duration = commit_start.elapsed();
-    println!("    * Commitment Time: {:?}", commit_duration);
-
-    let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
-    let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
-
-    // 3. Lasso Proof 생성 및 검증
-    let mut random_tape = RandomTape::new(b"lasso_tape");
-    let mut transcript = Transcript::new(b"lasso_softmax");
-    
-    println!("    * Starting Lasso Prove (log_s: {})...", log_s);
-    let prove_start = Instant::now();
-    let proof_lasso = SparsePolynomialEvaluationProof::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>::prove(
-        &mut densified, &r_point, gens, &mut transcript, &mut random_tape,
-    );
-
-    let prove_duration = prove_start.elapsed();
-    println!("    * Lasso Prover Time: {:?}", prove_duration);
-
-    let mut verifier_transcript = Transcript::new(b"lasso_softmax");
-    let verify_start = Instant::now();
-    proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
-        .map_err(|_| anyhow::anyhow!("Lasso verification failed for label: {:?}", std::str::from_utf8(label)))?;
-    let verify_duration = verify_start.elapsed();
-
-    println!("Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    println!("    * Lasso Verifier Time: {:?}", verify_duration);
-    Ok(())
-}
-
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
 where
 E: Pairing<ScalarField = Fr>,
@@ -614,6 +536,7 @@ E: Pairing<ScalarField = Fr>,
         run_lasso_bundle(&circuit.sm1, b"lasso_k1", &mut rng)?;
         run_lasso_bundle(&circuit.sm2, b"lasso_k2", &mut rng)?;
         run_lasso_bundle(&circuit.sm3, b"lasso_k3", &mut rng)?;
+        verify_all_remainders::<Fr, G1>(&circuit, &mut rng)?;
     }
 
     Ok(())

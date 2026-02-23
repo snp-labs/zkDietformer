@@ -101,3 +101,9 @@ def get_gelu_index_multiplier(s_in, k_bits=22):
     GELU_INDEX_SCALE = 1.0 / (1 << 9)
     # M = (s_in / GELU_INDEX_SCALE) * 2^k
     return int(np.floor((s_in / GELU_INDEX_SCALE) * (1 << k_bits)))
+
+def check_neg_torch(tensor, label="Tensor"):
+    neg_mask = tensor < 0
+    count = neg_mask.sum().item()
+    
+    print(f"[{label}] 음수 개수: {count}")
