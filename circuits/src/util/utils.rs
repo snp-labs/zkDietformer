@@ -105,3 +105,20 @@ where
 
     out
 }
+
+// challenge 값 생성용
+pub fn hash_cm_to_field<E: Pairing>(cm: &E::G1Affine) -> E::ScalarField
+where
+    E::ScalarField: PrimeField,
+{
+    let mut cm_bytes = Vec::new();
+    cm.serialize_compressed(&mut cm_bytes)
+        .expect("serialize cm");
+
+    let mut hasher = Sha3_256::new();
+    <Sha3_256 as Input>::input(&mut hasher, b"freivalds-r-v1");
+    <Sha3_256 as Input>::input(&mut hasher, &cm_bytes);
+    let seed = hasher.result(); // hash 결과값
+
+    E::ScalarField::from_le_bytes_mod_order(&seed)
+}

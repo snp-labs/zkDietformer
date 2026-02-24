@@ -3,17 +3,18 @@ use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing};
 use ndarray::{ArrayD, IxDyn, Ix0, Ix1, Ix4, Array2, Ix2, Ix3, IxDynImpl, arr0};
 use ndarray_npy::{NpzReader, NpzWriter};
-use ark_std::{fs, UniformRand, log2, marker::PhantomData, rand::{Rng, SeedableRng, rngs::StdRng}};
+use ark_std::{rc::Rc, fs, UniformRand, log2, marker::PhantomData, rand::{RngCore, Rng, SeedableRng, rngs::StdRng}, cell::RefCell};
 use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_ff::{PrimeField, One, Zero, BigInteger};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{emulated_fp::params, fp::FpVar, FieldVar}};
+use ark_r1cs_std::{R1CSVar, alloc::AllocVar, eq::EqGadget, fields::{emulated_fp::params, fp::FpVar, FieldVar}};
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, 
+    cc_snark::legogroth16::{LinkPublicGenerators, prepare_verifying_key, generate_random_parameters_incl_cp_link, create_random_proof_incl_cp_link, verify_proof_incl_cp_link},
+    // cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, 
     gadgets::{
         matmul::{constraints::{MatrixVar, new_matrix_witness}, 
     quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
@@ -25,10 +26,28 @@ use crate::{
             SubtableStrategy, and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
     }, util::{
+        utils::{cm1_from_vk, hash_cm_to_field},
         load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
-        lookup_attention::{verify_all_remainders, prove_lasso_for_softmax},
+        lookup_attention::{verify_all_remainders, prove_lasso_for_softmax, run_lasso_bundle},
     }
 };
+
+
+pub fn get_link_public_gens<R: RngCore, E: Pairing>(
+    rng: &mut R,
+    count: u32,
+) -> LinkPublicGenerators<E> {
+    let pedersen_gens = (0..count)
+        .map(|_| E::G1::rand(rng).into_affine())
+        .collect::<Vec<_>>();
+    let g1 = E::G1::rand(rng).into_affine();
+    let g2 = E::G2::rand(rng).into_affine();
+    LinkPublicGenerators {
+        pedersen_gens,
+        g1,
+        g2,
+    }
+}
 
 type G1 = G1Projective;
 #[derive(Clone)]
@@ -62,10 +81,16 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub r_challenge: F, 
     pub seg_size: usize,
     pub k_bits: usize,
-    pub mask: Vec<Vec<F>>
+    pub mask: Vec<Vec<F>>,
+
+    pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
+    // pub challenge_r: Vec<F>,
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        self.committed_vars.borrow_mut().clear();
+        let mut committed_pool = self.committed_vars.borrow_mut();
+        
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
 
@@ -106,7 +131,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h], 
                     &params_k1, 
-                    &r_pows_k1
+                    &r_pows_k1,
                 )?;
 
                 // Kernel 2
@@ -134,6 +159,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 
 
                 // Softmax Kernel 1 검증
+                println!("DEBUG: Current pool size before softmax: {}", committed_pool.len());
                 enforce_softmax(
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h],
@@ -148,8 +174,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm1_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-
+                    &mut committed_pool
                 )?;
+                println!("DEBUG: Current pool size after softmax: {}", committed_pool.len());
 
                 enforce_softmax(
                     &k2_data.q_sim[b][h], 
@@ -165,7 +192,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm2_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
+                    &mut committed_pool
                 )?;
+                println!("DEBUG: Current pool size after softmax: {}", committed_pool.len());
 
                 // Kernel 3 Matmul 결과인 k3_data.q_sim[b][h]는 [L][S] 형태입니다.
                 let zero_var = FpVar::zero();
@@ -202,6 +231,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm3_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
+                    &mut committed_pool
                 )?;
 
                 // moore-penrose
@@ -325,7 +355,7 @@ where
     let mut npz = NpzReader::new(f)?;
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let r = E::ScalarField::from(42u64); // 혹은 결정론적 해시 결과값
+    let r = E::ScalarField::zero(); // 혹은 결정론적 해시 결과값
     
     let q_q = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_q.npy")?.into_dimensionality()?;
     let q_k = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_k.npy")?.into_dimensionality()?;
@@ -440,133 +470,125 @@ where
         seg_size: seg,
         k_bits: k_bits,
         mask: to_field_2d_i64(&mask_raw),
+
+        committed_vars: Rc::new(RefCell::new(Vec::new())),
     })
 
     
 }
 
-
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
 where
-E: Pairing<ScalarField = Fr>,
+    E: Pairing<ScalarField = Fr>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
-
     type ScalarF<E> = <E as Pairing>::ScalarField;
-    // collect targets
     let mut targets: Vec<std::path::PathBuf> = Vec::new();
     if path.is_dir() {
         for entry in fs::read_dir(path).context("reading directory")? {
             let ent = entry?.path();
-            if ent.is_file() {
-                if let Some(name) = ent.file_name().and_then(|n| n.to_str()) {
-                    if name.ends_with(".witness.npz") || name.ends_with(".npz") {
-                        targets.push(ent);
-                    }
-                }
+            if ent.is_file() && ent.extension().map_or(false, |s| s == "npz") {
+                targets.push(ent);
             }
         }
         targets.sort();
-        if targets.is_empty() {
-            return Err(anyhow::anyhow!("No .witness.npz or .npz files found in directory {:?}", path));
-        }
-    } else if path.is_file() {
-        targets.push(path.to_path_buf());
     } else {
-        return Err(anyhow::anyhow!("Provided path is neither file nor directory: {:?}", path));
+        targets.push(path.to_path_buf());
     }
 
     let mut rng = StdRng::seed_from_u64(42u64);
 
     for file_path in targets.iter() {
         println!("\n=== Processing witness NPZ: {:?} ===", file_path);
-        let circuit= load_nystrom_circuit::<E>(file_path)?;
+    
+        let num_commit_1 = {
+            let temp_circuit = load_nystrom_circuit::<E>(&file_path)?;
 
-        let cs = ark_relations::r1cs::ConstraintSystem::<ScalarF<E>>::new_ref();
-        circuit.clone().generate_constraints(cs.clone())?;
+            let vars_ptr = Rc::clone(&temp_circuit.committed_vars);
+
+            let cs_analyze = ConstraintSystem::<Fr>::new_ref();
+            temp_circuit.generate_constraints(cs_analyze)?;
+
+            vars_ptr.borrow().len() as u32
+        };
+
         
-        if !cs.is_satisfied().unwrap() {
-            match cs.which_is_unsatisfied() {
-                Ok(Some(path)) => println!("Failed Path: {}", path),
-                Ok(None) => println!("Else"),
-                Err(e) => println!("Error while debugging: {:?}", e),
+        println!("최종 측정된 커밋 개수: {:?}", num_commit_1);
+
+        let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
+
+        // LegoGroth16 Setup
+        let link_gens = get_link_public_gens::<_, E>(&mut rng, num_commit_1 + 1);
+        println!("=== [0] LegoGroth16 Setup (Num Commit: {:?}) ===", num_commit_1);
+        
+        let params = generate_random_parameters_incl_cp_link::<E, _, _>(
+            sample_circuit.clone(), 
+            link_gens, 
+            num_commit_1, 
+            0, 
+            &mut rng
+        ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
+        
+        let pvk = prepare_verifying_key::<E>(&params.vk.groth16_vk);
+
+        // Witness 값 추출을 위해 sample_circuit을 한 번 실행 (Synthesize)
+        let cs_witness = ConstraintSystem::<Fr>::new_ref();
+        sample_circuit.clone().generate_constraints(cs_witness.clone())?;
+
+        let committed_group1 = {
+            let vars = sample_circuit.committed_vars.borrow();
+            let values: Vec<Fr> = vars.iter()
+                .map(|v| v.value().unwrap_or(Fr::zero()))
+                .collect();
+            
+            if values.len() != num_commit_1 as usize {
+                return Err(anyhow::anyhow!(
+                    "Commitment size mismatch: expected {}, found {}", 
+                    num_commit_1, 
+                    values.len()
+                ));
             }
-            return Err(anyhow::anyhow!("Constraints NOT satisfied in {:?}", file_path));
-        }
+            values
+        };
 
-        let cs = ark_relations::r1cs::ConstraintSystem::<Fr>::new_ref();
-        circuit.clone().generate_constraints(cs.clone())?;
-        let num_constraints = cs.num_constraints();
-        let num_instance_variables = cs.num_instance_variables();
-        let num_witness_variables = cs.num_witness_variables();
+        let v1 = Fr::rand(&mut rng);
+        let v2 = Fr::rand(&mut rng);
+        let link_v = Fr::rand(&mut rng);
         
-        println!("  [Constraint Stats]");
-        println!("  - Number of Constraints: {}", num_constraints);
-        println!("  - Public Inputs (Instance Vars): {}", num_instance_variables);
-        println!("  - Private Inputs (Witness Vars): {}", num_witness_variables);
+        // 서킷의 공개 입력 개수
+        let num_pub = cs_witness.num_instance_variables() - 1; 
 
-        if !cs.is_satisfied().unwrap() {
-            return Err(anyhow::anyhow!("Constraints NOT satisfied"));
+        let cm1 = cm1_from_vk::<E>(&params.vk.groth16_vk, num_pub, &committed_group1, &v1);
+        let r_fs = hash_cm_to_field::<E>(&cm1);
+
+        println!("=== [1] LegoGroth16 GenProof ===");
+
+        let final_circuit = NystromAttentionCircuit {
+            r_challenge: r_fs,
+            ..sample_circuit.clone()
+        };
+        
+
+        let proof = create_random_proof_incl_cp_link(
+            final_circuit.clone(), v1, v2, link_v, &params, &mut rng
+        ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
+
+        // 검증
+        let public_inputs = vec![final_circuit.r_challenge];
+
+        let result = verify_proof_incl_cp_link(&pvk, &params.vk, &proof, &public_inputs);
+        println!("  - LegoGroth16 + CP-link Verification: {:?}", result);
+        
+        if let Err(e) = result {
+            println!("    Reason: {:?}", e);
         }
-
-        println!("=== [1] ccGroth Proofs: Freivald/Softmax ===");    
-        let setup_start = Instant::now();
-        let (pk, vk) = CcGroth16::<E>::setup(circuit.clone(), &mut rng)?;
-        let setup_duration = setup_start.elapsed();
-        println!("  - Setup Time: {:?}", setup_duration);
-
-        let prove_start = Instant::now();
-        let proof = CcGroth16::<E>::prove(&pk, circuit.clone(), &mut rng)?;
-        let prove_duration = prove_start.elapsed();
-        println!("  - Prover Time (ccGroth): {:?}", prove_duration);
-
-        let pvk = prepare_verifying_key::<E>(&vk);
-        let public_inputs = vec![circuit.r_challenge];
-        let verify_start = Instant::now();
-        let ok = CcGroth16::<E>::verify_with_processed_vk(&pvk, &public_inputs, &proof)?;
-        println!("Verification result for {:?}: {}", file_path, ok);
-        if !ok {
-            return Err(anyhow::anyhow!("Verification failed for {:?}", file_path));
-        }
-        let verify_duration = verify_start.elapsed();
-        println!("  - Verifier Time (ccGroth): {:?}", verify_duration);
-        println!("  - Verification Result: {}", ok);
 
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
-        run_lasso_bundle(&circuit.sm1, b"lasso_k1", &mut rng)?;
-        run_lasso_bundle(&circuit.sm2, b"lasso_k2", &mut rng)?;
-        run_lasso_bundle(&circuit.sm3, b"lasso_k3", &mut rng)?;
-        verify_all_remainders::<Fr, G1>(&circuit, &mut rng)?;
+        run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
+        run_lasso_bundle(&final_circuit.sm2, b"lasso_k2", &mut rng)?;
+        run_lasso_bundle(&final_circuit.sm3, b"lasso_k3", &mut rng)?;
+        verify_all_remainders::<Fr, G1>(&final_circuit, &mut rng)?;
     }
-
-    Ok(())
-}
-
-fn run_lasso_bundle(
-    bundle: &SoftmaxBundle<Fr>,
-    label: &'static [u8],
-    rng: &mut StdRng,
-) -> Result<()> {
-    // 총 룩업 횟수(Sparsity) 계산: C, B, H, S, L 차원을 가짐
-    let b_dim = bundle.limbs[0].len();
-    let h_dim = bundle.limbs[0][0].len();
-    let dim1 = bundle.limbs[0][0][0].len();
-    let dim2 = bundle.limbs[0][0][0][0].len();
-    let total_sparsity = b_dim * h_dim * dim1 * dim2;
-
-    // Lasso용 Generator 생성 (각 번들의 고유 sparsity 반영)
-    let gens = SparsePolyCommitmentGens::<G1>::new(
-        label,
-        SOFTMAX_C,
-        total_sparsity,
-        SOFTMAX_C,
-        SOFTMAX_M.trailing_zeros() as usize,
-    );
-
-    let start = Instant::now();
-    prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
-    println!("  - Lasso Total Time ({:?}): {:?}", std::str::from_utf8(label).unwrap(), start.elapsed());
-    
     Ok(())
 }
 

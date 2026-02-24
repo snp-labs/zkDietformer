@@ -24,6 +24,7 @@ pub fn enforce_gelu<F: PrimeField>(
     r_in_vars: &Vec<Vec<Vec<FpVar<F>>>>, // Linear1 나머지
     bundle: &GeLUBundle<F>,
     k_bits: usize,
+    committed_vars: &mut Vec<FpVar<F>>,
 ) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
     let z_in_var = FpVar::new_constant(cs.clone(), bundle.z_in)?;
     let m_var = FpVar::new_constant(cs.clone(), bundle.m_gelu)?;
@@ -53,6 +54,8 @@ pub fn enforce_gelu<F: PrimeField>(
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out_sim[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out_gelu[b][s][d]))?;
                 
+                committed_vars.push(r_out_var.clone()); // 추가
+
                 let rhs = (&q_out_var * &two_k) + &r_out_var;
                 numerator.enforce_equal(&rhs)?;
 

@@ -121,7 +121,8 @@ pub fn enforce_softmax<F: PrimeField>(
     p_out: &MatrixVar<F>,     
     r_div: &MatrixVar<F>,          
     frac_bits: usize,
-    two_k: &FpVar<F>,           
+    two_k: &FpVar<F>,       
+    committed_vars: &mut Vec<FpVar<F>>,    
 ) -> Result<(), SynthesisError> {
     let s_len = q_sim.len();
     let l_len = q_sim[0].len();
@@ -142,6 +143,8 @@ pub fn enforce_softmax<F: PrimeField>(
             let lhs_scale = &x_recovered * m_sm;
             let rhs_scale = (&scaled_x * two_k) + &r_sm[i][j];
             lhs_scale.enforce_equal(&rhs_scale)?;
+
+            committed_vars.push(r_sm[i][j].clone()); // 추가
 
             let mut current_acc = exp_limbs[0][i][j].clone();
             for k in 0..4 {

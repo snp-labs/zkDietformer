@@ -71,6 +71,7 @@ pub fn enforce_linear<F: PrimeField>(
     q_in_vars: &Vec<Vec<Vec<FpVar<F>>>>, // [B][S][In_D]
     bundle: &LinearBundle<F>,
     k_bits: usize,
+    committed_vars: &mut Vec<FpVar<F>>,
 ) -> Result<(Vec<Vec<Vec<FpVar<F>>>>, Vec<Vec<Vec<FpVar<F>>>>), SynthesisError> { // 튜플 반환으로 수정
     let z_in_var = FpVar::new_constant(cs.clone(), bundle.z_in)?;
     let m_var = FpVar::new_constant(cs.clone(), bundle.m_lin)?;
@@ -107,6 +108,8 @@ pub fn enforce_linear<F: PrimeField>(
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out_sim[b][s][out_d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out_lin[b][s][out_d]))?;
                 
+                committed_vars.push(r_out_var.clone()); // 추가
+
                 let rhs = (&q_out_var * &two_k) + &r_out_var;
                 numerator.enforce_equal(&rhs)?;
 

@@ -220,11 +220,11 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
 
     target_matrices.push((&circuit.norm1.r_shift, "R_mlp_norm1_shift"));
     target_matrices.push((&circuit.norm1.r_out, "R_mlp_norm1_out"));
+    target_matrices.push((&circuit.ff1.r_out_lin, "R_mlp_lin1"));
+    target_matrices.push((&circuit.gelu1.r_out_gelu, "R_mlp_gelu"));
+    target_matrices.push((&circuit.ff2.r_out_lin, "R_mlp_lin2"));
     target_matrices.push((&circuit.norm2.r_shift, "R_mlp_norm2_shift"));
     target_matrices.push((&circuit.norm2.r_out, "R_mlp_norm2_out"));
-    target_matrices.push((&circuit.gelu1.r_out_gelu, "R_mlp_gelu"));
-    target_matrices.push((&circuit.ff1.r_out_lin, "R_mlp_lin1"));
-    target_matrices.push((&circuit.ff2.r_out_lin, "R_mlp_lin2"));
 
     for (r_matrix, label) in target_matrices {
         let b_dim = r_matrix.len();

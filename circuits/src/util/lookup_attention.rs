@@ -30,6 +30,34 @@ use crate::{
 
 type G1 = G1Projective;
 
+pub fn run_lasso_bundle(
+    bundle: &SoftmaxBundle<Fr>,
+    label: &'static [u8],
+    rng: &mut StdRng,
+) -> Result<()> {
+    // 총 룩업 횟수(Sparsity) 계산: C, B, H, S, L 차원을 가짐
+    let b_dim = bundle.limbs[0].len();
+    let h_dim = bundle.limbs[0][0].len();
+    let dim1 = bundle.limbs[0][0][0].len();
+    let dim2 = bundle.limbs[0][0][0][0].len();
+    let total_sparsity = b_dim * h_dim * dim1 * dim2;
+
+    // Lasso용 Generator 생성 (각 번들의 고유 sparsity 반영)
+    let gens = SparsePolyCommitmentGens::<G1>::new(
+        label,
+        SOFTMAX_C,
+        total_sparsity,
+        SOFTMAX_C,
+        SOFTMAX_M.trailing_zeros() as usize,
+    );
+
+    let start = Instant::now();
+    prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
+    println!("  - Lasso Total Time ({:?}): {:?}", std::str::from_utf8(label).unwrap(), start.elapsed());
+    
+    Ok(())
+}
+
 pub fn prove_lasso_for_softmax(
     limbs: &Vec<Vec<Vec<Vec<Vec<Fr>>>>>, // [C, B, H, S, L]
     gens: &SparsePolyCommitmentGens<G1>,
