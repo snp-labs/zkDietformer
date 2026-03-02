@@ -31,7 +31,11 @@ use crate::{
         lookup_attention::{verify_all_remainders, prove_lasso_for_softmax, run_lasso_bundle},
     }
 };
-
+use crate::cc_snark::legogroth16::{
+    ProvingKey,          
+    create_random_proof, 
+    verify_proof,       
+};
 
 pub fn get_link_public_gens<R: RngCore, E: Pairing>(
     rng: &mut R,
@@ -563,24 +567,37 @@ where
 
         println!("=== [1] LegoGroth16 GenProof ===");
 
+        let groth16_pk = ProvingKey {
+            vk: params.vk.groth16_vk.clone(),
+            common: params.common.clone(),
+        };
+
+        println!("=== [1] LegoGroth16 GenProof (SNARK Logic Only) ===");
+
         let final_circuit = NystromAttentionCircuit {
             r_challenge: r_fs,
             ..sample_circuit.clone()
         };
-        
 
-        let proof = create_random_proof_incl_cp_link(
-            final_circuit.clone(), v1, v2, link_v, &params, &mut rng
-        ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
+        // 1. 증명 생성: CP-Link 없이 LegoGroth16 SNARK 본체만 생성
+        // v1, v2는 위트니스 그룹 1, 2에 대한 blinding factor입니다.
+        let proof = create_random_proof::<E, _, _>(
+            final_circuit.clone(), 
+            v1, 
+            v2, 
+            &groth16_pk, 
+            &mut rng
+        ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;
 
-        // 검증
-        let public_inputs = vec![final_circuit.r_challenge];
+        // 2. 증명 검증: CP-Link 검증을 제외하고 SNARK 제약 조건 및 커밋먼트 정당성만 검증
+        let public_inputs = vec![final_circuit.r_challenge]; 
+        let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
 
-        let result = verify_proof_incl_cp_link(&pvk, &params.vk, &proof, &public_inputs);
-        println!("  - LegoGroth16 + CP-link Verification: {:?}", result);
-        
+        println!("  - LegoGroth16 SNARK Verification: {:?}", result);
+
         if let Err(e) = result {
             println!("    Reason: {:?}", e);
+            return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");

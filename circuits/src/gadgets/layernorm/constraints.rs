@@ -32,7 +32,8 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     dim: usize,
     frac_bits :usize,
     k_bits:usize,
-    committed_vars: &mut Vec<FpVar<F>>,
+    r_pool: &mut Vec<FpVar<F>>,
+    rms_pool: &mut Vec<FpVar<F>>,
 ) -> Result<Vec<Vec<Vec<FpVar<F>>>>, SynthesisError> {
     let two_k = FpVar::new_constant(cs.clone(), F::from(1u128 << k_bits))?;
     let dim_var = FpVar::new_constant(cs.clone(), F::from(dim as u128))?;
@@ -68,10 +69,13 @@ pub fn enforce_rmsnorm<F: PrimeField>(
             let rhs_ms = (&shifted_var * &two_k) + &r_shift_var;
             lhs_ms.enforce_equal(&rhs_ms)?;
 
-            committed_vars.push(r_shift_var.clone()); // 추가
+            r_pool.push(r_shift_var.clone()); // 추가
 
             // shifted = (Q_ms * dim) + R_ms
             let q_ms_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_ms_sim[b][s][0]))?;
+
+            rms_pool.push(q_ms_var.clone()); // 추가
+            
             let r_ms_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_ms[b][s][0]))?;
             shifted_var.enforce_equal(&((&q_ms_var * &dim_var) + &r_ms_var))?;
 
@@ -95,7 +99,7 @@ pub fn enforce_rmsnorm<F: PrimeField>(
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out[b][s][d]))?;
 
-                committed_vars.push(r_out_var.clone()); // 추가
+                r_pool.push(r_out_var.clone()); // 추가
 
                 // M_norm * (product + M_prime_norm) = (Q_out << k) + R_out
                 let lhs = &m_norm_var * (product + &m_prime_norm_var);

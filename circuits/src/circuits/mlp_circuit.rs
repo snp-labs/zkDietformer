@@ -13,28 +13,30 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::{select::CondSelectGadget, R1CSVar};
 use crate::{
-    cc_snark::legogroth16::{LinkPublicGenerators, prepare_verifying_key, generate_random_parameters_incl_cp_link, create_random_proof_incl_cp_link, verify_proof_incl_cp_link},
+    cc_snark::{legogroth16::{LinkPublicGenerators, create_random_proof, create_random_proof_incl_cp_link, generate_random_parameters_incl_cp_link, prepare_verifying_key, verify_proof, verify_proof_incl_cp_link}, linker::{relation_generator::{generate_cp_factored_instance, generate_cp_factored_relation, generate_cp_factored_witness}, snark::PP}},
     //cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, 
-    config::{RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M, GELU_M, GELU_C, KBITS_C, KBITS_M}, 
+    config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M}, 
     gadgets::{
         activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
     }, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
             surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
-        },
-        subtables::{
-            SubtableStrategy, and::AndSubtableStrategy, 
-            layernorm::RMSNormSubtableStrategy, 
-            lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, 
-            softmax::SoftmaxSubtableStrategy, gelu::GeLUSubtableStrategy
-        }, utils::{math::Math, random::RandomTape},
+        }, poly::{commitments::{Commitments, MultiCommitGens}, dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds}}, subtables::{
+            SubtableStrategy, and::AndSubtableStrategy, gelu::GeLUSubtableStrategy, layernorm::RMSNormSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
+        }, utils::{math::Math, random::RandomTape}
     }, util::{
-        load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64},
-        utils::{cm1_from_vk, hash_cm_to_field_vec},
-        lookup_mlp::{run_mlp_remainders, run_lasso_for_gelu, run_lasso_for_rmsnorm}
+        load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64}, lookup_mlp::{run_lasso_for_gelu, run_lasso_for_rmsnorm, run_mlp_remainders}, utils::{cm1_from_vk, hash_cm_to_field_vec}
     }, 
 };
+use crate::cc_snark::legogroth16::VerifyingKey;
+use crate::cc_snark::linker::{
+    Linker,
+    snark::LinkSnark,
+    relation_generator::generate_cp_arithm_relation, // 또는 용도에 맞는 generator
+};
+use ark_ec::AffineRepr;
+use crate::cc_snark::legogroth16::ProvingKey;
 
 pub fn get_link_public_gens<R: RngCore, E: Pairing>(
     rng: &mut R,
@@ -68,14 +70,24 @@ pub struct NystromMLPCircuit<F: PrimeField> {
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromMLPCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
-        let mut committed_pool = self.committed_vars.borrow_mut();
+
+        let mut rms_pool = Vec::new();
+        let mut gelu_pool = Vec::new();
+        let mut r_pool = Vec::new();
 
         let dim: usize = self.norm1.q_ri[0][0].len();
-        let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits, &mut committed_pool)?;
-        let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(), &q_norm1_vars, &self.ff1, self.k_bits, &mut committed_pool)?;
-        let q_gelu_vars = enforce_gelu(cs.clone(), &q_ff1_vars, &r_ff1_vars, &self.gelu1, self.k_bits, &mut committed_pool)?;
-        let (q_ff2_vars, _) = enforce_linear(cs.clone(), &q_gelu_vars, &self.ff2, self.k_bits, &mut committed_pool)?;
-        let q_norm2_vars = enforce_rmsnorm(cs.clone(), &self.norm2, dim, self.frac_bits, self.k_bits, &mut committed_pool)?;
+        let q_norm1_vars = enforce_rmsnorm(cs.clone(), &self.norm1, dim, self.frac_bits, self.k_bits, &mut r_pool, &mut rms_pool)?;
+        let (q_ff1_vars, r_ff1_vars) = enforce_linear(cs.clone(), &q_norm1_vars, &self.ff1, self.k_bits, &mut r_pool)?;
+        let q_gelu_vars = enforce_gelu(cs.clone(), &q_ff1_vars, &r_ff1_vars, &self.gelu1, self.k_bits, &mut r_pool, &mut gelu_pool)?;
+        //let (q_ff2_vars, _) = enforce_linear(cs.clone(), &q_gelu_vars, &self.ff2, self.k_bits, &mut r_pool)?;
+        //let q_norm2_vars = enforce_rmsnorm(cs.clone(), &self.norm2, dim, self.frac_bits, self.k_bits, &mut r_pool, &mut rms_pool)?;
+
+        {
+            let mut final_vars = self.committed_vars.borrow_mut();
+            final_vars.extend(rms_pool);  
+            final_vars.extend(gelu_pool); 
+            //final_vars.extend(r_pool);
+        }
 
         Ok(())
     }
@@ -164,10 +176,68 @@ where
     
 }
 
+pub fn prove_and_verify_factored_multi_link<E: Pairing>(
+    vk: &VerifyingKey<E>,
+    num_pub: usize,
+    v_groth: E::ScalarField,
+    cm_groth: E::G1Affine,
+    lasso_results: Vec<(PolyCommitment<E::G1>, PolyCommitmentBlinds<E::ScalarField>, MultiCommitGens<E::G1>)>,
+    u_total: Vec<E::ScalarField>,
+    rng: &mut impl Rng,
+) -> Result<()> {
+    let mut l_rows_vec = Vec::new();
+    let mut r_cols_vec = Vec::new();
+    let mut cks_lasso_vec = Vec::new();
+    let mut rs = vec![v_groth];
+    let mut lasso_cms_all = Vec::new();
+
+    // 1. Lasso의 모든 블록으로부터 행(L)과 열(R) 정보 및 모든 커밋먼트 조각 수집
+    for (cm, blinds, gens) in &lasso_results {
+        l_rows_vec.push(cm.C.len()); // 행 개수 L (예: 16)
+        r_cols_vec.push(gens.n);    // 열/베이스 개수 R (예: 32)
+        
+        // Lasso 베이스 수집 [h, G0...GR-1]
+        let mut ck = vec![gens.h.into_affine()];
+        ck.extend(gens.G.iter().map(|g| g.into_affine()));
+        cks_lasso_vec.push(ck);
+        
+        // 모든 행의 블라인딩 값 및 커밋먼트 점 수집
+        rs.extend(&blinds.blinds); 
+        lasso_cms_all.extend(cm.C.iter().map(|c| c.into_affine()));
+    }
+
+    // 2. LegoGroth16 통합 베이스 추출
+    let mut ck_joint = vec![vk.eta1_gamma_inv_g1];
+    let start = 1 + num_pub;
+    ck_joint.extend(vk.gamma_abc_g1[start..start + u_total.len()].iter().cloned());
+
+    // 3. 관계 행렬 생성 (Factored 모드)
+    let crs = generate_cp_factored_relation::<E>(
+        lasso_results.len(), l_rows_vec, r_cols_vec, ck_joint, cks_lasso_vec
+    );
+
+    // 4. Setup & Keygen (snark_ck는 비우고 직접 crs 전달)
+    let pp = PP::new(crs.nr, crs.nc, &E::G1::rand(rng).into_affine(), &E::G2::rand(rng).into_affine());
+    let (ek, vk_link) = LinkSnark::<E>::keygen(&pp, crs, rng);
+
+    // 5. Witness & Instance 구성
+    let witness = generate_cp_factored_witness::<E>(rs, u_total);
+    let instance = generate_cp_factored_instance::<E>(cm_groth, lasso_cms_all);
+
+    // 6. 증명 및 검증
+    let (proof, _) = LinkSnark::<E>::prove(&pp, &ek, witness, rng);
+    if LinkSnark::<E>::verify(&pp, &vk_link, &instance, &proof) {
+        println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Factored link verification failed"))
+    }
+}
+
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
 where
-    E: Pairing<ScalarField = Fr>,
-    <E::ScalarField as FromStr>::Err: core::fmt::Debug,
+E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>, // 이 제약을 추가
+<E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
     type ScalarF<E> = <E as Pairing>::ScalarField;
     let mut targets: Vec<std::path::PathBuf> = Vec::new();
@@ -238,6 +308,13 @@ where
             values
         };
 
+        println!("\n[Debug] LegoGroth16 committed_group1 (Total: {})", committed_group1.len());
+        let print_count = std::cmp::min(10, committed_group1.len());
+        if committed_group1.len() > 0 {
+            println!("  Head (10): {:?}", committed_group1[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+            println!("  Tail (10): {:?}", committed_group1[committed_group1.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        }
+
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
         let link_v = Fr::rand(&mut rng);
@@ -249,24 +326,31 @@ where
 
         println!("=== [1] LegoGroth16 GenProof ===");
 
-        let proof = create_random_proof_incl_cp_link(
-            sample_circuit.clone(), v1, v2, link_v, &params, &mut rng
-        ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
+        let groth16_pk = ProvingKey {
+            vk: params.vk.groth16_vk.clone(),
+            common: params.common.clone(),
+        };
 
-        // 검증
-        let public_inputs = vec![];
+        let proof = create_random_proof::<E, _, _>(
+            sample_circuit.clone(), 
+            v1, 
+            v2, 
+            &groth16_pk, 
+            &mut rng
+        ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;
 
-        let result = verify_proof_incl_cp_link(&pvk, &params.vk, &proof, &public_inputs);
-        println!("  - LegoGroth16 + CP-link Verification: {:?}", result);
-        
+        let public_inputs = vec![]; // 공개 입력이 없는 경우
+        let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
+
+        println!("  - LegoGroth16 SNARK Verification: {:?}", result);
         if let Err(e) = result {
-            println!("    Reason: {:?}", e);
+            return Err(anyhow::Error::msg(format!("{:?}", e)));
         }
 
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let dim = sample_circuit.norm1.q_ri[0][0].len();
-        run_lasso_for_rmsnorm(&sample_circuit.norm1, sample_circuit.k_bits, b"lasso_rms1", &mut rng)?;
-        run_lasso_for_gelu(
+        let (lasso_cm1, lasso_blinds1, lasso_gens1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, sample_circuit.k_bits, b"lasso_rms1", &mut rng)?;
+        let (lasso_cm2, lasso_blinds2, lasso_gens2) = run_lasso_for_gelu(
             &sample_circuit.gelu1, 
             &sample_circuit.ff1.q_out_sim.iter().map(|batch| {
                 batch.iter().map(|seq| {
@@ -280,8 +364,25 @@ where
             b"lasso_gelu1", 
             &mut rng
         )?;
-        run_lasso_for_rmsnorm(&sample_circuit.norm2, sample_circuit.k_bits, b"lasso_rms2", &mut rng)?;
-        run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
+        // let (lasso_cm, lasso_blinds, lasso_gens) = run_lasso_for_rmsnorm(&sample_circuit.norm2, sample_circuit.k_bits, b"lasso_rms2", &mut rng)?;
+        //run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
+        let u_values: Vec<Fr> = sample_circuit.committed_vars.borrow().iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
+
+        // 4. CP-Link 실행
+        let lasso_results = vec![
+        (lasso_cm1, lasso_blinds1, lasso_gens1), // res_rms에 해당
+        (lasso_cm2, lasso_blinds2, lasso_gens2), // res_gelu에 해당
+        ];
+
+        prove_and_verify_factored_multi_link::<E>(
+            &params.vk.groth16_vk,
+            num_pub,
+            v1,
+            cm1,
+            lasso_results,
+            u_values,
+            &mut rng,
+        )?;
     }
     Ok(())
 }
