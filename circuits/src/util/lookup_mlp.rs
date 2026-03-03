@@ -26,7 +26,6 @@ type G1 = G1Projective;
 
 pub fn run_lasso_for_rmsnorm(
     bundle: &NormBundle<Fr>,
-    k_bits: usize,
     label: &'static [u8],
     rng: &mut StdRng,
 ) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
@@ -331,8 +330,6 @@ pub fn prove_lasso_for_gelu(
         println!("  Head (10): {:?}", data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
         println!("  Tail (10): {:?}", data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
     }
-    
-    println!("\n[Debug] GeLU Lasso densified.dim[0] (Total: {})", densified.dim[0].len());
 
     let mut random_tape = RandomTape::new(b"lasso_tape_gelu");
     let mut transcript = Transcript::new(b"lasso_gelu");

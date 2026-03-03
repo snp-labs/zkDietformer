@@ -99,7 +99,8 @@ pub fn enforce_rmsnorm<F: PrimeField>(
             let mut seq_q_out_vars = Vec::new();
             
             for d in 0..bundle.q_ri[b][s].len() {
-                let q_diff_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_ri[b][s][d] - bundle.z_ri))?;
+                // Reuse the linear combination computed in the first loop — no new witness needed.
+                let q_diff_var = q_diff_vars[d].clone();
                 let q_gamma_diff = &gamma_vars[d] - &z_gamma_var;
                 
                 // (Q_diff * inv_rms * Q_gamma_diff)

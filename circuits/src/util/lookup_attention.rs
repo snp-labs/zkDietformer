@@ -200,7 +200,6 @@ pub fn prove_lasso_for_range_22(
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
 
     println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
 
     let mut results = Vec::new();
     let ell = densified.dim[0].get_num_vars();
