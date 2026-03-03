@@ -1,4 +1,5 @@
 use crate::config::{K_SEGMENTS, LIMB_BITS}; 
+use crate::gadgets::activation::gelu::split_remainder_and_push;
 use crate::gadgets::matmul::constraints::MatrixVar;
 use crate::gadgets::matmul::quantized::new_matrix_witness_4d;
 use std::fs::File;
@@ -56,61 +57,8 @@ pub struct SoftmaxVarBundle<F: PrimeField> {
     pub m_sm: FpVar<F>,
 }
 
-/*pub fn enforce_softmax<F: PrimeField>(
-    q_sim: &MatrixVar<F>,       
-    r_matmul: &MatrixVar<F>,    
-    r_sm: &MatrixVar<F>,        
-    m_sm: &FpVar<F>,            
-    limbs: &[MatrixVar<F>],     
-    exp_limbs: &[MatrixVar<F>], 
-    q_exp: &[MatrixVar<F>],     
-    r_exp: &[MatrixVar<F>],     
-    exp_total: &MatrixVar<F>,    
-    p_out: &MatrixVar<F>,        
-    r_div: &MatrixVar<F>,        
-    frac_bits: usize,
-    two_k: &FpVar<F>,           
-) -> Result<(), SynthesisError> {
-    let s_len = q_sim.len();
-    let l_len = q_sim[0].len();
-    let frac_scale = F::from(1u128 << frac_bits);
-
-    for i in 0..s_len {
-        let mut row_exp_sum = FpVar::zero();
-        for j in 0..l_len {
-            row_exp_sum += &exp_total[i][j];
-        }
-
-        for j in 0..l_len {
-            let x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
-            
-            let mut scaled_x = FpVar::zero();
-            for k in 0..5 {
-                scaled_x += &limbs[k][i][j] * F::from(1u128 << (16 * k));
-            }
-
-            let lhs_scale = &x_recovered * m_sm;
-            let rhs_scale = (&scaled_x * two_k) + &r_sm[i][j];
-            lhs_scale.enforce_equal(&rhs_scale)?;
-
-            let mut current_acc = exp_limbs[0][i][j].clone();
-            for k in 0..4 {
-                let lhs_mult = &current_acc * &exp_limbs[k+1][i][j];
-                let next_q = if k == 3 { exp_total[i][j].clone() } else { q_exp[k][i][j].clone() };
-                let rhs_mult = (&next_q * frac_scale) + &r_exp[k][i][j];
-                lhs_mult.enforce_equal(&rhs_mult)?;
-                current_acc = next_q;
-            }
-
-            let lhs_div = &exp_total[i][j] * frac_scale;
-            let rhs_div = (&p_out[i][j] * &row_exp_sum) + &r_div[i][j];
-            lhs_div.enforce_equal(&rhs_div)?;
-        }
-    }
-    Ok(())
-}*/
-
 pub fn enforce_softmax<F: PrimeField>(
+    cs: ConstraintSystemRef<F>,
     q_sim: &MatrixVar<F>,       
     r_matmul: &MatrixVar<F>,    
     r_sm: &MatrixVar<F>,        
@@ -118,11 +66,15 @@ pub fn enforce_softmax<F: PrimeField>(
     limbs: &[MatrixVar<F>],     
     exp_limbs: &[MatrixVar<F>], 
     q_exp: &[MatrixVar<F>], 
+    r_exp: &[MatrixVar<F>],     
     p_out: &MatrixVar<F>,     
-    r_div: &MatrixVar<F>,          
+    r_div: &MatrixVar<F>,       
     frac_bits: usize,
     two_k: &FpVar<F>,       
-    committed_vars: &mut Vec<FpVar<F>>,    
+    h_sm_idx_segs: &mut [Vec<FpVar<F>>; 5],   // sm_pool, limbs
+    h_r_sm_segs: &mut [Vec<FpVar<F>>; 2],    // r_sm (Low, High)
+    r2_pool: &mut Vec<FpVar<F>>,             // 16-bit 5D 
+    r3_pool: &mut Vec<FpVar<F>>,             // 16-bit 4D
 ) -> Result<(), SynthesisError> {
     let s_len = q_sim.len();
     let l_len = q_sim[0].len();
@@ -134,28 +86,39 @@ pub fn enforce_softmax<F: PrimeField>(
 
         for j in 0..l_len {
             let x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
-            
             let mut scaled_x = FpVar::zero();
             for k in 0..5 {
                 scaled_x += &limbs[k][i][j] * F::from(1u128 << (16 * k));
+                // limbs 저장
+                h_sm_idx_segs[k].push(limbs[k][i][j].clone());
             }
 
             let lhs_scale = &x_recovered * m_sm;
             let rhs_scale = (&scaled_x * two_k) + &r_sm[i][j];
             lhs_scale.enforce_equal(&rhs_scale)?;
 
-            committed_vars.push(r_sm[i][j].clone()); // 추가
+            // 2. 22-bit r_sm
+            let (low, high) = split_remainder_and_push(
+                cs.clone(), 
+                &r_sm[i][j], 
+                r_sm[i][j].value().unwrap_or(F::zero())
+            )?;
+            h_r_sm_segs[0].push(low);
+            h_r_sm_segs[1].push(high);
 
+            // 3. Exponential r_exp (16-bit 5D) 수집
             let mut current_acc = exp_limbs[0][i][j].clone();
             for k in 0..4 {
-                let lhs_mult = &current_acc * &exp_limbs[k+1][i][j];
+                r2_pool.push(r_exp[k][i][j].clone()); 
                 let next_q = q_exp[k][i][j].clone(); 
+                (&current_acc * &exp_limbs[k+1][i][j]).enforce_equal(&((&next_q * frac_scale) + &r_exp[k][i][j]))?;
                 current_acc = next_q; 
             }
+            row_exp_sum += &current_acc;
+            row_exp_totals.push(current_acc);
 
-            let exp_total_var = current_acc; 
-            row_exp_sum += &exp_total_var;
-            row_exp_totals.push(exp_total_var);
+            // 4. Division r_div (16-bit 4D) 수집
+            r3_pool.push(r_div[i][j].clone());
         }
 
         for j in 0..l_len {

@@ -13,28 +13,23 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    cc_snark::legogroth16::{LinkPublicGenerators, prepare_verifying_key, generate_random_parameters_incl_cp_link, create_random_proof_incl_cp_link, verify_proof_incl_cp_link},
-    // cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, 
+    cc_snark::{legogroth16::{ProvingKey, create_random_proof, 
+        verify_proof, VerifyingKey,LinkPublicGenerators, create_random_proof_incl_cp_link, generate_random_parameters_incl_cp_link, prepare_verifying_key, verify_proof_incl_cp_link}, 
+    linker::{Linker,snark::LinkSnark,
+        relation_generator::generate_cp_arithm_relation,relation_generator::{generate_cp_factored_instance, generate_cp_factored_relation, generate_cp_factored_witness}, snark::PP}},
     gadgets::{
         matmul::{constraints::{MatrixVar, new_matrix_witness}, 
     quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
             surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
-        },
+        }, poly::{commitments::{Commitments, MultiCommitGens}, dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds}},
         subtables::{
             SubtableStrategy, and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
         }, utils::{math::Math, random::RandomTape},
     }, util::{
-        utils::{cm1_from_vk, hash_cm_to_field},
-        load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
-        lookup_attention::{verify_all_remainders, prove_lasso_for_softmax, run_lasso_bundle},
+        load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64}, lookup_attention::{prove_lasso_for_softmax, run_lasso_bundle, run_all_remainders_with_link}, utils::{cm1_from_vk, hash_cm_to_field}
     }
-};
-use crate::cc_snark::legogroth16::{
-    ProvingKey,          
-    create_random_proof, 
-    verify_proof,       
 };
 
 pub fn get_link_public_gens<R: RngCore, E: Pairing>(
@@ -88,15 +83,16 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub mask: Vec<Vec<F>>,
 
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
-    // pub challenge_r: Vec<F>,
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
-        let mut committed_pool = self.committed_vars.borrow_mut();
         
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
+
+        let mut r2_pool = Vec::new(); // FRAC_BITS remainder 5d
+        let mut r3_pool = Vec::new(); // FRAC_BITS remainder 4d
 
         // 1. 공통 입력 및 위트니스 할당 ([B][H][S][D])
         let q_proc = new_matrix_witness_4d(cs.clone(), &self.q_q);
@@ -120,6 +116,26 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let (mid_data, params_mid) = self.matmul_mid.alloc_and_setup(cs.clone(), F::zero(), self.pseudo_inv.z_inv, &two_k_var);
         let (x_data, params_x) = self.matmul_x.alloc_and_setup(cs.clone(), self.matmul_mid.z_sim, self.matmul_temp.z_sim, &two_k_var);
         
+        let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
+        let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
+        let mut global_k3_lows = Vec::new(); let mut global_k3_highs = Vec::new();
+
+        let mut global_sm1_idx = vec![Vec::new(); 5];
+        let mut global_sm1_r_sm = vec![Vec::new(); 2];
+        let mut global_sm2_idx = vec![Vec::new(); 5];
+        let mut global_sm2_r_sm = vec![Vec::new(); 2];
+        let mut global_sm3_idx = vec![Vec::new(); 5];
+        let mut global_sm3_r_sm = vec![Vec::new(); 2];
+
+        let mut global_inv0_lows = Vec::new(); let mut global_inv0_highs = Vec::new();
+        let mut global_inv1_lows = Vec::new(); let mut global_inv1_highs = Vec::new();
+        let mut global_inv2_lows = Vec::new(); let mut global_inv2_highs = Vec::new();
+        let mut global_inv3_lows = Vec::new(); let mut global_inv3_highs = Vec::new();
+
+        let mut global_temp_lows = Vec::new(); let mut global_temp_highs = Vec::new();
+        let mut global_mid_lows = Vec::new(); let mut global_mid_highs = Vec::new();
+        let mut global_x_lows = Vec::new(); let mut global_x_highs = Vec::new();
+
         for b in 0..q_proc.len() {
             // 해당 배치의 Landmarks 계산
             let k_landmarks = compute_circuit_landmarks(cs.clone(), &k_proc[b], &r_mean_k1[b], self.seg_size)?;
@@ -128,43 +144,69 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             for h in 0..q_proc[b].len() {
                 let k_l_t = transpose_matrix(&k_landmarks[h]);
                 let r_pows_k1 = gen_challenge_vector(&r_var, k1_data.q_sim[b][h][0].len());
+                
                 // Kernel 1
+                let mut h_k1_lows = Vec::new(); 
+                let mut h_k1_highs = Vec::new();
                 enforce_freivald(
+                    cs.clone(),
                     &q_proc[b][h], 
                     &k_l_t, 
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h], 
+                    &self.matmul1.r_matmul[b][h],
                     &params_k1, 
                     &r_pows_k1,
+                    &mut h_k1_lows, 
+                    &mut h_k1_highs,
                 )?;
+                global_k1_lows.extend(h_k1_lows); global_k1_highs.extend(h_k1_highs);
 
+                
                 // Kernel 2
+                let mut h_k2_lows = Vec::new(); 
+                let mut h_k2_highs = Vec::new();
                 let q_l_h = &q_landmarks[h];
                 let r_pows_k2: Vec<FpVar<F>> = gen_challenge_vector(&r_var, k2_data.q_sim[b][h][0].len());
                 enforce_freivald(
+                    cs.clone(),
                     q_l_h, 
                     &k_l_t, 
                     &k2_data.q_sim[b][h], 
                     &k2_data.r_matmul[b][h], 
+                    &self.matmul2.r_matmul[b][h],
                     &params_k2, 
-                    &r_pows_k2
+                    &r_pows_k2,
+                    &mut h_k2_lows, 
+                    &mut h_k2_highs,
                 )?;
+                global_k2_lows.extend(h_k2_lows); global_k2_highs.extend(h_k2_highs);
+                
 
+                // Kernel 3
+                let mut h_k3_lows = Vec::new(); 
+                let mut h_k3_highs = Vec::new();
                 let k_full_t = transpose_matrix(&k_proc[b][h]);
                 let r_pows_k3 = gen_challenge_vector(&r_var, k3_data.q_sim[b][h][0].len()); 
                 enforce_freivald(
+                    cs.clone(),
                     &q_landmarks[h], 
                     &k_full_t, 
                     &k3_data.q_sim[b][h], 
                     &k3_data.r_matmul[b][h], 
+                    &self.matmul3.r_matmul[b][h],
                     &params_k3, 
-                    &r_pows_k3
+                    &r_pows_k3,
+                    &mut h_k3_lows, 
+                    &mut h_k3_highs,
                 )?;
+                global_k3_lows.extend(h_k3_lows); global_k3_highs.extend(h_k3_highs);
                 
-
-                // Softmax Kernel 1 검증
-                println!("DEBUG: Current pool size before softmax: {}", committed_pool.len());
+                // Softmax 1
+                let mut h_sm1_idx = [const { Vec::new() }; 5];
+                let mut h_sm1_r_sm = [const { Vec::new() }; 2];
                 enforce_softmax(
+                    cs.clone(),
                     &k1_data.q_sim[b][h], 
                     &k1_data.r_matmul[b][h],
                     &sm1_vars.r_sm[b][h],        
@@ -172,17 +214,25 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm1_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm1_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm1_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    //&sm1_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &sm1_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     //&sm1_vars.exp_total[b][h],
                     &sm1_vars.p[b][h],
                     &sm1_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                    &mut committed_pool
+                    &mut h_sm1_idx,
+                    &mut h_sm1_r_sm, 
+                    &mut r2_pool,
+                    &mut r3_pool,
                 )?;
-                println!("DEBUG: Current pool size after softmax: {}", committed_pool.len());
+                for k in 0..5 { global_sm1_idx[k].extend(h_sm1_idx[k].clone()); }
+                for k in 0..2 { global_sm1_r_sm[k].extend(h_sm1_r_sm[k].clone()); }
 
+                // Softmax 2
+                let mut h_sm2_idx = [const { Vec::new() }; 5];
+                let mut h_sm2_r_sm = [const { Vec::new() }; 2];
                 enforce_softmax(
+                    cs.clone(),
                     &k2_data.q_sim[b][h], 
                     &k2_data.r_matmul[b][h],
                     &sm2_vars.r_sm[b][h],        
@@ -190,29 +240,29 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &sm2_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    // &sm2_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    // &sm2_vars.exp_total[b][h],
+                    &sm2_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm2_vars.p[b][h],
                     &sm2_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                    &mut committed_pool
+                    &mut h_sm2_idx,
+                    &mut h_sm2_r_sm, 
+                    &mut r2_pool, 
+                    &mut r3_pool,
                 )?;
-                println!("DEBUG: Current pool size after softmax: {}", committed_pool.len());
+                for k in 0..5 { global_sm2_idx[k].extend(h_sm2_idx[k].clone()); }
+                for k in 0..2 { global_sm2_r_sm[k].extend(h_sm2_r_sm[k].clone()); }
 
-                // Kernel 3 Matmul 결과인 k3_data.q_sim[b][h]는 [L][S] 형태입니다.
+                // Softmax 3
                 let zero_var = FpVar::zero();
                 let num_landmarks = k3_data.q_sim[b][h].len();
                 let seq_len = k3_data.q_sim[b][h][0].len();
 
-                // 몫(Q_sim) 변수 자체를 마스킹된 버전으로 교체
                 let mut masked_q_sim_k3 = k3_data.q_sim[b][h].clone();
                 for l in 0..num_landmarks {
                     for s in 0..seq_len {
-                        // mask_var[b][s] (FpVar)를 BooleanVar로 변환
                         let is_not_padding = mask_var[b][s].is_one()?; 
                         
-                        // 정적 메서드 호출로 문법 오류 해결
                         masked_q_sim_k3[l][s] = FpVar::conditionally_select(
                             &is_not_padding,
                             &k3_data.q_sim[b][h][l][s], 
@@ -221,22 +271,30 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     }
                 }
 
+                let mut h_sm3_idx = [const { Vec::new() }; 5];
+                let mut h_sm3_r_sm = [const { Vec::new() }; 2];
                 enforce_softmax(
-                    &masked_q_sim_k3, // 마스킹 적용됨
+                    cs.clone(),
+                    &masked_q_sim_k3, 
                     &k3_data.r_matmul[b][h],
                     &sm3_vars.r_sm[b][h],        
                     &sm3_vars.m_sm,
                     &sm3_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm3_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     &sm3_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    //&sm3_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &sm3_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
                     //&sm3_vars.exp_total[b][h],
                     &sm3_vars.p[b][h],
                     &sm3_vars.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                    &mut committed_pool
+                    &mut h_sm3_idx,
+                    &mut h_sm3_r_sm, 
+                    &mut r2_pool,
+                    &mut r3_pool,
                 )?;
+                for k in 0..5 { global_sm3_idx[k].extend(h_sm3_idx[k].clone()); }
+                for k in 0..2 { global_sm3_r_sm[k].extend(h_sm3_r_sm[k].clone()); }
 
                 // moore-penrose
                 let q_inv_var = new_matrix_witness_4d(cs.clone(), &self.pseudo_inv.q_inv);
@@ -274,77 +332,163 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 // A * A_inv * A = A
                 // Step 1: P_k2 * Q_inv_k2 = Q_y1
+                let mut h_inv0_lows = Vec::new(); 
+                let mut h_inv0_highs = Vec::new();
                 enforce_freivald(
+                    cs.clone(),
                     &sm2_vars.p[b][h], 
                     &q_inv_var[b][h], 
                     &q_y_vars[0][b][h], 
                     &r_inv_vars[0][b][h], 
+                    &self.pseudo_inv.r_inv_remainders[0][b][h],
                     &inv_params[0], 
-                    &r_pows_inv
+                    &r_pows_inv,
+                    &mut h_inv0_lows, 
+                    &mut h_inv0_highs,
                 )?;
+                global_inv0_lows.extend(h_inv0_lows); global_inv0_highs.extend(h_inv0_highs);
 
                 // Step 2: Q_y1 * P_k2 = P_k2
+                let mut h_inv1_lows = Vec::new(); 
+                let mut h_inv1_highs = Vec::new();
                 enforce_freivald(
-                    &q_y_vars[0][b][h], // 이거를 다시
+                    cs.clone(),
+                    &q_y_vars[0][b][h], 
                     &sm2_vars.p[b][h], 
                     &q_y_vars[1][b][h],
                     &r_inv_vars[1][b][h], 
+                    &self.pseudo_inv.r_inv_remainders[1][b][h],
                     &inv_params[1], 
-                    &r_pows_inv
+                    &r_pows_inv,
+                    &mut h_inv1_lows, 
+                    &mut h_inv1_highs,
                 )?;
+                global_inv1_lows.extend(h_inv1_lows); global_inv1_highs.extend(h_inv1_highs);
                 
                 // A_inv * A * A_inv = A_inv
                 // Step 2-1: Q_inv (A+) * P_k2 (A) = Q_y3
+                let mut h_inv2_lows = Vec::new(); 
+                let mut h_inv2_highs = Vec::new();
                 enforce_freivald(
+                    cs.clone(),
                     &q_inv_var[b][h],             
                     &sm2_vars.p[b][h], 
                     &q_y_vars[2][b][h],             
-                    &r_inv_vars[2][b][h],        
+                    &r_inv_vars[2][b][h],  
+                    &self.pseudo_inv.r_inv_remainders[2][b][h],      
                     &inv_params[2],              
-                    &r_pows_inv
+                    &r_pows_inv,
+                    &mut h_inv2_lows, 
+                    &mut h_inv2_highs,
                 )?;
+                global_inv2_lows.extend(h_inv2_lows); global_inv2_highs.extend(h_inv2_highs);
 
                 // Step 2-2: Q_y3 * Q_inv (A+) = Q_y4
+                let mut h_inv3_lows = Vec::new(); 
+                let mut h_inv3_highs = Vec::new();
                 enforce_freivald(
+                    cs.clone(),
                     &q_y_vars[2][b][h],            
                     &q_inv_var[b][h],
                     &q_y_vars[3][b][h],             
-                    &r_inv_vars[3][b][h],       
+                    &r_inv_vars[3][b][h],   
+                    &self.pseudo_inv.r_inv_remainders[3][b][h],    
                     &inv_params[3],             
-                    &r_pows_inv
+                    &r_pows_inv,
+                    &mut h_inv3_lows, 
+                    &mut h_inv3_highs,
                 )?;
+                global_inv3_lows.extend(h_inv3_lows); global_inv3_highs.extend(h_inv3_highs);
 
+
+                // temp
+                let mut h_temp_lows = Vec::new(); 
+                let mut h_temp_highs = Vec::new();
                 let r_pows_temp = gen_challenge_vector(&r_var, temp_data.q_sim[b][h][0].len());
                 enforce_freivald(
+                    cs.clone(),
                     &sm3_vars.p[b][h],            
                     &v_proc[b][h],                
                     &temp_data.q_sim[b][h],       
                     &temp_data.r_matmul[b][h],    
+                    &self.matmul_temp.r_matmul[b][h],
                     &params_temp, 
-                    &r_pows_temp                  
+                    &r_pows_temp,
+                    &mut h_temp_lows, 
+                    &mut h_temp_highs,                
                 )?;
+                global_temp_lows.extend(h_temp_lows); global_temp_highs.extend(h_temp_highs);
 
+                // mid
+                let mut h_mid_lows = Vec::new(); 
+                let mut h_mid_highs = Vec::new();
                 let r_pows_mid = gen_challenge_vector(&r_var, mid_data.q_sim[b][h][0].len()); // 길이 L
                 enforce_freivald(
+                    cs.clone(),
                     &sm1_vars.p[b][h],        
                     &q_inv_var[b][h],         
                     &mid_data.q_sim[b][h],    
                     &mid_data.r_matmul[b][h], 
+                    &self.matmul_mid.r_matmul[b][h],
                     &params_mid, 
-                    &r_pows_mid
+                    &r_pows_mid,
+                    &mut h_mid_lows, 
+                    &mut h_mid_highs,
                 )?;
+                global_mid_lows.extend(h_mid_lows); global_mid_highs.extend(h_mid_highs);
 
-
+                // X
+                let mut h_x_lows = Vec::new(); 
+                let mut h_x_highs = Vec::new();
                 let r_pows_x = gen_challenge_vector(&r_var, x_data.q_sim[b][h][0].len()); // 길이 D
                 enforce_freivald(
+                    cs.clone(),
                     &mid_data.q_sim[b][h],    
                     &temp_data.q_sim[b][h],   
                     &x_data.q_sim[b][h],      
                     &x_data.r_matmul[b][h],  
+                    &self.matmul_x.r_matmul[b][h],
                     &params_x, 
-                    &r_pows_x
+                    &r_pows_x,
+                    &mut h_x_lows, 
+                    &mut h_x_highs,
                 )?;
+                global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
             }
+        }
+
+        {
+            let mut final_vars = self.committed_vars.borrow_mut();
+        
+            // 1. Softmax 인덱스 블록 (C=5)
+            for seg in 0..5 { final_vars.extend(global_sm1_idx[seg].clone()); }
+            for seg in 0..5 { final_vars.extend(global_sm2_idx[seg].clone()); }
+            for seg in 0..5 { final_vars.extend(global_sm3_idx[seg].clone()); }
+        
+            // MatMul Kernels
+            final_vars.extend(global_k1_lows); final_vars.extend(global_k1_highs);
+            final_vars.extend(global_k2_lows); final_vars.extend(global_k2_highs);
+            final_vars.extend(global_k3_lows); final_vars.extend(global_k3_highs);
+            
+            // Softmax R_sm
+            for k in 0..2 { final_vars.extend(global_sm1_r_sm[k].clone()); }
+            for k in 0..2 { final_vars.extend(global_sm2_r_sm[k].clone()); }
+            for k in 0..2 { final_vars.extend(global_sm3_r_sm[k].clone()); }
+
+            // Moore-Penrose Steps
+            final_vars.extend(global_inv0_lows); final_vars.extend(global_inv0_highs);
+            final_vars.extend(global_inv1_lows); final_vars.extend(global_inv1_highs);
+            final_vars.extend(global_inv2_lows); final_vars.extend(global_inv2_highs);
+            final_vars.extend(global_inv3_lows); final_vars.extend(global_inv3_highs);
+
+            // Final MatMuls
+            final_vars.extend(global_temp_lows); final_vars.extend(global_temp_highs);
+            final_vars.extend(global_mid_lows); final_vars.extend(global_mid_highs);
+            final_vars.extend(global_x_lows); final_vars.extend(global_x_highs);
+
+            // --- 16-bit Remainders (C=1 Blocks) ---
+            final_vars.extend(r2_pool); 
+            final_vars.extend(r3_pool);
         }
 
         Ok(())
@@ -481,9 +625,59 @@ where
     
 }
 
+pub fn prove_and_verify_factored_multi_link<E: Pairing>(
+    vk: &VerifyingKey<E>,
+    num_pub: usize,
+    v_groth: E::ScalarField,
+    cm_groth: E::G1Affine,
+    lasso_results: Vec<(PolyCommitment<E::G1>, PolyCommitmentBlinds<E::ScalarField>, MultiCommitGens<E::G1>)>,
+    u_total: Vec<E::ScalarField>,
+    rng: &mut impl Rng,
+) -> Result<()> {
+    let mut l_rows_vec = Vec::new();
+    let mut r_cols_vec = Vec::new();
+    let mut cks_lasso_vec = Vec::new();
+    let mut rs = vec![v_groth];
+    let mut lasso_cms_all = Vec::new();
+
+    for (cm, blinds, gens) in &lasso_results {
+        l_rows_vec.push(cm.C.len()); 
+        r_cols_vec.push(gens.n);    
+        
+        let mut ck = vec![gens.h.into_affine()];
+        ck.extend(gens.G.iter().map(|g| g.into_affine()));
+        cks_lasso_vec.push(ck);
+        
+        rs.extend(&blinds.blinds); 
+        lasso_cms_all.extend(cm.C.iter().map(|c| c.into_affine()));
+    }
+
+    let mut ck_joint = vec![vk.eta1_gamma_inv_g1];
+    let start = 1 + num_pub;
+    ck_joint.extend(vk.gamma_abc_g1[start..start + u_total.len()].iter().cloned());
+
+    let crs = generate_cp_factored_relation::<E>(
+        lasso_results.len(), l_rows_vec, r_cols_vec, ck_joint, cks_lasso_vec
+    );
+
+    let pp = PP::new(crs.nr, crs.nc, &E::G1::rand(rng).into_affine(), &E::G2::rand(rng).into_affine());
+    let (ek, vk_link) = LinkSnark::<E>::keygen(&pp, crs, rng);
+
+    let witness = generate_cp_factored_witness::<E>(rs, u_total);
+    let instance = generate_cp_factored_instance::<E>(cm_groth, lasso_cms_all);
+
+    let (proof, _) = LinkSnark::<E>::prove(&pp, &ek, witness, rng);
+    if LinkSnark::<E>::verify(&pp, &vk_link, &instance, &proof) {
+        println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Factored link verification failed"))
+    }
+}
+
 pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
 where
-    E: Pairing<ScalarField = Fr>,
+    E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
     type ScalarF<E> = <E as Pairing>::ScalarField;
@@ -555,6 +749,13 @@ where
             values
         };
 
+        println!("\n[Debug] LegoGroth16 committed_group1 (Total: {})", committed_group1.len());
+        let print_count = std::cmp::min(10, committed_group1.len());
+        if committed_group1.len() > 0 {
+            println!("  Head (10): {:?}", committed_group1[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+            println!("  Tail (10): {:?}", committed_group1[committed_group1.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        }
+
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
         let link_v = Fr::rand(&mut rng);
@@ -565,14 +766,12 @@ where
         let cm1 = cm1_from_vk::<E>(&params.vk.groth16_vk, num_pub, &committed_group1, &v1);
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
-        println!("=== [1] LegoGroth16 GenProof ===");
-
         let groth16_pk = ProvingKey {
             vk: params.vk.groth16_vk.clone(),
             common: params.common.clone(),
         };
 
-        println!("=== [1] LegoGroth16 GenProof (SNARK Logic Only) ===");
+        println!("=== [1] LegoGroth16 GenProof ===");
 
         let final_circuit = NystromAttentionCircuit {
             r_challenge: r_fs,
@@ -581,7 +780,7 @@ where
 
         // 1. 증명 생성: CP-Link 없이 LegoGroth16 SNARK 본체만 생성
         // v1, v2는 위트니스 그룹 1, 2에 대한 blinding factor입니다.
-        let proof = create_random_proof::<E, _, _>(
+        /*let proof = create_random_proof::<E, _, _>(
             final_circuit.clone(), 
             v1, 
             v2, 
@@ -598,13 +797,29 @@ where
         if let Err(e) = result {
             println!("    Reason: {:?}", e);
             return Err(anyhow::anyhow!(format!("{:?}", e)));
-        }
+        }*/
 
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
-        run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
-        run_lasso_bundle(&final_circuit.sm2, b"lasso_k2", &mut rng)?;
-        run_lasso_bundle(&final_circuit.sm3, b"lasso_k3", &mut rng)?;
-        verify_all_remainders::<Fr, G1>(&final_circuit, &mut rng)?;
+        let lasso_sm1 = run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
+        let lasso_sm2 = run_lasso_bundle(&final_circuit.sm2, b"lasso_k2", &mut rng)?;
+        let lasso_sm3 = run_lasso_bundle(&final_circuit.sm3, b"lasso_k3", &mut rng)?;
+        let lasso_remainders = run_all_remainders_with_link::<Fr, G1>(&final_circuit, &mut rng)?;
+
+        let mut lasso_results = vec![];
+        lasso_results.extend(lasso_sm1);        // SM1 (5개 블록)
+        lasso_results.extend(lasso_sm2);        // SM2 (5개 블록)
+        lasso_results.extend(lasso_sm3);
+        lasso_results.extend(lasso_remainders);
+
+        prove_and_verify_factored_multi_link::<E>(
+            &params.vk.groth16_vk,
+            num_pub,
+            v1,
+            cm1,
+            lasso_results,
+            committed_group1, // u_values
+            &mut rng,
+        )?;
     }
     Ok(())
 }

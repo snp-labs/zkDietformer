@@ -5,6 +5,8 @@ use ark_r1cs_std::alloc::{AllocVar};
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::prelude::*;
 use ark_r1cs_std::prelude::Boolean;
+
+use crate::gadgets::activation::gelu::split_remainder_and_push;
 #[derive(Clone)]
 pub struct NormBundle<F: PrimeField> {
     pub q_ri: Vec<Vec<Vec<F>>>,      
@@ -46,6 +48,10 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     let m_prime_norm_var = FpVar::new_constant(cs.clone(), bundle.m_prime_norm)?;
     let mut all_q_out_vars = Vec::new();
     
+    let mut shift_low_vars = Vec::new();
+    let mut shift_high_vars = Vec::new();
+    let mut out_low_vars = Vec::new();
+    let mut out_high_vars = Vec::new();
     
     for b in 0..bundle.q_ri.len() {
         let mut batch_q_out_vars = Vec::new();
@@ -69,7 +75,10 @@ pub fn enforce_rmsnorm<F: PrimeField>(
             let rhs_ms = (&shifted_var * &two_k) + &r_shift_var;
             lhs_ms.enforce_equal(&rhs_ms)?;
 
-            r_pool.push(r_shift_var.clone()); // 추가
+            // r_pool.push(r_shift_var.clone()); // 추가
+            let (s_low, s_high) = split_remainder_and_push(cs.clone(), &r_shift_var, bundle.r_shift[b][s][0])?;
+            shift_low_vars.push(s_low);
+            shift_high_vars.push(s_high);
 
             // shifted = (Q_ms * dim) + R_ms
             let q_ms_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_ms_sim[b][s][0]))?;
@@ -99,7 +108,10 @@ pub fn enforce_rmsnorm<F: PrimeField>(
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out[b][s][d]))?;
 
-                r_pool.push(r_out_var.clone()); // 추가
+                // r_pool.push(r_out_var.clone()); // 추가
+                let (o_low, o_high) = split_remainder_and_push(cs.clone(), &r_out_var, bundle.r_out[b][s][d])?;
+                out_low_vars.push(o_low);
+                out_high_vars.push(o_high);
 
                 // M_norm * (product + M_prime_norm) = (Q_out << k) + R_out
                 let lhs = &m_norm_var * (product + &m_prime_norm_var);
@@ -113,5 +125,14 @@ pub fn enforce_rmsnorm<F: PrimeField>(
         all_q_out_vars.push(batch_q_out_vars);
     }
     
+    // 루프가 끝난 후 Lasso의 기대 순서(dim[0], dim[1])에 맞춰 r_pool을 채움
+    // Matrix 1 (R_shift): Lows -> Highs
+    r_pool.extend(shift_low_vars);
+    r_pool.extend(shift_high_vars);
+
+    // Matrix 2 (R_out): Lows -> Highs
+    r_pool.extend(out_low_vars);
+    r_pool.extend(out_high_vars);
+
     Ok(all_q_out_vars)
 }

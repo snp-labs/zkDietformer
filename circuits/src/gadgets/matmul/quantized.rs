@@ -4,7 +4,7 @@ use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::R1CSVar;
-use crate::gadgets::{dot_prod::constraints::*, matmul::constraints::*};
+use crate::gadgets::{activation::gelu::split_remainder_and_push, dot_prod::constraints::*, matmul::constraints::*};
 
 #[derive(Clone)]
 pub struct MatmulBundle<F: PrimeField> {
@@ -195,58 +195,17 @@ pub fn transpose_matrix<F: PrimeField>(m: &MatrixVar<F>) -> MatrixVar<F> {
     transposed
 }
 
-/*pub fn enforce_quantized_freivalds<F: PrimeField>(
-    cs: ConstraintSystemRef<F>,
-    bundle: &MatmulBundle<F>,
-    r_challenge: &FpVar<F>, 
-    seg_size: usize,
-) -> Result<(), SynthesisError> {
-
-    let q_proc = new_matrix_witness_4d(cs.clone(), &bundle.q_q); // [B][H][S][D]
-    let q_k_proc = new_matrix_witness_4d(cs.clone(), &bundle.q_k);
-    let r_mean = new_matrix_witness_4d(cs.clone(), &bundle.r_mean_k);
-    let q_y_sim = new_matrix_witness_4d(cs.clone(), &bundle.q_y_sim);
-    let r_matmul = new_matrix_witness_4d(cs.clone(), &bundle.r_matmul);
-
-    let z_q = FpVar::Constant(bundle.z_q);
-    let z_k = FpVar::Constant(bundle.z_k);
-    let z_y = FpVar::Constant(bundle.z_y);
-    let m_var = FpVar::Constant(bundle.m_k1);
-    let m_prime_var = FpVar::Constant(bundle.m_prime); 
-    let two_k = FpVar::Constant(F::from(1u64 << 22));
-
-    let q_landmarks_k = compute_circuit_landmarks(cs.clone(), &q_k_proc[0], &r_mean[0], seg_size)?;
-
-    let r_pows = gen_challenge_vector(r_challenge, bundle.q_y_sim[0][0][0].len());
-
-    for h in 0..q_proc[0].len() {
-        // LHS: (Q_y * 2^k + R) * r
-        let qy_r = mat_vec_mul(&q_y_sim[0][h], &r_pows)?;
-        let r_mat_r = mat_vec_mul(&r_matmul[0][h], &r_pows)?;
-        let lhs: Vec<FpVar<F>> = qy_r.iter().zip(r_mat_r.iter())
-            .map(|(y, r)| y * &two_k + r).collect();
-
-        // RHS: M * (Grouped Matmul) * r
-        // K_landmarks_T 형태로 변환 (Transpose)
-        let q_landmarks_t = transpose_matrix(&q_landmarks_k[h]);
-        let rhs = compute_grouped_rhs(
-            &q_proc[0][h], &q_landmarks_t, &m_var, &m_prime_var, &z_q, &z_k, &z_y, &r_pows
-        )?;
-
-        for i in 0..lhs.len() {
-            lhs[i].enforce_equal(&rhs[i])?;
-        }
-    }
-    Ok(())
-}*/
-
 pub fn enforce_freivald<F: PrimeField>(
+    cs: ConstraintSystemRef<F>,
     w_matrix: &MatrixVar<F>,        
     x_matrix_t: &MatrixVar<F>,      
     q_y_sim_head: &MatrixVar<F>,    
     r_matmul_head: &MatrixVar<F>,   
+    r_matmul_raw: &Vec<Vec<F>>,
     params: &ZenParams<F>,
     r_pows: &[FpVar<F>],
+    h_r1_low_vars: &mut Vec<FpVar<F>>,
+    h_r1_high_vars: &mut Vec<FpVar<F>>,
 ) -> Result<(), SynthesisError> {
     
     // 1. LHS : (Q_y * 2^k + R) * r
@@ -254,26 +213,34 @@ pub fn enforce_freivald<F: PrimeField>(
     let r_mat_r = mat_vec_mul(r_matmul_head, r_pows)?;
     
     let lhs: Vec<FpVar<F>> = qy_r.iter().zip(r_mat_r.iter())
-        .map(|(y, r)| {
-            // y * 2^k + r
-            y * &params.two_k + r
-        })
-        .collect();
+        .map(|(y, r)| y * &params.two_k + r).collect();
 
     // 2. RHS : M * (G1 - G2 - G3 + Const) * r
     let rhs = compute_grouped_rhs(
-        w_matrix, 
+        w_matrix,
         x_matrix_t, 
         &params.m, 
         &params.m_prime, 
         &params.z_w, 
         &params.z_x, 
         &params.z_y, 
-        r_pows
-    )?;
+        r_pows)?;
 
     for (l, r) in lhs.iter().zip(rhs.iter()) {
         l.enforce_equal(r)?;
+    }
+
+    // 2. 22-bit lookup index
+    for i in 0..r_matmul_head.len() {
+        for j in 0..r_matmul_head[i].len() {
+            let (low, high) = split_remainder_and_push(
+                cs.clone(), 
+                &r_matmul_head[i][j], 
+                r_matmul_raw[i][j]
+            )?;
+            h_r1_low_vars.push(low);
+            h_r1_high_vars.push(high);
+        }
     }
     
     Ok(())

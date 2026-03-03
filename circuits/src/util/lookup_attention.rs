@@ -13,18 +13,15 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    circuits::nystrom_circuit::NystromAttentionCircuit,
-    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, 
-    gadgets::{
+    cc_snark::cc_gro::{CcGroth16, prepare_verifying_key}, circuits::nystrom_circuit::NystromAttentionCircuit, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
         matmul::{constraints::{MatrixVar, new_matrix_witness}, 
     quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
             surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
-        },
-        subtables::{
+        }, poly::{commitments::MultiCommitGens, dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds}, eq_poly::EqPolynomial}, subtables::{
             SubtableStrategy, and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
-        }, utils::{math::Math, random::RandomTape},
+        }, utils::{math::Math, random::RandomTape}
     }, util::load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64}
 };
 
@@ -34,7 +31,7 @@ pub fn run_lasso_bundle(
     bundle: &SoftmaxBundle<Fr>,
     label: &'static [u8],
     rng: &mut StdRng,
-) -> Result<()> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
     // 총 룩업 횟수(Sparsity) 계산: C, B, H, S, L 차원을 가짐
     let b_dim = bundle.limbs[0].len();
     let h_dim = bundle.limbs[0][0].len();
@@ -52,18 +49,18 @@ pub fn run_lasso_bundle(
     );
 
     let start = Instant::now();
-    prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
+    let link_results = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
     println!("  - Lasso Total Time ({:?}): {:?}", std::str::from_utf8(label).unwrap(), start.elapsed());
     
-    Ok(())
+    Ok(link_results)
 }
 
 pub fn prove_lasso_for_softmax(
-    limbs: &Vec<Vec<Vec<Vec<Vec<Fr>>>>>, // [C, B, H, S, L]
+    limbs: &Vec<Vec<Vec<Vec<Vec<Fr>>>>>, 
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<()> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
 
     use ark_ff::{BigInteger, PrimeField};
     let c_seg = limbs.len();          // SOFTMAX_C (5)
@@ -72,7 +69,7 @@ pub fn prove_lasso_for_softmax(
     let s_dim = limbs[0][0][0].len(); // Sequence
     let l_dim = limbs[0][0][0][0].len(); // Landmark (L)
 
-    // 2. Lasso 입력용 nz_indices (Sparsity m = B*H*S*L)
+    // Lasso 입력용 nz_indices (Sparsity m = B*H*S*L)
     let mut nz_indices: Vec<[usize; SOFTMAX_C]> = Vec::with_capacity(b_dim * h_dim * s_dim * l_dim);
     
     for b in 0..b_dim {
@@ -85,7 +82,7 @@ pub fn prove_lasso_for_softmax(
                         let bytes = val_bigint.to_bytes_le();
                         let mut limb_bytes = [0u8; 8];
                         limb_bytes.copy_from_slice(&bytes[0..8]);
-                        idx_arr[seg] = u64::from_le_bytes(limb_bytes) as usize; //
+                        idx_arr[seg] = u64::from_le_bytes(limb_bytes) as usize; 
                     }
                     nz_indices.push(idx_arr);
                 }
@@ -95,12 +92,21 @@ pub fn prove_lasso_for_softmax(
 
     let sparsity = nz_indices.len();
     println!("    * Sparsity (m): {}", sparsity);
-    if sparsity == 0 { return Ok(()); } 
 
     let log_M = SOFTMAX_M.trailing_zeros() as usize; //
     let lookup_matrix = SparseLookupMatrix::<SOFTMAX_C>::new(nz_indices, log_M);
     let mut densified = DensifiedRepresentation::<Fr, SOFTMAX_C>::from(&lookup_matrix);
 
+    println!("\n[Debug] Lasso Range (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
+    for i in 0..KBITS_C {
+        let data = &densified.dim[i].Z;
+        let print_count = std::cmp::min(10, data.len());
+        if data.len() > 0 {
+            println!("  - Dim[{}] Head (10): {:?}", i, data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+            println!("  - Dim[{}] Tail (10): {:?}", i, data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        }
+    }
+    
     let commit_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
     let commit_duration = commit_start.elapsed();
@@ -129,7 +135,25 @@ pub fn prove_lasso_for_softmax(
 
     println!("Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
     println!("    * Lasso Verifier Time: {:?}", verify_duration);
-    Ok(())
+
+    let mut results = Vec::new();
+    let ell = densified.dim[0].get_num_vars();
+    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
+    let l_size = 1 << left_vars;   
+    let r_size = 1 << right_vars;  
+
+    for i in 0..SOFTMAX_C {
+        let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
+        
+        let blinds = PolyCommitmentBlinds {
+            blinds: random_tape.random_vector(b"poly_blinds", l_size),
+        };
+        let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
+        
+        results.push((pure_cm, blinds, factored_gens));
+    }
+
+    Ok(results)
 }
 
 
@@ -138,13 +162,22 @@ pub fn prove_lasso_for_range_22(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<()> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
     let sparsity = nz_indices.len();
-    if sparsity == 0 { return Ok(()); }
 
     let log_m = KBITS_M.trailing_zeros() as usize;
     let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices.clone(), log_m);
     let mut densified = DensifiedRepresentation::<Fr, KBITS_C>::from(&lookup_matrix);
+
+    println!("\n[Debug] Lasso Range (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
+    for i in 0..KBITS_C {
+        let data = &densified.dim[i].Z;
+        let print_count = std::cmp::min(10, data.len());
+        if data.len() > 0 {
+            println!("  - Dim[{}] Head (10): {:?}", i, data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+            println!("  - Dim[{}] Tail (10): {:?}", i, data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        }
+    }
 
     let commitment = densified.commit::<G1>(gens);
 
@@ -167,7 +200,27 @@ pub fn prove_lasso_for_range_22(
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
 
     println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    Ok(())
+    println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
+
+    let mut results = Vec::new();
+    let ell = densified.dim[0].get_num_vars();
+    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
+    let l_size = 1 << left_vars;   // 행 개수
+    let r_size = 1 << right_vars;  // 열/베이스 개수
+
+    for i in 0..KBITS_C {
+        let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
+        
+        let blinds = PolyCommitmentBlinds {
+            blinds: random_tape.random_vector(b"poly_blinds", l_size),
+        };
+
+        let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
+        
+        results.push((pure_cm, blinds, factored_gens));
+    }
+    
+    Ok(results)
 }
 
 pub fn prove_lasso_for_range_16(
@@ -175,14 +228,22 @@ pub fn prove_lasso_for_range_16(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<()> {
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
     let sparsity = nz_indices.len();
-    if sparsity == 0 { return Ok(()); }
 
     let log_m = FRACBITS_M.trailing_zeros() as usize;
     let lookup_matrix = SparseLookupMatrix::<FRACBITS_C>::new(nz_indices.clone(), log_m);
     let mut densified = DensifiedRepresentation::<Fr, FRACBITS_C>::from(&lookup_matrix);
 
+    for i in 0..FRACBITS_C {
+        let data = &densified.dim[i].Z;
+        let print_count = std::cmp::min(10, data.len());
+        if data.len() > 0 {
+            println!("  - Dim[{}] Head (10): {:?}", i, data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+            println!("  - Dim[{}] Tail (10): {:?}", i, data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        }
+    }
+    
     let commitment = densified.commit::<G1>(gens);
 
     let log_s = sparsity.next_power_of_two().trailing_zeros() as usize;
@@ -204,14 +265,23 @@ pub fn prove_lasso_for_range_16(
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
 
     println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    Ok(())
+    
+    let ell = densified.dim[0].get_num_vars();
+    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
+    let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(1 << right_vars);
+    let blinds = PolyCommitmentBlinds { blinds: random_tape.random_vector(b"poly_blinds", 1 << left_vars) };
+    let pure_cm = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
+
+    Ok((pure_cm, blinds, factored_gens))
 }
 
-pub fn verify_all_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
+pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     circuit: &NystromAttentionCircuit<F>,
     rng: &mut StdRng,
-) -> Result<()> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
     println!("\n=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===");
+
+    let mut all_results = Vec::new();
 
     // 22비트 범위 체크를 위한 전략 설정 (M=2^16, C=2)
     type Range22Lasso = RangeCheckSubtableStrategy<22>;
@@ -269,12 +339,13 @@ pub fn verify_all_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         );
 
         let start = Instant::now();
-        prove_lasso_for_range_22(
+        let link_data = prove_lasso_for_range_22(
             &nz,
             &gens,
             rng,
             label.as_bytes(),
         )?;
+        all_results.extend(link_data);
         
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
     }
@@ -325,8 +396,7 @@ pub fn verify_all_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         );
 
         let start = Instant::now();
-        // prove_lasso_remainder는 RangeCheckSubtableStrategy를 사용하는 범용 함수라고 가정
-        prove_lasso_for_range_16(
+        let link_data = prove_lasso_for_range_16(
             &nz,
             &gens,
             rng,
@@ -334,6 +404,7 @@ pub fn verify_all_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         )?;
         
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
+        all_results.push(link_data);
     }
 
     for (matrix_4d, label) in target_16bit_4d {
@@ -365,7 +436,7 @@ pub fn verify_all_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         );
 
         let start = Instant::now();
-        prove_lasso_for_range_16(
+        let link_data = prove_lasso_for_range_16(
             &nz,
             &gens,
             rng,
@@ -373,7 +444,8 @@ pub fn verify_all_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         )?;
         
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
+        all_results.push(link_data);
     }
 
-    Ok(())
+    Ok(all_results)
 }

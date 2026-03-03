@@ -39,23 +39,8 @@ pub fn run_lasso_for_rmsnorm(
     // Index = ((shifted_val * M_rms_idx) >> k) // dim
     let m_idx = bundle.m_rms_idx.into_bigint().as_ref()[0] as u128;
 
-    /*for b in 0..b_dim {
-        for s in 0..s_dim {
-            let val = bundle.shifted_val[b][s][0].into_bigint().as_ref()[0] as u128;
-            
-            let numerator = val * m_idx;
-            let scaled = numerator >> k_bits;
-            let mut combined_idx = (scaled / (dim as u128)) as u64;
-
-            if combined_idx >= RMSNORM_M as u64 {
-                combined_idx = (RMSNORM_M - 1) as u64;
-            }
-            indices_x[b][s][0] = Fr::from(combined_idx);
-        }
-    }*/
     for b in 0..b_dim {
         for s in 0..s_dim {
-            // 중요: LegoGroth16과 완벽히 동일한 값을 할당
             indices_x[b][s][0] = bundle.q_ms_sim[b][s][0]; 
         }
     }
@@ -126,9 +111,9 @@ pub fn run_lasso_for_gelu(
 pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     circuit: &NystromMLPCircuit<F>,
     rng: &mut StdRng,
-) -> Result<Vec<SparsePolynomialCommitment<G1>>> {    
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>>  {    
     println!("\n=== [MLP] Lasso Lookup Proofs: 22-bit Remainders (R) ===");
-    let mut commitments = Vec::new();
+    let mut all_link_results = Vec::new();
 
     type Range22Lasso = RangeCheckSubtableStrategy<22>;
 
@@ -173,19 +158,19 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         );
 
         let start = Instant::now();
-        let comm = prove_lasso_for_range(
+        let link_data = prove_lasso_for_range(
             &nz,
             &gens,
             rng,
             label.as_bytes(),
         )?;
-        commitments.push(comm);
+        all_link_results.extend(link_data);
         
         println!(" - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
         
     }
     println!("All MLP remainders verified sequentially.");
-    Ok(commitments)
+    Ok(all_link_results)
     
 }
 
@@ -194,13 +179,22 @@ pub fn prove_lasso_for_range(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<SparsePolynomialCommitment<G1>> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
     let sparsity = nz_indices.len();
-    // if sparsity == 0 { return Ok(()); }
 
     let log_m = KBITS_M.trailing_zeros() as usize;
     let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices.clone(), log_m);
     let mut densified = DensifiedRepresentation::<Fr, KBITS_C>::from(&lookup_matrix);
+
+    println!("\n[Debug] Lasso Range (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
+    for i in 0..KBITS_C {
+        let data = &densified.dim[i].Z;
+        let print_count = std::cmp::min(10, data.len());
+        if data.len() > 0 {
+            println!("  - Dim[{}] Head (10): {:?}", i, data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+            println!("  - Dim[{}] Tail (10): {:?}", i, data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        }
+    }
 
     let commitment = densified.commit::<G1>(gens);
 
@@ -223,7 +217,29 @@ pub fn prove_lasso_for_range(
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
 
     println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    Ok(commitment)
+    // C=2이므로 dim[0]과 dim[1]을 각각 독립적인 CP-Link 블록으로 추출
+    let mut results = Vec::new();
+    let ell = densified.dim[0].get_num_vars();
+    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
+    let l_size = 1 << left_vars;   // 행 개수
+    let r_size = 1 << right_vars;  // 열/베이스 개수 (보통 32)
+
+    for i in 0..KBITS_C {
+        // Lasso의 1024개용 베이스에서 현재 차원의 Factored 베이스(32개) 추출
+        let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
+        
+        // 해당 차원(dim[i])에 대한 blinds 생성 (random_tape 활용)
+        let blinds = PolyCommitmentBlinds {
+            blinds: random_tape.random_vector(b"poly_blinds", l_size),
+        };
+
+        // dim[i]에 대해 행렬 구조 커밋 생성
+        let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
+        
+        results.push((pure_cm, blinds, factored_gens));
+    }
+
+    Ok(results)
 }
 
 
@@ -252,11 +268,17 @@ pub fn prove_lasso_for_rmsnorm(
     let lookup_matrix = SparseLookupMatrix::<RMSNORM_C>::new(nz_indices, log_M);
     let mut densified = DensifiedRepresentation::<Fr, RMSNORM_C>::from(&lookup_matrix);
 
-    // 1. 증명에 사용할 Tape와 Transcript 초기화
+    println!("\n[Debug] Lasso RMSNorm (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
+    let data = &densified.dim[0].Z;
+    let print_count = std::cmp::min(10, data.len());
+    if data.len() > 0 {
+        println!("  Head (10): {:?}", data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        println!("  Tail (10): {:?}", data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+    }
+
     let mut random_tape = RandomTape::new(b"lasso_tape_rms");
     let mut transcript = Transcript::new(b"lasso_rmsnorm");
 
-    // --- [핵심 수정: Factored CP-Link 데이터 생성] ---
     // 2. 행렬 구조(L, R) 수동 결정 (데이터 512개 -> 16 x 32)
     let ell = densified.dim[0].get_num_vars(); // 512의 경우 9
     let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
@@ -275,7 +297,6 @@ pub fn prove_lasso_for_rmsnorm(
     // 5. 수동으로 행렬 구조 커밋 생성 (이제 베이스 32 vs 데이터 32로 일치하여 패닉 방지)
     let pure_data_commitment = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
 
-    // --- [나머지 Lasso 증명 로직] ---
     let commitment = densified.commit::<G1>(gens);
     let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
     let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
@@ -288,7 +309,6 @@ pub fn prove_lasso_for_rmsnorm(
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso verification failed"))?;
 
-    // 6. 16개 점(C), 16개 난수(blinds), 32개 베이스(gens)를 반환
     Ok((pure_data_commitment, blinds, factored_gens))
 }
 
@@ -304,12 +324,19 @@ pub fn prove_lasso_for_gelu(
     let lookup_matrix = SparseLookupMatrix::<GELU_C>::new(nz_indices.clone(), log_m);
     let mut densified = DensifiedRepresentation::<Fr, GELU_C>::from(&lookup_matrix);
 
+    println!("\n[Debug] Lasso GeLU (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
+    let data = &densified.dim[0].Z;
+    let print_count = std::cmp::min(10, data.len());
+    if data.len() > 0 {
+        println!("  Head (10): {:?}", data[..print_count].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+        println!("  Tail (10): {:?}", data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
+    }
+    
     println!("\n[Debug] GeLU Lasso densified.dim[0] (Total: {})", densified.dim[0].len());
 
     let mut random_tape = RandomTape::new(b"lasso_tape_gelu");
     let mut transcript = Transcript::new(b"lasso_gelu");
 
-    // --- [핵심 수정: Factored CP-Link 데이터 생성] ---
     // 데이터 크기에 따른 행렬 구조 계산
     let ell = densified.dim[0].get_num_vars();
     let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
@@ -327,7 +354,6 @@ pub fn prove_lasso_for_gelu(
     // 행렬 구조로 커밋먼트 조각들(C_i) 생성
     let pure_data_commitment = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
 
-    // --- [Lasso 본체 증명] ---
     let commitment = densified.commit::<G1>(gens);
     let r_point: Vec<Fr> = (0..sparsity.next_power_of_two().trailing_zeros() as usize)
         .map(|_| Fr::rand(rng)).collect();
@@ -342,6 +368,5 @@ pub fn prove_lasso_for_gelu(
 
     println!("GeLU Lasso proof verified: {:?}", std::str::from_utf8(label).unwrap());
 
-    // 최종 결과 반환 (Factored Multi-Link 호환)
     Ok((pure_data_commitment, blinds, factored_gens))
 }
