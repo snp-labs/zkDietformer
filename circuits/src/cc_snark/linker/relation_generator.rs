@@ -184,28 +184,26 @@ pub fn generate_cp_1_to_n_vector_relation<E: Pairing>(
 }
 
 
-/// Lasso의 Factored(Matrix) 구조를 위한 1:N:L 관계 행렬 생성기
-/// cm_joint = Commit(U_1 || U_2 || ... || U_N) using ck_joint (LegoGroth16)
-/// {C_{j,l}} = Lasso 블록 j의 l번째 행 커밋먼트 조각들
 pub fn generate_cp_factored_relation<E: Pairing>(
-    n_lasso: usize,                     // Lasso 블록 개수 (예: 2 -> RMS, GeLU)
-    l_rows_vec: Vec<usize>,             // 각 블록의 행 개수 L_j (예: [16, 16])
-    r_cols_vec: Vec<usize>,             // 각 블록의 베이스 개수 R_j (예: [32, 32])
-    ck_joint: Vec<E::G1Affine>,         // 통합 키 [h_joint, g_0, ..., g_{total-1}]
-    cks_lasso_vec: Vec<Vec<E::G1Affine>>, // 각 블록의 Lasso 키 [[h_j, G_0, ..., G_{R_j-1}], ...]
+    n_lasso: usize,                     
+    l_rows_vec: Vec<usize>,             
+    r_cols_vec: Vec<usize>,             
+    ck_joint: Vec<E::G1Affine>,         
+    cks_lasso_vec: Vec<Vec<E::G1Affine>>, 
 ) -> SparseMatrix<E::G1Affine> {
+    
     let total_msg_len: usize = l_rows_vec.iter().zip(r_cols_vec.iter()).map(|(l, r)| l * r).sum();
     let total_lasso_points: usize = l_rows_vec.iter().sum();
     
-    let l_rows = 1 + total_lasso_points;                // 행: 통합 1개 + 모든 Lasso 행 조각들
-    let t_cols = (1 + total_lasso_points) + total_msg_len; // 열: 난수 조각들 + 전체 데이터
+    let l_rows = 1 + total_lasso_points;                
+    let t_cols = (1 + total_lasso_points) + total_msg_len; 
     
     let mut crs = SparseMatrix::new(l_rows, t_cols);
 
     // 1. 통합 커밋먼트 정의 (Row 0): LegoGroth16
-    crs.insert_val(0, 0, &ck_joint[0]); // r_joint 베이스
+    crs.insert_val(0, 0, &ck_joint[0]); 
     for i in 0..total_msg_len {
-        crs.insert_val(0, (1 + total_lasso_points) + i, &ck_joint[i + 1]);
+        crs.insert_val(0, (1 + total_lasso_points) + i, &ck_joint[i + 1]); 
     }
 
     // 2. Lasso Row 커미션들 정의 (Row 1 ~ l-1)
@@ -213,18 +211,16 @@ pub fn generate_cp_factored_relation<E: Pairing>(
     let mut current_data_col_offset = 0;
     
     for j in 0..n_lasso {
-        let L = l_rows_vec[j];
-        let R = r_cols_vec[j];
-        let ck_lasso = &cks_lasso_vec[j]; // [h, G_0, ..., G_{R-1}]
+        let L = l_rows_vec[j]; 
+        let R = r_cols_vec[j]; 
+        let ck_lasso = &cks_lasso_vec[j]; 
         
         for row_idx in 0..L {
             let row = current_row_offset + row_idx;
-            let r_col = current_row_offset + row_idx; // 각 C_i 전용 난수 열
+            let r_col = current_row_offset + row_idx; 
             
-            // h (Lasso 블라인딩 베이스)
             crs.insert_val(row, r_col, &ck_lasso[0]);
             
-            // G_0 ~ G_{R-1} (Lasso 공유 베이스 돌려막기)
             for k in 0..R {
                 let data_idx = row_idx * R + k;
                 let v_col = (1 + total_lasso_points) + current_data_col_offset + data_idx;
@@ -239,20 +235,20 @@ pub fn generate_cp_factored_relation<E: Pairing>(
     crs
 }
 
-/// Factored 모드용 위트니스 생성
+
 pub fn generate_cp_factored_witness<E: Pairing>(
-    rs: Vec<E::ScalarField>, // [r_joint, r_lasso_0_0, ..., r_lasso_N_LN]
-    u: Vec<E::ScalarField>,  // 전체 데이터 [u_0, ..., u_{total-1}]
+    rs: Vec<E::ScalarField>, 
+    u: Vec<E::ScalarField>,  
 ) -> Vec<E::ScalarField> {
     let mut witness = rs;
     witness.extend(u);
     witness
 }
 
-/// Factored 모드용 인스턴스 생성
+
 pub fn generate_cp_factored_instance<E: Pairing>(
     cm_joint: E::G1Affine,
-    lasso_cms_all: Vec<E::G1Affine>, // 모든 블록의 C_i들을 순서대로 합친 벡터
+    lasso_cms_all: Vec<E::G1Affine>, 
 ) -> Vec<E::G1Affine> {
     let mut instance = vec![cm_joint];
     instance.extend(lasso_cms_all);

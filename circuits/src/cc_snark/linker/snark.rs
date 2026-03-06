@@ -113,49 +113,6 @@ impl<E: Pairing> Linker<E> for LinkSnark<E> {
             "bound" => generate_cp_bound_relation::<E>(num, ck, snark_ck),
             "ctt" => generate_cp_ctt_relation::<E>(num, ck, snark_ck),
             "wt" => generate_cp_wt_relation::<E>(num, ck, snark_ck),
-            "factored" => {
-                let n_blocks = num; // Lasso 블록 개수
-                let mut cks_lasso_vec = Vec::new();
-                let mut l_rows_vec = Vec::new();
-                let mut r_cols_vec = Vec::new();
-                
-                let mut current_chunk = Vec::new();
-                for point in snark_ck {
-                    if point.is_zero() {
-                        if !current_chunk.is_empty() {
-                            let l_point: E::G1Affine = current_chunk.pop().unwrap();
-                        
-                            let mut buf = Vec::new();
-                            l_point.serialize_uncompressed(&mut buf).unwrap();
-                            let l = u64::from_le_bytes(buf[0..8].try_into().unwrap()) as usize;
-
-                            let r = current_chunk.len() - 1;
-                            
-                            cks_lasso_vec.push(current_chunk.clone());
-                            l_rows_vec.push(l);
-                            r_cols_vec.push(r);
-                            current_chunk.clear();
-                        }
-                    } else {
-                        current_chunk.push(point);
-                    }
-                }
-                
-                if !current_chunk.is_empty() {
-                    let l_point = current_chunk.pop().unwrap();
-                    let mut buf = Vec::new();
-                    l_point.serialize_uncompressed(&mut buf).unwrap();
-                    let l = u64::from_le_bytes(buf[0..8].try_into().unwrap()) as usize;
-                    let r = current_chunk.len() - 1;
-                    cks_lasso_vec.push(current_chunk);
-                    l_rows_vec.push(l);
-                    r_cols_vec.push(r);
-                }
-
-                assert_eq!(cks_lasso_vec.len(), n_blocks, "복원된 블록 개수가 num과 일치하지 않습니다.");
-
-                generate_cp_factored_relation::<E>(n_blocks, l_rows_vec, r_cols_vec, ck, cks_lasso_vec)
-            },
             _ => SparseMatrix::new(0, 0),
         };
 

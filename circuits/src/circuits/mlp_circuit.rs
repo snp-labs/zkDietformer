@@ -1,4 +1,4 @@
-use std::{fs::File, ops::{AddAssign, Mul}, path::Path, str::FromStr};
+use std::{fs::File, ops::{AddAssign, Mul}, path::Path, str::FromStr, time::Instant};
 use anyhow::{Context, Result};
 use ark_ec::{CurveGroup, pairing::Pairing, AffineRepr};
 use ndarray::{Ix0, Ix1, Ix2, Ix3};
@@ -6,12 +6,13 @@ use ndarray_npy::NpzReader;
 use ark_std::{rc::Rc, cell::RefCell, fs, UniformRand, marker::PhantomData, vec::Vec, rand::{RngCore, Rng, SeedableRng, rngs::StdRng}};
 use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_ff::{PrimeField, One, Zero, BigInteger};
+use ark_serialize::CanonicalSerialize;
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, FieldVar}, R1CSVar};
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
-    circuits::common::prove_and_verify_factored_multi_link,
+    circuits::common::{BenchmarkResult, prove_and_verify_factored_multi_link},
     config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::{
         activation::gelu::{GeLUBundle, enforce_gelu},
@@ -161,75 +162,56 @@ where
     
 }
 
-pub fn run_paths<E: Pairing>(path: &Path) -> Result<()>
+pub fn run_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
-E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>, // 이 제약을 추가
-<E::ScalarField as FromStr>::Err: core::fmt::Debug,
+    E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
+    <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
-    type ScalarF<E> = <E as Pairing>::ScalarField;
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    if path.is_dir() {
-        for entry in fs::read_dir(path).context("reading directory")? {
-            let ent = entry?.path();
-            if ent.is_file() && ent.extension().map_or(false, |s| s == "npz") {
-                targets.push(ent);
-            }
-        }
-        targets.sort();
-    } else {
-        targets.push(path.to_path_buf());
-    }
-
     let mut rng = StdRng::seed_from_u64(42u64);
 
-    for file_path in targets.iter() {
+    for file_path in targets {
+        let e2e_start = Instant::now();
         println!("\n=== Processing witness NPZ: {:?} ===", file_path);
-    
+
+        // ── Dry-run: count committed witnesses ───────────────────────────────
         let num_commit_1 = {
             let temp_circuit = load_nystrom_circuit::<E>(&file_path)?;
-
             let vars_ptr = Rc::clone(&temp_circuit.committed_vars);
-
             let cs_analyze = ConstraintSystem::<Fr>::new_ref();
             temp_circuit.generate_constraints(cs_analyze)?;
-
             vars_ptr.borrow().len() as u32
         };
-
-        
         println!("최종 측정된 커밋 개수: {:?}", num_commit_1);
 
         let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
 
-        // LegoGroth16 Setup — reuses the same commitment keys as create_random_proof.
-        // generate_random_parameters returns a ProvingKey directly; no separate link
-        // infrastructure is generated. The CP-link in prove_and_verify_factored_multi_link
-        // already uses vk.gamma_abc_g1 / vk.eta1_gamma_inv_g1 from this key.
+        // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup (Num Commit: {:?}) ===", num_commit_1);
-
+        let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
             num_commit_1,
             0,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
+        let setup_time = setup_start.elapsed();
 
         let pvk = prepare_verifying_key::<E>(&params.vk);
 
-        // Witness 값 추출
+        // ── Witness extraction + constraint count ────────────────────────────
         let cs_witness = ConstraintSystem::<Fr>::new_ref();
         sample_circuit.clone().generate_constraints(cs_witness.clone())?;
+        let num_constraints = cs_witness.num_constraints();
 
         let committed_group1 = {
             let vars = sample_circuit.committed_vars.borrow();
             let values: Vec<Fr> = vars.iter()
                 .map(|v| v.value().unwrap_or(Fr::zero()))
                 .collect();
-            
             if values.len() != num_commit_1 as usize {
                 return Err(anyhow::anyhow!(
-                    "Commitment size mismatch: expected {}, found {}", 
-                    num_commit_1, 
+                    "Commitment size mismatch: expected {}, found {}",
+                    num_commit_1,
                     values.len()
                 ));
             }
@@ -245,14 +227,12 @@ E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254:
 
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
-        
-        // 서킷의 공개 입력 개수
-        let num_pub = cs_witness.num_instance_variables() - 1; 
-
+        let num_pub = cs_witness.num_instance_variables() - 1;
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
 
+        // ── [1] Groth16 Prove ────────────────────────────────────────────────
         println!("=== [1] LegoGroth16 GenProof ===");
-
+        let groth16_prove_start = Instant::now();
         let proof = create_random_proof::<E, _, _>(
             sample_circuit.clone(),
             v1,
@@ -260,20 +240,31 @@ E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254:
             &params,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;
+        let groth16_prove_time = groth16_prove_start.elapsed();
 
-        let public_inputs = vec![]; // 공개 입력이 없는 경우
+        let mut proof_bytes = Vec::new();
+        proof.serialize_uncompressed(&mut proof_bytes)
+            .map_err(|e| anyhow::anyhow!("Proof serialization failed: {:?}", e))?;
+        let proof_size = proof_bytes.len();
+
+        // ── [1] Groth16 Verify ───────────────────────────────────────────────
+        let public_inputs = vec![];
+        let groth16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
+        let groth16_verify_time = groth16_verify_start.elapsed();
 
         println!("  - LegoGroth16 SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::Error::msg(format!("{:?}", e)));
         }
 
+        // ── [2] Lasso (prove + verify bundled inside helpers) ────────────────
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
+        let lasso_start = Instant::now();
         let dim = sample_circuit.norm1.q_ri[0][0].len();
         let (lasso_cm1, lasso_blinds1, lasso_gens1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, b"lasso_rms1", &mut rng)?;
         let (lasso_cm2, lasso_blinds2, lasso_gens2) = run_lasso_for_gelu(
-            &sample_circuit.gelu1, 
+            &sample_circuit.gelu1,
             &sample_circuit.ff1.q_out_sim.iter().map(|batch| {
                 batch.iter().map(|seq| {
                     seq.iter().map(|val| {
@@ -281,23 +272,25 @@ E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254:
                     }).collect::<Vec<Fr>>()
                 }).collect::<Vec<Vec<Fr>>>()
             }).collect::<Vec<Vec<Vec<Fr>>>>(),
-            &sample_circuit.ff1.r_out_lin, 
-            sample_circuit.k_bits, 
-            b"lasso_gelu1", 
+            &sample_circuit.ff1.r_out_lin,
+            sample_circuit.k_bits,
+            b"lasso_gelu1",
             &mut rng
         )?;
         let (lasso_cm3, lasso_blinds3, lasso_gens3) = run_lasso_for_rmsnorm(&sample_circuit.norm2, b"lasso_rms2", &mut rng)?;
         let res_remainders = run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
         let u_values: Vec<Fr> = sample_circuit.committed_vars.borrow().iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
-
+        let lasso_time = lasso_start.elapsed();
 
         let mut lasso_results = vec![
-        (lasso_cm1, lasso_blinds1, lasso_gens1), // res_rms1
-        (lasso_cm2, lasso_blinds2, lasso_gens2), // res_gelu
-        (lasso_cm3, lasso_blinds3, lasso_gens3), // res_rms2
+            (lasso_cm1, lasso_blinds1, lasso_gens1), // res_rms1
+            (lasso_cm2, lasso_blinds2, lasso_gens2), // res_gelu
+            (lasso_cm3, lasso_blinds3, lasso_gens3), // res_rms2
         ];
         lasso_results.extend(res_remainders);
 
+        // ── [3] CP-Link (setup + keygen + prove + verify bundled) ────────────
+        let cp_link_start = Instant::now();
         prove_and_verify_factored_multi_link::<E>(
             &params.vk,
             num_pub,
@@ -307,6 +300,27 @@ E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254:
             u_values,
             &mut rng,
         )?;
+        let cp_link_time = cp_link_start.elapsed();
+
+        let e2e_time = e2e_start.elapsed();
+
+        // ── Benchmark output ─────────────────────────────────────────────────
+        BenchmarkResult {
+            file: file_path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string(),
+            circuit: "mlp".to_string(),
+            constraints: num_constraints,
+            setup_ms: setup_time.as_millis(),
+            proof_size_bytes: proof_size,
+            groth16_prove_ms: groth16_prove_time.as_millis(),
+            lasso_ms: lasso_time.as_millis(),
+            cp_link_ms: cp_link_time.as_millis(),
+            groth16_verify_ms: groth16_verify_time.as_millis(),
+            end_to_end_ms: e2e_time.as_millis(),
+        }
+        .print_json();
     }
     Ok(())
 }
@@ -314,12 +328,25 @@ E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254:
 
 #[test]
 fn mlp_test() {
-    let p = Path::new("outputs/outputs-model.transformer_0.norm_ff_combined.witness.npz");
-    if p.exists() {
-        println!("Running combined circuit test on {:?}", p);
-        let res = run_paths::<Bn254>(p);
-        if let Err(e) = res {
-            panic!("proof generate failed: {}", e);
+    let outputs = Path::new("outputs");
+    if !outputs.is_dir() {
+        return;
+    }
+    let mut targets: Vec<std::path::PathBuf> = Vec::new();
+    for entry in fs::read_dir(outputs).expect("reading outputs dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_file()
+            && path.file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with("norm_ff_combined.witness.npz"))
+        {
+            targets.push(path);
         }
+    }
+    targets.sort();
+    println!("Running MLP circuit test on {} norm_ff_combined witness file(s)", targets.len());
+    let res = run_paths::<Bn254>(&targets);
+    if let Err(e) = res {
+        panic!("proof generate failed: {}", e);
     }
 }
