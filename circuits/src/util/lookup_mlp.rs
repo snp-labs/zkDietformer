@@ -28,7 +28,7 @@ pub fn run_lasso_for_rmsnorm(
     bundle: &NormBundle<Fr>,
     label: &'static [u8],
     rng: &mut StdRng,
-) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
     let b_dim = bundle.q_ms_sim.len();
     let s_dim = bundle.q_ms_sim[0].len();
     let dim = bundle.q_out[0][0].len();
@@ -48,16 +48,16 @@ pub fn run_lasso_for_rmsnorm(
     let gens = SparsePolyCommitmentGens::<G1>::new(
         label,
         RMSNORM_C,
-        total_sparsity,
+        total_sparsity.next_power_of_two(),
         RMSNORM_C,
         RMSNORM_M.trailing_zeros() as usize,
     );
 
     let start = Instant::now();
-    let (pure_data_commitment, blinds, lasso_gens_n) = prove_lasso_for_rmsnorm(&indices_x, &gens, rng, label)?;
+    let (pure_data_commitment, blinds, lasso_gens_n, sparsity) = prove_lasso_for_rmsnorm(&indices_x, &gens, rng, label)?;
     println!("  - Lasso Total Time (RMSNorm): {:?}", start.elapsed());
-    
-    Ok((pure_data_commitment, blinds, lasso_gens_n.clone()))
+
+    Ok((pure_data_commitment, blinds, lasso_gens_n.clone(), sparsity))
 }
 
 
@@ -68,7 +68,7 @@ pub fn run_lasso_for_gelu(
     k_bits: usize,
     label: &'static [u8],
     rng: &mut StdRng,
-) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
     let b_dim = bundle.q_out_sim.len();
     let s_dim = bundle.q_out_sim[0].len();
     let d_dim = bundle.q_out_sim[0][0].len();
@@ -101,16 +101,16 @@ pub fn run_lasso_for_gelu(
     }
 
     let sparsity = indices.len();
-    let gens = SparsePolyCommitmentGens::<G1>::new(label, GELU_C, sparsity, GELU_C, 16);
-    let (pure_data_commitment, blinds, lasso_gens_n) = prove_lasso_for_gelu(&indices, &gens, rng, label)?;
-    Ok((pure_data_commitment, blinds, lasso_gens_n))
+    let gens = SparsePolyCommitmentGens::<G1>::new(label, GELU_C, sparsity.next_power_of_two(), GELU_C, 16);
+    let (pure_data_commitment, blinds, lasso_gens_n, sparsity_out) = prove_lasso_for_gelu(&indices, &gens, rng, label)?;
+    Ok((pure_data_commitment, blinds, lasso_gens_n, sparsity_out))
 }
 
 
 pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     circuit: &NystromMLPCircuit<F>,
     rng: &mut StdRng,
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>>  {    
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>>  {
     println!("\n=== [MLP] Lasso Lookup Proofs: 22-bit Remainders (R) ===");
     let mut all_link_results = Vec::new();
 
@@ -151,7 +151,7 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
             KBITS_C,
-            total_sparsity,
+            total_sparsity.next_power_of_two(),
             KBITS_C,
             KBITS_M.trailing_zeros() as usize,
         );
@@ -178,7 +178,7 @@ pub fn prove_lasso_for_range(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
     let sparsity = nz_indices.len();
 
     let log_m = KBITS_M.trailing_zeros() as usize;
@@ -235,7 +235,7 @@ pub fn prove_lasso_for_range(
         // dim[i]에 대해 행렬 구조 커밋 생성
         let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
         
-        results.push((pure_cm, blinds, factored_gens));
+        results.push((pure_cm, blinds, factored_gens, sparsity));
     }
 
     Ok(results)
@@ -247,7 +247,7 @@ pub fn prove_lasso_for_rmsnorm(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
     let b_dim = indices.len();
     let s_dim = indices[0].len();
 
@@ -308,7 +308,7 @@ pub fn prove_lasso_for_rmsnorm(
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso verification failed"))?;
 
-    Ok((pure_data_commitment, blinds, factored_gens))
+    Ok((pure_data_commitment, blinds, factored_gens, sparsity))
 }
 
 pub fn prove_lasso_for_gelu(
@@ -316,7 +316,7 @@ pub fn prove_lasso_for_gelu(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
     let sparsity = nz_indices.len();
     
     let log_m = GELU_M.trailing_zeros() as usize;
@@ -365,5 +365,5 @@ pub fn prove_lasso_for_gelu(
 
     println!("GeLU Lasso proof verified: {:?}", std::str::from_utf8(label).unwrap());
 
-    Ok((pure_data_commitment, blinds, factored_gens))
+    Ok((pure_data_commitment, blinds, factored_gens, sparsity))
 }

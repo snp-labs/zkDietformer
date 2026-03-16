@@ -262,8 +262,8 @@ where
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let lasso_start = Instant::now();
         let dim = sample_circuit.norm1.q_ri[0][0].len();
-        let (lasso_cm1, lasso_blinds1, lasso_gens1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, b"lasso_rms1", &mut rng)?;
-        let (lasso_cm2, lasso_blinds2, lasso_gens2) = run_lasso_for_gelu(
+        let (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, b"lasso_rms1", &mut rng)?;
+        let (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2) = run_lasso_for_gelu(
             &sample_circuit.gelu1,
             &sample_circuit.ff1.q_out_sim.iter().map(|batch| {
                 batch.iter().map(|seq| {
@@ -277,15 +277,15 @@ where
             b"lasso_gelu1",
             &mut rng
         )?;
-        let (lasso_cm3, lasso_blinds3, lasso_gens3) = run_lasso_for_rmsnorm(&sample_circuit.norm2, b"lasso_rms2", &mut rng)?;
+        let (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3) = run_lasso_for_rmsnorm(&sample_circuit.norm2, b"lasso_rms2", &mut rng)?;
         let res_remainders = run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
         let u_values: Vec<Fr> = sample_circuit.committed_vars.borrow().iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
         let lasso_time = lasso_start.elapsed();
 
         let mut lasso_results = vec![
-            (lasso_cm1, lasso_blinds1, lasso_gens1), // res_rms1
-            (lasso_cm2, lasso_blinds2, lasso_gens2), // res_gelu
-            (lasso_cm3, lasso_blinds3, lasso_gens3), // res_rms2
+            (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1), // res_rms1
+            (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2), // res_gelu
+            (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3), // res_rms2
         ];
         lasso_results.extend(res_remainders);
 

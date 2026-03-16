@@ -31,7 +31,7 @@ pub fn run_lasso_bundle(
     bundle: &SoftmaxBundle<Fr>,
     label: &'static [u8],
     rng: &mut StdRng,
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
     // 총 룩업 횟수(Sparsity) 계산: C, B, H, S, L 차원을 가짐
     let b_dim = bundle.limbs[0].len();
     let h_dim = bundle.limbs[0][0].len();
@@ -43,7 +43,7 @@ pub fn run_lasso_bundle(
     let gens = SparsePolyCommitmentGens::<G1>::new(
         label,
         SOFTMAX_C,
-        total_sparsity,
+        total_sparsity.next_power_of_two(),
         SOFTMAX_C,
         SOFTMAX_M.trailing_zeros() as usize,
     );
@@ -56,11 +56,11 @@ pub fn run_lasso_bundle(
 }
 
 pub fn prove_lasso_for_softmax(
-    limbs: &Vec<Vec<Vec<Vec<Vec<Fr>>>>>, 
+    limbs: &Vec<Vec<Vec<Vec<Vec<Fr>>>>>,
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
 
     use ark_ff::{BigInteger, PrimeField};
     let c_seg = limbs.len();          // SOFTMAX_C (5)
@@ -150,7 +150,7 @@ pub fn prove_lasso_for_softmax(
         };
         let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
         
-        results.push((pure_cm, blinds, factored_gens));
+        results.push((pure_cm, blinds, factored_gens, sparsity));
     }
 
     Ok(results)
@@ -162,7 +162,7 @@ pub fn prove_lasso_for_range_22(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
     let sparsity = nz_indices.len();
 
     let log_m = KBITS_M.trailing_zeros() as usize;
@@ -216,9 +216,9 @@ pub fn prove_lasso_for_range_22(
 
         let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
         
-        results.push((pure_cm, blinds, factored_gens));
+        results.push((pure_cm, blinds, factored_gens, sparsity));
     }
-    
+
     Ok(results)
 }
 
@@ -227,7 +227,7 @@ pub fn prove_lasso_for_range_16(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)> {
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
     let sparsity = nz_indices.len();
 
     let log_m = FRACBITS_M.trailing_zeros() as usize;
@@ -271,13 +271,13 @@ pub fn prove_lasso_for_range_16(
     let blinds = PolyCommitmentBlinds { blinds: random_tape.random_vector(b"poly_blinds", 1 << left_vars) };
     let pure_cm = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
 
-    Ok((pure_cm, blinds, factored_gens))
+    Ok((pure_cm, blinds, factored_gens, sparsity))
 }
 
 pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     circuit: &NystromAttentionCircuit<F>,
     rng: &mut StdRng,
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>)>> {
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
     println!("\n=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===");
 
     let mut all_results = Vec::new();
@@ -332,7 +332,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
             KBITS_C,
-            total_sparsity,
+            total_sparsity.next_power_of_two(),
             KBITS_C,
             KBITS_M.trailing_zeros() as usize, // log2(M)
         );
@@ -389,7 +389,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
             FRACBITS_C,
-            total_sparsity,
+            total_sparsity.next_power_of_two(),
             FRACBITS_C,
             FRACBITS_M.trailing_zeros() as usize, // log2(M)
         );
@@ -429,7 +429,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
             FRACBITS_C,
-            total_sparsity,
+            total_sparsity.next_power_of_two(),
             FRACBITS_C,
             FRACBITS_M.trailing_zeros() as usize, // log2(M)
         );

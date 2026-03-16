@@ -828,5 +828,5 @@ fn attention_test() {
     let res = run_paths::<Bn254>(&targets);
     if let Err(e) = res {
         panic!("proof generate failed: {}", e);
-    }으
+    }
 }

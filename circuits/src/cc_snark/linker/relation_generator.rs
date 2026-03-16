@@ -185,25 +185,49 @@ pub fn generate_cp_1_to_n_vector_relation<E: Pairing>(
 
 
 pub fn generate_cp_factored_relation<E: Pairing>(
-    n_lasso: usize,                     
-    l_rows_vec: Vec<usize>,             
-    r_cols_vec: Vec<usize>,             
-    ck_joint: Vec<E::G1Affine>,         
-    cks_lasso_vec: Vec<Vec<E::G1Affine>>, 
+    n_lasso: usize,
+    l_rows_vec: Vec<usize>,
+    r_cols_vec: Vec<usize>,
+    actual_sparsities: Vec<usize>, // non-padded entry count per Lasso block
+    ck_joint: Vec<E::G1Affine>,
+    cks_lasso_vec: Vec<Vec<E::G1Affine>>,
 ) -> SparseMatrix<E::G1Affine> {
-    
+
     let total_msg_len: usize = l_rows_vec.iter().zip(r_cols_vec.iter()).map(|(l, r)| l * r).sum();
     let total_lasso_points: usize = l_rows_vec.iter().sum();
-    
-    let l_rows = 1 + total_lasso_points;                
-    let t_cols = (1 + total_lasso_points) + total_msg_len; 
-    
+
+    let l_rows = 1 + total_lasso_points;
+    let t_cols = (1 + total_lasso_points) + total_msg_len;
+
     let mut crs = SparseMatrix::new(l_rows, t_cols);
 
-    // 1. 통합 커밋먼트 정의 (Row 0): LegoGroth16
-    crs.insert_val(0, 0, &ck_joint[0]); 
-    for i in 0..total_msg_len {
-        crs.insert_val(0, (1 + total_lasso_points) + i, &ck_joint[i + 1]); 
+    // 1. Row 0: Groth16 joint commitment.
+    //
+    // ck_joint has (1 + u_len) keys where u_len = committed_group1.len() = Σ actual_sparsity_j.
+    // The u_padded witness vector stores actual data at the non-padded positions of each
+    // block and zeros at the padded positions.  Row 0 generators must be placed only at
+    // those non-padded column positions so that:
+    //
+    //   Σ_j Σ_{k < sp_j} u_padded[data_base_j + k] * ck_joint[m+1]
+    //     = Σ_{m=0}^{u_len-1} committed_group1[m] * ck_joint[m+1]
+    //     = cm1 - v1 * H
+    //
+    // Generators for the zero-padded positions are omitted (0·G = identity).
+    crs.insert_val(0, 0, &ck_joint[0]);
+    let n_ck_keys = ck_joint.len() - 1; // = u_len = Σ actual_sparsity_j
+    let mut ck_idx = 0usize;            // walks ck_joint[1..]
+    let mut blk_data_col = 0usize;      // data-column start for the current block
+    for j in 0..n_lasso {
+        let sp = actual_sparsities[j];
+        let l  = l_rows_vec[j];
+        let r  = r_cols_vec[j];
+        for k in 0..sp {
+            if ck_idx >= n_ck_keys { break; }
+            crs.insert_val(0, (1 + total_lasso_points) + blk_data_col + k, &ck_joint[ck_idx + 1]);
+            ck_idx += 1;
+        }
+        blk_data_col += l * r;
+        if ck_idx >= n_ck_keys { break; }
     }
 
     // 2. Lasso Row 커미션들 정의 (Row 1 ~ l-1)

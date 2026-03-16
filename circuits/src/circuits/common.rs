@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ark_ec::{AffineRepr, CurveGroup, pairing::Pairing};
-use ark_std::{UniformRand, rand::Rng};
+use ark_std::{UniformRand, rand::Rng, Zero};
 use crate::{
     cc_snark::legogroth16::VerifyingKey,
     cc_snark::linker::{
@@ -24,6 +24,7 @@ type LassoResult<E> = (
     PolyCommitment<<E as Pairing>::G1>,
     PolyCommitmentBlinds<<E as Pairing>::ScalarField>,
     MultiCommitGens<<E as Pairing>::G1>,
+    usize, // actual sparsity before rounding to the next power of two
 );
 
 // ── BenchmarkResult ─────────────────────────────────────────────────────────
@@ -99,11 +100,13 @@ pub fn factored_link_setup<E: Pairing, R: Rng>(
 ) -> (PP<E::G1Affine, E::G2Affine>, SparseMatrix<E::G1Affine>) {
     let mut l_rows_vec = Vec::new();
     let mut r_cols_vec = Vec::new();
+    let mut actual_sparsities = Vec::new();
     let mut cks_lasso_vec = Vec::new();
 
-    for (cm, _, gens) in lasso_results {
+    for (cm, _, gens, actual_sp) in lasso_results {
         l_rows_vec.push(cm.C.len());
         r_cols_vec.push(gens.n);
+        actual_sparsities.push(*actual_sp);
         let mut ck = vec![gens.h.into_affine()];
         ck.extend(gens.G.iter().map(|g| g.into_affine()));
         cks_lasso_vec.push(ck);
@@ -118,6 +121,7 @@ pub fn factored_link_setup<E: Pairing, R: Rng>(
         lasso_results.len(),
         l_rows_vec,
         r_cols_vec,
+        actual_sparsities,
         ck_joint,
         cks_lasso_vec,
     );
@@ -153,7 +157,7 @@ pub fn factored_link_prove<E: Pairing, R: Rng>(
 ) -> (E::G1Affine, Vec<E::G1Affine>) {
     let mut rs = vec![v_groth];
     let mut lasso_cms_all = Vec::new();
-    for (cm, blinds, _) in lasso_results {
+    for (cm, blinds, _, _) in lasso_results {
         rs.extend(&blinds.blinds);
         lasso_cms_all.extend(cm.C.iter().map(|c| c.into_affine()));
     }
@@ -184,6 +188,22 @@ pub fn prove_and_verify_factored_multi_link<E: Pairing>(
     u_total: Vec<E::ScalarField>,
     rng: &mut impl Rng,
 ) -> Result<()> {
+    // Build a padded u_total that has exactly total_msg_len elements.
+    //
+    // The Lasso polynomials are zero-padded internally to the next power of two
+    // (s = actual_sparsity.next_power_of_two()).  The Groth16 committed_group1
+    // only stores the actual (unpadded) values.  For CP-Link the witness vector
+    // must cover all s_i columns (including padding zeros), so we interleave zeros
+    // at the padding positions of each result.
+    let mut u_padded: Vec<E::ScalarField> = Vec::new();
+    let mut committed_offset = 0usize;
+    for (cm, _, gens, actual_sparsity) in &lasso_results {
+        let s = cm.C.len() * gens.n; // rounded sparsity (= l_size * r_size)
+        u_padded.extend_from_slice(&u_total[committed_offset..committed_offset + actual_sparsity]);
+        u_padded.extend(std::iter::repeat(E::ScalarField::zero()).take(s - actual_sparsity));
+        committed_offset += actual_sparsity;
+    }
+
     // [1] Setup
     let (pp, crs) =
         factored_link_setup::<E, _>(vk, num_pub, u_total.len(), &lasso_results, rng);
@@ -193,7 +213,7 @@ pub fn prove_and_verify_factored_multi_link<E: Pairing>(
 
     // [3] Prove
     let (proof, instance) =
-        factored_link_prove::<E, _>(&pp, &ek, v_groth, cm_groth, &lasso_results, u_total, rng);
+        factored_link_prove::<E, _>(&pp, &ek, v_groth, cm_groth, &lasso_results, u_padded, rng);
 
     // [4] Verify
     if factored_link_verify::<E>(&pp, &vk_link, &instance, &proof) {
