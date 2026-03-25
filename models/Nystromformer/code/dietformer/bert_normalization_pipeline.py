@@ -171,10 +171,11 @@ def process_standard_normalization_debug_npz(debug_npz_path, out_npz_path, k_bit
         out_npz_path,
         k_bits=np.uint32(k_bits),
         frac_bits=np.uint32(FRAC_BITS),
-        
+
         # RMS1 관련
-        Q_ri_rms1=Q_ri1, z_ri_rms1=np.uint64(z_ri1),
+        Q_ri_rms1=Q_ri1, z_ri_rms1=np.uint64(z_ri1), sum_sq_rms1=sum_sq1,
         M_ms_rms1=np.uint64(M_ms1), M_prime_ms_rms1=np.uint64(M_prime_ms1),
+        shifted_val_rms1=shifted_val1.astype(np.int64), R_shift_rms1=R_shift1.astype(np.int64),
         Q_ms_sim_rms1=Q_ms_sim1.astype(np.int64), R_ms_rms1=R_ms1.astype(np.int64),
         inv_rms_total_rms1=inv_rms_total1.astype(np.uint64),
         Q_gamma_rms1=Q_gamma1, z_gamma_rms1=np.uint64(z_gamma1),
@@ -190,7 +191,7 @@ def process_standard_normalization_debug_npz(debug_npz_path, out_npz_path, k_bit
 
         # GELU 관련
         z_in_gelu=np.uint64(z_out_lin1), sigmoid_part_gelu=sigmoid_part.astype(np.uint64),
-        M_gelu=np.uint64(M_gelu), M_prime_gelu=np.uint64(M_prime_gelu),
+        acc_gelu=acc_gelu.astype(np.int64), M_gelu=np.uint64(M_gelu), M_prime_gelu=np.uint64(M_prime_gelu),
         Q_out_sim_gelu=Q_gelu_out_sim, R_out_gelu=R_gelu_out,
         M_gelu_idx=np.uint64(M_gelu_idx),
 
@@ -201,8 +202,9 @@ def process_standard_normalization_debug_npz(debug_npz_path, out_npz_path, k_bit
         Q_out_sim_lin2=Q_out_sim_lin2, R_out_lin2=R_out_lin2,
 
         # RMS2 관련
-        Q_ri_rms2=Q_ri2, z_ri_rms2=np.uint64(z_ri2),
+        Q_ri_rms2=Q_ri2, z_ri_rms2=np.uint64(z_ri2), sum_sq_rms2=sum_sq2,
         M_ms_rms2=np.uint64(M_ms2), M_prime_ms_rms2=np.uint64(M_prime_ms2),
+        shifted_val_rms2=shifted_val2.astype(np.int64), R_shift_rms2=R_shift2.astype(np.int64),
         Q_ms_sim_rms2=Q_ms_sim2.astype(np.int64), R_ms_rms2=R_ms2.astype(np.int64),
         inv_rms_total_rms2=inv_rms_total2.astype(np.uint64),
         Q_gamma_rms2=Q_gamma2, z_gamma_rms2=np.uint64(z_gamma2),

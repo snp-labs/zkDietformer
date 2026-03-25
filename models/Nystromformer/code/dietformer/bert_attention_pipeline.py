@@ -11,10 +11,6 @@ from softmax_table import (
 )
 
 def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
-    """
-    BERT의 표준 Full-Attention 중간값을 읽어와 
-    Nystromformer와 동일한 규격의 양자화 및 서킷 입력 데이터로 변환합니다.
-    """
     debug = np.load(debug_npz_path, allow_pickle=True)
     
     # 1. Q, K, V 양자화 (Nystromformer와 동일한 함수 사용)
@@ -31,19 +27,27 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_v = quantize_tensor(V_real, s_v, z_v).astype(np.int64)
 
     # 2. Score 행렬곱 (Q * K^T) - O(S^2)
-    # Nystromformer의 kernel_1_scores 대신 Full Score를 처리합니다.
-    Y_real = np.matmul(Q_real, np.swapaxes(K_real, -1, -2))
-    
+    # sign_bit_grouping_matmul 전용으로 처리. np.matmul 미사용.
+    K_T = np.swapaxes(Q_k, -1, -2)
+
+    # Pass 1: M=2^k_bits, z_y=0 으로 호출하면 출력 = (Q_q - z_q) @ (K_T - z_k) (정수)
+    # → float 변환 후 s_y, z_y 도출 (순환 의존성 해소)
+    Y_int_prelim, _, _ = sign_bit_grouping_matmul(
+        Q_q, z_q, K_T, z_k, z_y=0, M=(1 << k_bits), k_bits=k_bits
+    )
+    Y_real = Y_int_prelim.astype(np.float64) * s_q * s_k
+
     s_y, z_y = get_quantization_params(Y_real)
     z_y += 10
 
-    K_T = np.swapaxes(Q_k, -1, -2)
-    M_attn_scores = get_m_constant(s_q, s_k, s_y, k=k_bits) #
-    
-    # ZEN Matmul 적용 (Sign-bit grouping)
+    M_attn_scores = get_m_constant(s_q, s_k, s_y, k=k_bits)
+
+    # Pass 2: 올바른 M, z_y 로 ZEN Matmul 적용 (Sign-bit grouping)
     Q_score_sim, R_matmul_score, M_prime_score = sign_bit_grouping_matmul(
         Q_q, z_q, K_T, z_k, z_y, M_attn_scores, k_bits
     )
+    assert Q_score_sim.shape == Y_real.shape, \
+        f"Q_score_sim shape {Q_score_sim.shape} != Y_real shape {Y_real.shape}"
 
     # 3. Softmax Tables 로드 (Nystromformer와 공유)
     table_path = generate_softmax_tables("outputs_bert", k_bits, FRAC_BITS)
@@ -105,6 +109,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         exp_total=exp_total.astype(np.uint64),
         P_attn=P_attn.astype(np.uint64),
         R_div_attn=R_div_attn.astype(np.uint64),
+        exp_sum=exp_sum.astype(np.uint64),
         
         # 최종 출력 X
         Q_sim_x=Q_sim_x.astype(np.int64),

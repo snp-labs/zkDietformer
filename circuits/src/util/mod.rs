@@ -3,3 +3,4 @@ pub mod load;
 pub mod utils;
 pub mod lookup_mlp;
 pub mod lookup_attention;
+pub mod bert_lookup_attention;

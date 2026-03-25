@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 import torch
 import torch.nn as nn
 import time
@@ -68,86 +69,163 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
     output_dir = "outputs_bert"
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Hook을 통해 캡처할 타겟 모듈 설정
+    # 1. Attention Hook 타겟 모듈 설정
     target_modules = [(n, m) for n, m in model.named_modules() if isinstance(m, RobertaSelfAttention)]
 
-    # attention_mask를 배치에서 직접 추출합니다.
-    # transformers 4.x에서 attention_mask는 keyword arg로 전달되므로
-    # register_forward_hook의 hook_inputs에 포함되지 않습니다.
-    # 따라서 배치의 원본 이진 마스크(1=valid, 0=pad)를 클로저로 캡처합니다.
+    # attention_mask: transformers 4.x에서 keyword arg이므로 클로저로 캡처
     if 'attention_mask' in current_batch and current_batch['attention_mask'] is not None:
-        # [batch, seq_len], int (1=valid, 0=padding)
         batch_mask_np = current_batch['attention_mask'].cpu().numpy().astype(np.int64)
     else:
         input_ids = current_batch['input_ids']
         batch_mask_np = np.ones((input_ids.shape[0], input_ids.shape[1]), dtype=np.int64)
 
     saved_inputs = {}
+    saved_norm = {}  # key: "layer_{i}" → dict of normalization intermediates
 
+    # ── Attention Hook ──────────────────────────────────────────────────────
     def make_hook(mod_name):
         def hook_fn(module, hook_inputs, hook_output):
             hidden_states = hook_inputs[0]
             num_heads = module.num_attention_heads
             head_dim = module.attention_head_size
 
-            # 1. Q, K, V 프로젝션 후 [batch, heads, seq, head_dim] 형태로 변환
             with torch.no_grad():
-                q_proj = module.query(hidden_states)  # [batch, seq, hidden]
+                q_proj = module.query(hidden_states)
                 k_proj = module.key(hidden_states)
                 v_proj = module.value(hidden_states)
 
             def transpose_for_scores(x):
                 b, s, _ = x.shape
-                return x.view(b, s, num_heads, head_dim).permute(0, 2, 1, 3)  # [batch, heads, seq, head_dim]
+                return x.view(b, s, num_heads, head_dim).permute(0, 2, 1, 3)
 
             q_heads = transpose_for_scores(q_proj)
             k_heads = transpose_for_scores(k_proj)
             v_heads = transpose_for_scores(v_proj)
 
-            # 2. 마스크와 스케일 적용 (attention_bert.py와 동일한 규격)
-            # batch_mask_np: [batch, seq_len] int (1/0) → 클로저로 캡처
             mask_t = torch.tensor(batch_mask_np, dtype=hidden_states.dtype, device=hidden_states.device)
             scale = 1.0 / math.sqrt(math.sqrt(head_dim))
-            q_proc = q_heads * mask_t[:, None, :, None] * scale  # [batch, heads, seq, head_dim]
+            q_proc = q_heads * mask_t[:, None, :, None] * scale
             k_proc = k_heads * mask_t[:, None, :, None] * scale
 
-            # 3. 출력 X: context_layer [batch, seq, hidden] → [batch, heads, seq, head_dim]
             x_merged = hook_output[0] if isinstance(hook_output, tuple) else hook_output
             b, s, _ = x_merged.shape
             x_per_head = x_merged.view(b, s, num_heads, head_dim).permute(0, 2, 1, 3)
 
-            # 4. 저장 (None 값 없이 모두 ndarray)
             saved_inputs[mod_name] = {
-                "Q_proc": q_proc.detach().cpu().numpy(),   # [batch, heads, seq, head_dim]
+                "Q_proc": q_proc.detach().cpu().numpy(),
                 "K_proc": k_proc.detach().cpu().numpy(),
                 "V":      v_heads.detach().cpu().numpy(),
-                "mask":   batch_mask_np,                    # [batch, seq_len], int64
+                "mask":   batch_mask_np,
                 "X":      x_per_head.detach().cpu().numpy(),
             }
         return hook_fn
 
+    # ── Normalization / FFN Hooks ────────────────────────────────────────────
+    # bert_normalization_pipeline.py 가 요구하는 모든 키를 캡처한다.
+    # HuggingFace는 nn.LayerNorm을 사용하지만, ZKP 파이프라인은 RMSNorm 규격으로
+    # 처리하므로 ms = x².mean(-1, keepdim=True) 를 LayerNorm 입력에서 직접 계산한다.
+    def make_norm_hooks(layer_key):
+        # Hook 1: post-attention LayerNorm (RobertaSelfOutput.LayerNorm)
+        # inputs[0] = hidden_after_dense_dropout + residual (residual-added tensor)
+        def hook_attn_layernorm(module, inputs, output):
+            x = inputs[0].detach().cpu()
+            saved_norm.setdefault(layer_key, {}).update({
+                "rms_input":  x.numpy(),
+                "ms":         x.pow(2).mean(dim=-1, keepdim=True).numpy(),
+                "rms_weight": module.weight.detach().cpu().numpy(),
+                "rms_output": output.detach().cpu().numpy(),
+            })
+
+        # Hook 2: FFN up-projection dense (RobertaIntermediate.dense, before GeLU)
+        def hook_ff1_dense(module, _inputs, output):
+            entry = {
+                "linear_weight": module.weight.detach().cpu().numpy(),
+                "linear_output": output.detach().cpu().numpy(),
+            }
+            if module.bias is not None:
+                entry["linear_bias"] = module.bias.detach().cpu().numpy()
+            saved_norm.setdefault(layer_key, {}).update(entry)
+
+        # Hook 3: full RobertaIntermediate output (after GeLU activation)
+        def hook_intermediate(_module, _inputs, output):
+            saved_norm.setdefault(layer_key, {})["gelu_output"] = output.detach().cpu().numpy()
+
+        # Hook 4: FFN down-projection dense (RobertaOutput.dense, before residual+LayerNorm)
+        def hook_ff2_dense(module, _inputs, output):
+            entry = {
+                "linear_weight_ff2": module.weight.detach().cpu().numpy(),
+                "linear_output_ff2": output.detach().cpu().numpy(),
+            }
+            if module.bias is not None:
+                entry["linear_bias_ff2"] = module.bias.detach().cpu().numpy()
+            saved_norm.setdefault(layer_key, {}).update(entry)
+
+        # Hook 5: post-FFN LayerNorm (RobertaOutput.LayerNorm)
+        # inputs[0] = ff2_dropout_output + residual (from attention output LayerNorm)
+        def hook_ffn_layernorm(module, inputs, output):
+            x = inputs[0].detach().cpu()
+            saved_norm.setdefault(layer_key, {}).update({
+                "rms_input_rms2":  x.numpy(),
+                "ms_rms2":         x.pow(2).mean(dim=-1, keepdim=True).numpy(),
+                "rms_weight_rms2": module.weight.detach().cpu().numpy(),
+                "rms_output_rms2": output.detach().cpu().numpy(),
+            })
+
+        return hook_attn_layernorm, hook_ff1_dense, hook_intermediate, hook_ff2_dense, hook_ffn_layernorm
+
+    # Attention hook 등록
     handles = [m.register_forward_hook(make_hook(n)) for n, m in target_modules]
 
-    # 2. Forward Pass
+    # Normalization hook 등록 (모든 레이어에 대해)
+    norm_handles = []
+    num_layers = model.config.num_hidden_layers
+    for i in range(num_layers):
+        layer = model.roberta.encoder.layer[i]
+        layer_key = f"layer_{i}"
+        h_aln, h_ff1, h_int, h_ff2, h_fln = make_norm_hooks(layer_key)
+        norm_handles.extend([
+            layer.attention.output.LayerNorm.register_forward_hook(h_aln),
+            layer.intermediate.dense.register_forward_hook(h_ff1),
+            layer.intermediate.register_forward_hook(h_int),
+            layer.output.dense.register_forward_hook(h_ff2),
+            layer.output.LayerNorm.register_forward_hook(h_fln),
+        ])
+
+    # 2. Forward Pass (single pass captures both attention and normalization)
     inputs = {k: v.to(device) for k, v in current_batch.items()}
     model.eval()
     with torch.no_grad():
-        outputs = model(**inputs)
+        model(**inputs)
 
-    for h in handles: h.remove()
+    for h in handles:
+        h.remove()
+    for h in norm_handles:
+        h.remove()
 
     # 3. 데이터 저장 및 파이프라인 실행
     for name, data in saved_inputs.items():
         file_base = f"{save_prefix}-batch{batch_idx}-{name}.npz"
         debug_path = os.path.join(output_dir, file_base)
-
         np.savez_compressed(debug_path, **data)
 
         if os.path.exists(debug_path):
+            # Attention witness
             witness_path = debug_path.replace(".npz", ".witness.npz")
-            # BERT 전용 표준 어텐션 파이프라인 호출
             process_standard_attn_debug_npz(debug_path, witness_path, k_bits=22)
             print(f"[BERT Batch {batch_idx}] Generated Standard Attention Witness: {witness_path}")
+
+            # Normalization witness: 어텐션 모듈명에서 레이어 인덱스 추출하여 매핑
+            m = re.search(r'layer\.(\d+)', name)
+            if m:
+                layer_key = f"layer_{m.group(1)}"
+                if layer_key in saved_norm:
+                    norm_debug_path = debug_path.replace(".npz", ".norm_debug.npz")
+                    norm_data = {k: np.asarray(v) for k, v in saved_norm[layer_key].items()}
+                    np.savez_compressed(norm_debug_path, **norm_data)
+
+                    norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
+                    process_standard_normalization_debug_npz(norm_debug_path, norm_witness_path, k_bits=22)
+                    print(f"[BERT Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
 
 ########################### Main Loop ###########################
 
