@@ -13,8 +13,9 @@ import argparse
 import utils
 # (추가)
 from attention_nystrom import NystromAttention
-from whole_pipeline import process_attn_debug_npz
-from model import Approx_GeLU, Approx_Linear, Approx_LayerNorm
+from attention_pipeline import process_attn_debug_npz
+from normalization_pipeline import process_normalization_debug_npz
+from model import Approx_RMSNorm, Approx_Linear
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--checkpoint", type = int, help = "checkpoint", dest = "checkpoint", default = None)
@@ -153,165 +154,143 @@ else:
 
 print(f"Starts from Epoch: {start_epoch}, End at Epoch: {end_epoch}", flush = True)
 
-def _capture_and_save_attention_intermediates(model, data_loader, save_prefix):
-    # run_pretrain.py쪽과 비슷함.
+def _capture_and_process_all_intermediates(model, data_loader, save_prefix):
+    """
+    NystromAttention과 Approx_RMSNorm의 중간값을 모두 캡처하고 
+    각각의 Witness 파이프라인을 실행합니다.
+    """
     wrapper = model.module if hasattr(model, "module") else model
+    output_dir = "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 1. 캡처 플래그 활성화
     for name, m in wrapper.named_modules():
         if hasattr(m, "capture_intermediates"):
             m.capture_intermediates = True
             m.intermediates = []
 
-    # Find Nystrom attention modules
-    nystrom_modules = []
-    for name, m in wrapper.named_modules():
-        if isinstance(m, NystromAttention):
-            nystrom_modules.append((name, m))
-    if len(nystrom_modules) == 0:
-        print("No NystromAttention modules found in model — skipping attention intermediate capture.")
-        return
-
-    # Obtain one batch (create an iterator so we don't consume outer iterator)
+    # 2. 데이터 한 배치 준비
     try:
         capture_iter = enumerate(data_loader)
         _, batch = next(capture_iter)
-    except Exception as e:
-        print("Failed to fetch a batch for attention capture:", e)
-        return
-
-    # Move inputs to device consistent with model parameters (safe extraction)
-    try:
         param0 = next(wrapper.parameters())
         device_local = param0.device
-    except StopIteration:
-        device_local = torch.device("cpu")
-    inputs = {k: v.to(device_local) for k, v in batch.items()}
+        inputs = {k: v.to(device_local) for k, v in batch.items()}
+    except Exception as e:
+        print(f"Failed to prepare batch for capture: {e}")
+        return
 
-    # register forward hooks on each Nystrom module to capture the arguments they receive.
-    saved_inputs = {}  # map module_name -> (Q_cpu, K_cpu, V_cpu, mask_cpu)
-
-    def make_hook(mod_name):
+    # 3. Attention 입력을 위한 Hook 설정
+    saved_attn_inputs = {}
+    nystrom_modules = [(n, m) for n, m in wrapper.named_modules() if isinstance(m, NystromAttention)]
+    
+    def make_attn_hook(mod_name):
         def hook_fn(module, hook_inputs, hook_output):
-            # Expect hook_inputs to be tuple (Q, K, V, mask, ...) as in attention forward
             try:
-                Q_in = hook_inputs[0].detach().cpu()
-                K_in = hook_inputs[1].detach().cpu()
-                V_in = hook_inputs[2].detach().cpu()
-                mask_in = hook_inputs[3].detach().cpu()
-                saved_inputs[mod_name] = (Q_in, K_in, V_in, mask_in)
+                # Q, K, V, mask 순서
+                saved_attn_inputs[mod_name] = [x.detach().cpu() for x in hook_inputs[:4]]
             except Exception as e:
-                print(f"Warning: failed to capture inputs for module {mod_name}: {e}")
+                print(f"Hook failed for {mod_name}: {e}")
         return hook_fn
 
-    handles = []
-    for name, mod in nystrom_modules:
-        h = mod.register_forward_hook(make_hook(name))
-        handles.append(h)
+    handles = [mod.register_forward_hook(make_attn_hook(name)) for name, mod in nystrom_modules]
 
-    # Run a single forward (eval, no grad) to trigger hooks - call wrapper to ensure hooks trigger
+    # 4. Forward Pass 실행 (모든 캡처 트리거)
     wrapper.eval()
     with torch.no_grad():
         try:
             _ = wrapper(**inputs)
         except Exception as e:
-            print("Warning: model forward during attention capture failed:", e)
+            print(f"Model forward failed: {e}")
 
-    # remove hooks
-    for h in handles:
-        h.remove()
+    for h in handles: h.remove()
 
-    # Re-run each Nystrom module directly with collect_intermediates=True and save debug npz
-    # outputs 폴더 생성
-    output_dir = "outputs"
-    os.makedirs(output_dir, exist_ok=True)
-    for name, mod in nystrom_modules:
-        if name not in saved_inputs:
-            print(f"No saved inputs for module {name}; skipping.")
-            continue
-        Q_cpu, K_cpu, V_cpu, mask_cpu = saved_inputs[name]
-        mod_device = next(mod.parameters()).device if any(p.requires_grad for p in mod.parameters()) else device_local
-        Q = Q_cpu.to(mod_device)
-        K = K_cpu.to(mod_device)
-        V = V_cpu.to(mod_device)
-        mask = mask_cpu.to(mod_device)
-        saved_path = None
-        try:
-            file_base_name = f"{save_prefix}-{name.replace('/', '_')}.npz"
-            # ZEN 방식의 결과물은 outputs 폴더에 저장
-            current_save_path = os.path.join(output_dir, file_base_name)
+    # 5. 수집된 데이터 처리 및 Witness 생성
+    for name, m in wrapper.named_modules():
+        # (A) Nystrom Attention 처리
+        if isinstance(m, NystromAttention) and name in saved_attn_inputs:
+            Q, K, V, mask = [x.to(device_local) for x in saved_attn_inputs[name]]
+            file_base = f"{save_prefix}-{name}.npz"
+            debug_path = os.path.join(output_dir, file_base)
             
-            # mod 호출 시 save_path 파라미터로 명시적 전달
-            out = mod(Q, K, V, mask, collect_intermediates=True, save_path=current_save_path)
-            saved_path = current_save_path # 성공 시 witness 변환을 위해 경로 저장
-            print(f"Saved intermediates for module {name} to {saved_path}")
-        except TypeError:
-            # fallback if module doesn't accept collect_intermediates or save_path
-            try:
-                out = mod(Q, K, V, mask, collect_intermediates=True)
-                if isinstance(out, tuple) and len(out) == 2:
-                    debug = out[1]
-                    save_path = f"{save_prefix}-{name.replace('/', '_')}.npz"
-                    np_save = {}
-                    for k_debug, v_debug in debug.items():
-                        if isinstance(v_debug, torch.Tensor):
-                            np_save[k_debug] = v_debug.detach().cpu().numpy()
-                        else:
-                            try:
-                                np_save[k_debug] = np.array(v_debug)
-                            except Exception:
-                                pass
-                    np.savez_compressed(save_path, **np_save)
-                    saved_path = save_path
-                    print(f"Saved intermediates (fallback) for module {name} to {save_path}")
-                else:
-                    print(f"Module {name} returned unexpected output shape for collect_intermediates; skipping save.")
-            except Exception as e:
-                print(f"Could not collect intermediates for module {name}: {e}")
+            # collect_intermediates=True로 재실행하여 내부 값 저장
+            m(Q, K, V, mask, collect_intermediates=True, save_path=debug_path)
+            
+            if os.path.exists(debug_path):
+                witness_path = debug_path.replace(".npz", ".witness.npz")
+                process_attn_debug_npz(debug_path, witness_path, k_bits=22)
+                print(f"Generated Attention Witness: {witness_path}")
 
-        # If we saved a debug npz, process it into witness npz
-        if saved_path is not None:
-            try:
-                # 출력 파일명 설정 (.witness.npz)
-                witness_out = saved_path.replace(".npz", ".witness.npz")
-                process_attn_debug_npz(
-                    saved_path,
-                    witness_out,
-                    k_bits=22  # ZEN의 기본 정밀도 설정 [cite: 389]
-                )
-                print(f"Successfully processed witness data to {witness_out}")
+        # (B) Approx_RMSNorm, Approx_Linear(ff1, ff2), Approx_GeLU 통합 처리
+        elif isinstance(m, Approx_RMSNorm):
+            if "norm1" in name:
+                block_name = name.replace(".norm1", "")
+                
+                named_mods = dict(wrapper.named_modules())
+                ff1_mod = named_mods.get(f"{block_name}.ff1")
+                act_mod = named_mods.get(f"{block_name}.act")
+                ff2_mod = named_mods.get(f"{block_name}.ff2")
+                norm2_mod = named_mods.get(f"{block_name}.norm2") # 추가
+                
+                if all(hasattr(mod, "intermediates") and len(mod.intermediates) > 0 
+                       for mod in [m, ff1_mod, act_mod, ff2_mod, norm2_mod] if mod is not None):
+                    
+                    combined_data = {
+                        "rms_input": m.intermediates[-1]["rms_input"],
+                        "ms": m.intermediates[-1]["ms"],
+                        "rms_weight": m.intermediates[-1]["rms_weight"],
+                        "rms_output": m.intermediates[-1]["rms_output"],
+                        "linear_weight": ff1_mod.intermediates[-1]["linear_weight"],
+                        "linear_bias": ff1_mod.intermediates[-1]["linear_bias"],
+                        "linear_output": ff1_mod.intermediates[-1]["linear_output"],
+                        "gelu_output": act_mod.intermediates[-1]["gelu_output"],
 
-            except Exception as e:
-                print(f"Failed to run witness pipeline on {saved_path}: {e}")
+                        "linear_weight_ff2": ff2_mod.intermediates[-1]["linear_weight"],
+                        "linear_bias_ff2": ff2_mod.intermediates[-1].get("linear_bias"),
+                        "linear_output_ff2": ff2_mod.intermediates[-1]["linear_output"],
+                        
+                        "rms_input_rms2": norm2_mod.intermediates[-1]["rms_input"],
+                        "ms_rms2": norm2_mod.intermediates[-1]["ms"],
+                        "rms_weight_rms2": norm2_mod.intermediates[-1]["rms_weight"],
+                        "rms_output_rms2": norm2_mod.intermediates[-1]["rms_output"],
+                    }
+                    
+                    file_base = f"{save_prefix}-{block_name}.norm_ff_combined.npz"
+                    debug_path = os.path.join(output_dir, file_base)
+                    np.savez_compressed(debug_path, **combined_data)
+                    
+                    witness_path = debug_path.replace(".npz", ".witness.npz")
+                    process_normalization_debug_npz(debug_path, witness_path, k_bits=22)
+                    print(f"Generated Combined (Norm1+FF1+GeLU) Witness: {witness_path}")
 
-    # restore model train mode
-    wrapper.train()
+    for name, m in wrapper.named_modules():
+        if hasattr(m, "capture_intermediates"):
+            m.capture_intermediates = False
+
+########################### Main Loop ###########################
 
 for epoch in range(start_epoch, end_epoch):
-
     checkpoint_path = os.path.join(checkpoint_dir, f"cp-{epoch:04}.model")
     checkpoint = torch.load(checkpoint_path, map_location = 'cpu')
-    # modify
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     print("Model restored", checkpoint_path, flush = True)
 
-    # (추가) capture attention intermediates for this restored model before running validation
+    # 중간값 캡처 및 파이프라인 실행
     if args.save_attn_npz is not None:
         try:
-            _capture_and_save_attention_intermediates(model, data_loader, args.save_attn_npz)
+            _capture_and_process_all_intermediates(model, data_loader, args.save_attn_npz)
         except Exception as e:
-            print("Failed to capture/save attention intermediates during validation:", e)
+            print(f"Failed during intermediate processing: {e}")
 
     model.eval()
-
     epoch_summary = {}
 
     with torch.no_grad():
         for batch_idx in range(pretraining_config["validate_batches_per_epoch"]):
-
             t0 = time.time()
             _, batch = next(pretrain_dataloader_iter)
             summary = {}
-            for percent, inputs in utils.partition_inputs(batch, accumu_steps, True):
-                # modify
+            for percent, inputs in utils.partition_inputs(batch, 1, True):
                 inputs = {k: v.to(device) for k, v in inputs.items()} 
                 outputs = model(**inputs)
                 for key in outputs:
@@ -320,24 +299,19 @@ for epoch in range(start_epoch, end_epoch):
             t1 = time.time()
 
             for key in summary:
-                if key not in epoch_summary:
-                    epoch_summary[key] = []
+                if key not in epoch_summary: epoch_summary[key] = []
                 epoch_summary[key].append(summary[key])
-
             summary["idx"] = epoch * pretraining_config["validate_batches_per_epoch"] + batch_idx
             summary["batch_idx"] = batch_idx
             summary["epoch"] = epoch
             summary["time"] = round(t1 - t0, 4)
-
             log_f.write(json.dumps(summary, sort_keys = True) + "\n")
-
             if batch_idx % pretraining_config["batches_per_report"] == 0:
                 print(json.dumps(summary, sort_keys = True), flush = True)
                 log_f.flush()
 
     for key in epoch_summary:
         epoch_summary[key] = np.mean(epoch_summary[key])
-
     log_f.write(json.dumps(epoch_summary, sort_keys = True) + "\n")
     log_f.flush()
     print(json.dumps(epoch_summary, sort_keys = True), flush = True)

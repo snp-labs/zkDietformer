@@ -17,8 +17,8 @@ class Approx_GeLU(nn.Module):
         out = x * torch.sigmoid(1.702 * x)  
         if self.capture_intermediates:
             self.intermediates.append({
-                "input": x.detach().cpu().numpy(),
-                "output": out.detach().cpu().numpy()
+                "gelu_input": x.detach().cpu().numpy(),
+                "gelu_output": out.detach().cpu().numpy()
             })
         return out
 
@@ -29,50 +29,49 @@ class Approx_GeLU(nn.Module):
             x = self.func(x)
         return x
 
-class Approx_Linear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, **kwargs):
-        super().__init__(in_features, out_features, bias, **kwargs)
+class Approx_RMSNorm(nn.RMSNorm):
+    def __init__(self, normalized_shape, eps=None, elementwise_affine=True, device=None, dtype=None):
+        super().__init__(normalized_shape, eps, elementwise_affine, device, dtype)
         self.capture_intermediates = True
         self.intermediates = []
 
     def forward(self, x):
-        # 표준 Linear 연산: y = xW^T + b
+        dims = list(range(-len(self.normalized_shape), 0))
+
+        ms = x.pow(2).mean(dim=dims, keepdim=True)
+
+        eps_val = self.eps if self.eps is not None else torch.finfo(x.dtype).eps
+        rms = torch.sqrt(ms + eps_val)
+        
         out = super().forward(x)
+
         if self.capture_intermediates:
             self.intermediates.append({
-                "input": x.detach().cpu().numpy(),
-                "weight": self.weight.detach().cpu().numpy(),
-                "bias": self.bias.detach().cpu().numpy() if self.bias is not None else None,
-                "output": out.detach().cpu().numpy()
+                "rms_input": x.detach().cpu().numpy(),
+                "ms": ms.detach().cpu().numpy(),       
+                "rms": rms.detach().cpu().numpy(),     
+                "rms_weight": self.weight.detach().cpu().numpy() if self.elementwise_affine else None,
+                "rms_output": out.detach().cpu().numpy(),
+                "eps": eps_val
             })
         return out
-
-class Approx_LayerNorm(nn.LayerNorm):
-    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
-        super().__init__(normalized_shape, eps, elementwise_affine)
+    
+class Approx_Linear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+        super().__init__(in_features, out_features, bias, device, dtype)
         self.capture_intermediates = True
         self.intermediates = []
 
     def forward(self, x):
-        # 1. 평균 계산: E[x]
-        dims = list(range(-len(self.normalized_shape), 0))
-        mean = x.mean(dim=dims, keepdim=True)
-        
-        # 2. 분산 계산: Var[x] (Biased estimator 사용)
-        var = x.var(dim=dims, unbiased=False, keepdim=True)
-        
-        # 3. 표준 정규화 실행 (PyTorch 기본 함수 사용)
         out = super().forward(x)
 
         if self.capture_intermediates:
+            # y = xW^T + b 형태이므로 가중치를 그대로 저장
             self.intermediates.append({
-                "input": x.detach().cpu().numpy(),
-                "mean": mean.detach().cpu().numpy(),
-                "var": var.detach().cpu().numpy(),
-                "weight": self.weight.detach().cpu().numpy() if self.elementwise_affine else None,
-                "bias": self.bias.detach().cpu().numpy() if self.elementwise_affine else None,
-                "output": out.detach().cpu().numpy(),
-                "eps": self.eps
+                "linear_input": x.detach().cpu().numpy(),
+                "linear_weight": self.weight.detach().cpu().numpy(),
+                "linear_bias": self.bias.detach().cpu().numpy() if self.bias is not None else None,
+                "linear_output": out.detach().cpu().numpy()
             })
         return out
     
@@ -181,14 +180,14 @@ class Transformer(nn.Module):
         self.mha = Attention(config)
 
         self.dropout1 = torch.nn.Dropout(p = config["dropout_prob"])
-        self.norm1 = Approx_LayerNorm(self.dim)
+        self.norm1 = Approx_RMSNorm(self.dim)
 
         self.ff1 = Approx_Linear(self.dim, self.hidden_dim)
         self.act = Approx_GeLU(config)
         self.ff2 = Approx_Linear(self.hidden_dim, self.dim)
 
         self.dropout2 = torch.nn.Dropout(p = config["dropout_prob"])
-        self.norm2 = Approx_LayerNorm(self.dim)
+        self.norm2 = Approx_RMSNorm(self.dim)
 
     def forward(self, X, mask, return_QKV = False):
 

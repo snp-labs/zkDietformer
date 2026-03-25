@@ -28,7 +28,7 @@ use rayon::prelude::*;
 pub struct DensePolynomial<F> {
   num_vars: usize, // the number of variables in the multilinear polynomial
   len: usize,
-  Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
+  pub(crate) Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 
 pub struct PolyCommitmentGens<G> {
@@ -45,12 +45,12 @@ impl<G: CurveGroup> PolyCommitmentGens<G> {
 }
 
 pub struct PolyCommitmentBlinds<F> {
-  blinds: Vec<F>,
+  pub(crate) blinds: Vec<F>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyCommitment<G: CurveGroup> {
-  C: Vec<G>,
+  pub(crate) C: Vec<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -107,7 +107,7 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   #[cfg(feature = "multicore")]
-  fn commit_inner<G: CurveGroup<ScalarField = F>>(
+  pub fn commit_inner<G: CurveGroup<ScalarField = F>>(
     &self,
     blinds: &[F],
     gens: &MultiCommitGens<G>,

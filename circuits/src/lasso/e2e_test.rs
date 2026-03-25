@@ -7,12 +7,9 @@ use crate::lasso::{
     surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
   },
   subtables::{
-    and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
-    softmax::SoftmaxSubtableStrategy,
-    SubtableStrategy,
+    SubtableStrategy, and::AndSubtableStrategy, gelu::GeLUSubtableStrategy, layernorm::RMSNormSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
   },
-  utils::math::Math,
-  utils::random::RandomTape,
+  utils::{math::Math, random::RandomTape},
 };
 
 macro_rules! e2e_test {
@@ -106,5 +103,23 @@ e2e_test!(
   Fr,
   /* C= */ 2,
   /* M= */ 256, // 1 << 8 (SEG_LIMB_BITS)
+  /* sparsity= */ 16
+);
+e2e_test!(
+  prove_1d_rmsnorm,
+  RMSNormSubtableStrategy,
+  G1Projective,
+  Fr,
+  /* C= */ 1,
+  /* M= */ 65536, // 1 << 16 (TABLE_SIZE)
+  /* sparsity= */ 16
+);
+e2e_test!(
+  prove_1d_gelu,
+  GeLUSubtableStrategy,
+  G1Projective,
+  Fr,
+  /* C= */ 1,
+  /* M= */ 65536, // 1 << 16 (TABLE_SIZE)
   /* sparsity= */ 16
 );
