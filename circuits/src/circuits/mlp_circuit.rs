@@ -12,7 +12,11 @@ use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, FieldVar},
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
-    circuits::common::{BenchmarkResult, prove_and_verify_factored_multi_link},
+    circuits::common::{
+        BenchmarkResult,
+        factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
+        pad_lasso_u_values, rss_mb,
+    },
     config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::{
         activation::gelu::{GeLUBundle, enforce_gelu},
@@ -187,6 +191,7 @@ where
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup (Num Commit: {:?}) ===", num_commit_1);
+        let mem_pre_setup = rss_mb();
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
@@ -195,6 +200,7 @@ where
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
+        let mem_post_setup = rss_mb();
 
         let pvk = prepare_verifying_key::<E>(&params.vk);
 
@@ -228,7 +234,13 @@ where
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
         let num_pub = cs_witness.num_instance_variables() - 1;
+
+        // ── Groth16 commit (Pedersen cm1 from VK) ───────────────────────────
+        let mem0 = rss_mb(); // baseline before commit
+        let groth16_commit_start = Instant::now();
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let groth16_commit_ms = groth16_commit_start.elapsed().as_millis();
+        let mem1 = rss_mb(); // after commit
 
         // ── [1] Groth16 Prove ────────────────────────────────────────────────
         println!("=== [1] LegoGroth16 GenProof ===");
@@ -252,16 +264,16 @@ where
         let groth16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let groth16_verify_time = groth16_verify_start.elapsed();
+        let mem2 = rss_mb(); // after Groth16 prove+verify
 
         println!("  - LegoGroth16 SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::Error::msg(format!("{:?}", e)));
         }
 
-        // ── [2] Lasso (prove + verify bundled inside helpers) ────────────────
-        println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
+        // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
+        println!("=== [2] Lasso Lookup Proofs: MLP Sections ===");
         let lasso_start = Instant::now();
-        let dim = sample_circuit.norm1.q_ri[0][0].len();
         let (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, b"lasso_rms1", &mut rng)?;
         let (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2) = run_lasso_for_gelu(
             &sample_circuit.gelu1,
@@ -281,26 +293,35 @@ where
         let res_remainders = run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
         let u_values: Vec<Fr> = sample_circuit.committed_vars.borrow().iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
         let lasso_time = lasso_start.elapsed();
+        let mem3 = rss_mb(); // after all Lasso phases
 
         let mut lasso_results = vec![
-            (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1), // res_rms1
-            (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2), // res_gelu
-            (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3), // res_rms2
+            (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1),
+            (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2),
+            (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3),
         ];
         lasso_results.extend(res_remainders);
 
-        // ── [3] CP-Link (setup + keygen + prove + verify bundled) ────────────
-        let cp_link_start = Instant::now();
-        prove_and_verify_factored_multi_link::<E>(
-            &params.vk,
-            num_pub,
-            v1,
-            cm1,
-            lasso_results,
-            u_values,
-            &mut rng,
-        )?;
-        let cp_link_time = cp_link_start.elapsed();
+        // ── [3] CP-Link (setup/keygen, prove, verify timed separately) ───────
+        let u_padded = pad_lasso_u_values::<E>(&lasso_results, &u_values);
+
+        let cp_setup_start = Instant::now();
+        let (pp, crs) = factored_link_setup::<E, _>(&params.vk, num_pub, u_values.len(), &lasso_results, &mut rng);
+        let (ek, vk_link) = factored_link_keygen::<E, _>(&pp, crs, &mut rng);
+        let cp_setup_ms = cp_setup_start.elapsed().as_millis();
+
+        let cp_prove_start = Instant::now();
+        let (proof_link, instance) = factored_link_prove::<E, _>(&pp, &ek, v1, cm1, &lasso_results, u_padded, &mut rng);
+        let cp_prove_ms = cp_prove_start.elapsed().as_millis();
+        let mem4 = rss_mb(); // after CP-Link prove
+
+        let cp_verify_start = Instant::now();
+        if !factored_link_verify::<E>(&pp, &vk_link, &instance, &proof_link) {
+            return Err(anyhow::anyhow!("Factored link verification failed"));
+        }
+        println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
+        let cp_verify_ms = cp_verify_start.elapsed().as_millis();
+        let mem5 = rss_mb(); // after CP-Link verify
 
         let e2e_time = e2e_start.elapsed();
 
@@ -310,15 +331,28 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit: "mlp".to_string(),
-            constraints: num_constraints,
-            setup_ms: setup_time.as_millis(),
-            proof_size_bytes: proof_size,
-            groth16_prove_ms: groth16_prove_time.as_millis(),
-            lasso_ms: lasso_time.as_millis(),
-            cp_link_ms: cp_link_time.as_millis(),
+            circuit:           "mlp".to_string(),
+            constraints:       num_constraints,
+            setup_ms:          setup_time.as_millis(),
+            groth16_commit_ms,
+            groth16_prove_ms:  groth16_prove_time.as_millis(),
             groth16_verify_ms: groth16_verify_time.as_millis(),
-            end_to_end_ms: e2e_time.as_millis(),
+            lasso_ms:          lasso_time.as_millis(),
+            cp_link_setup_ms:  cp_setup_ms,
+            cp_link_prove_ms:  cp_prove_ms,
+            cp_link_verify_ms: cp_verify_ms,
+            end_to_end_ms:     e2e_time.as_millis(),
+            proof_size_bytes:  proof_size,
+            // mem_pre_setup → mem_post_setup: LegoGroth16 setup
+            // mem0 (=mem_post_setup) → mem1: Groth16 commit (cm1_from_vk)
+            // mem1 → mem2: Groth16 prove+verify
+            // mem2 → mem3: all Lasso phases (commit+prove+verify bundled)
+            // mem3 → mem4: CP-Link setup+prove
+            // mem4 → mem5: CP-Link verify
+            memory_setup_mb:   mem_post_setup - mem_pre_setup,
+            memory_commit_mb:  mem1 - mem0,
+            memory_prove_mb:   mem4 - mem1,
+            memory_verify_mb:  mem5 - mem4,
         }
         .print_json();
     }
@@ -328,7 +362,7 @@ where
 
 #[test]
 fn mlp_test() {
-    let outputs = Path::new("outputs");
+    let outputs = Path::new("outputs_server");
     if !outputs.is_dir() {
         return;
     }

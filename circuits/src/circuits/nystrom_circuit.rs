@@ -12,7 +12,11 @@ use ark_r1cs_std::{R1CSVar, alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, F
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
-    circuits::common::{BenchmarkResult, prove_and_verify_factored_multi_link},
+    circuits::common::{
+        BenchmarkResult,
+        factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
+        pad_lasso_u_values, rss_mb,
+    },
     gadgets::{
         matmul::{
             constraints::{MatrixVar, new_matrix_witness},
@@ -674,6 +678,7 @@ where
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup (d1={:?}, d2={:?}) ===", num_commit_1, num_commit_2);
+        let mem_pre_setup = rss_mb();
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
@@ -682,6 +687,7 @@ where
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
+        let mem_post_setup = rss_mb();
 
         let pvk = prepare_verifying_key::<E>(&params.vk);
 
@@ -718,7 +724,13 @@ where
         let v2 = Fr::rand(&mut rng);
         let num_pub = cs_witness.num_instance_variables() - 1;
 
+        // ── Groth16 commit (Pedersen cm1 from VK) ───────────────────────────
+        let mem0 = rss_mb();
+        let g16_commit_start = Instant::now();
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let g16_commit_ms = g16_commit_start.elapsed().as_millis();
+        let mem1 = rss_mb();
+
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
         println!("=== [1] Building final circuit with Fiat-Shamir challenge ===");
@@ -748,6 +760,7 @@ where
         let groth16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let groth16_verify_time = groth16_verify_start.elapsed();
+        let mem2 = rss_mb();
 
         println!("  - LegoGroth16 SNARK Verification: {:?}", result);
         if let Err(e) = result {
@@ -755,7 +768,7 @@ where
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
-        // ── [2] Lasso (prove + verify bundled inside helpers) ────────────────
+        // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let lasso_start = Instant::now();
         let lasso_sm1 = run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
@@ -763,6 +776,7 @@ where
         let lasso_sm3 = run_lasso_bundle(&final_circuit.sm3, b"lasso_k3", &mut rng)?;
         let lasso_remainders = run_all_remainders_with_link::<Fr, G1>(&final_circuit, &mut rng)?;
         let lasso_time = lasso_start.elapsed();
+        let mem3 = rss_mb();
 
         let mut lasso_results = vec![];
         lasso_results.extend(lasso_sm1);
@@ -770,18 +784,26 @@ where
         lasso_results.extend(lasso_sm3);
         lasso_results.extend(lasso_remainders);
 
-        // ── [3] CP-Link (setup + keygen + prove + verify bundled) ────────────
-        let cp_link_start = Instant::now();
-        prove_and_verify_factored_multi_link::<E>(
-            &params.vk,
-            num_pub,
-            v1,
-            cm1,
-            lasso_results,
-            committed_group1,
-            &mut rng,
-        )?;
-        let cp_link_time = cp_link_start.elapsed();
+        // ── [3] CP-Link (setup/keygen, prove, verify timed separately) ───────
+        let u_padded = pad_lasso_u_values::<E>(&lasso_results, &committed_group1);
+
+        let cp_setup_start = Instant::now();
+        let (pp, crs) = factored_link_setup::<E, _>(&params.vk, num_pub, committed_group1.len(), &lasso_results, &mut rng);
+        let (ek, vk_link) = factored_link_keygen::<E, _>(&pp, crs, &mut rng);
+        let cp_setup_ms = cp_setup_start.elapsed().as_millis();
+
+        let cp_prove_start = Instant::now();
+        let (proof_link, instance) = factored_link_prove::<E, _>(&pp, &ek, v1, cm1, &lasso_results, u_padded, &mut rng);
+        let cp_prove_ms = cp_prove_start.elapsed().as_millis();
+        let mem4 = rss_mb();
+
+        let cp_verify_start = Instant::now();
+        if !factored_link_verify::<E>(&pp, &vk_link, &instance, &proof_link) {
+            return Err(anyhow::anyhow!("Factored link verification failed"));
+        }
+        println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
+        let cp_verify_ms = cp_verify_start.elapsed().as_millis();
+        let mem5 = rss_mb();
 
         let e2e_time = e2e_start.elapsed();
 
@@ -791,15 +813,22 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit: "attention".to_string(),
-            constraints: num_constraints,
-            setup_ms: setup_time.as_millis(),
-            proof_size_bytes: proof_size,
-            groth16_prove_ms: groth16_prove_time.as_millis(),
-            lasso_ms: lasso_time.as_millis(),
-            cp_link_ms: cp_link_time.as_millis(),
+            circuit:           "attention".to_string(),
+            constraints:       num_constraints,
+            setup_ms:          setup_time.as_millis(),
+            groth16_commit_ms: g16_commit_ms,
+            groth16_prove_ms:  groth16_prove_time.as_millis(),
             groth16_verify_ms: groth16_verify_time.as_millis(),
-            end_to_end_ms: e2e_time.as_millis(),
+            lasso_ms:          lasso_time.as_millis(),
+            cp_link_setup_ms:  cp_setup_ms,
+            cp_link_prove_ms:  cp_prove_ms,
+            cp_link_verify_ms: cp_verify_ms,
+            end_to_end_ms:     e2e_time.as_millis(),
+            proof_size_bytes:  proof_size,
+            memory_setup_mb:   mem_post_setup - mem_pre_setup,
+            memory_commit_mb:  mem1 - mem0,
+            memory_prove_mb:   mem4 - mem1,
+            memory_verify_mb:  mem5 - mem4,
         }
         .print_json();
     }
@@ -808,7 +837,7 @@ where
 
 #[test]
 fn attention_test() {
-    let outputs = Path::new("outputs");
+    let outputs = Path::new("outputs_server");
     if !outputs.is_dir() {
         return;
     }
