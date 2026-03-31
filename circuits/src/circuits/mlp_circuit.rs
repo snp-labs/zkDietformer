@@ -15,7 +15,7 @@ use crate::{
     circuits::common::{
         BenchmarkResult,
         factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
-        pad_lasso_u_values, rss_mb,
+        pad_lasso_u_values, rss_mb, total_commitment_size,
     },
     config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::{
@@ -326,6 +326,7 @@ where
         let e2e_time = e2e_start.elapsed();
 
         // ── Benchmark output ─────────────────────────────────────────────────
+        let commitment_size = total_commitment_size::<E>(&cm1, &lasso_results);
         BenchmarkResult {
             file: file_path.file_name()
                 .and_then(|n| n.to_str())
@@ -343,12 +344,7 @@ where
             cp_link_verify_ms: cp_verify_ms,
             end_to_end_ms:     e2e_time.as_millis(),
             proof_size_bytes:  proof_size,
-            // mem_pre_setup → mem_post_setup: LegoGroth16 setup
-            // mem0 (=mem_post_setup) → mem1: Groth16 commit (cm1_from_vk)
-            // mem1 → mem2: Groth16 prove+verify
-            // mem2 → mem3: all Lasso phases (commit+prove+verify bundled)
-            // mem3 → mem4: CP-Link setup+prove
-            // mem4 → mem5: CP-Link verify
+            commitment_size_bytes: commitment_size,
             memory_setup_mb:   mem_post_setup - mem_pre_setup,
             memory_commit_mb:  mem1 - mem0,
             memory_prove_mb:   mem4 - mem1,

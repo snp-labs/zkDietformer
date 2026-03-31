@@ -19,7 +19,9 @@
 #![allow(clippy::assertions_on_result_states)]
 #![allow(incomplete_features)]
 
-
+use mimalloc::MiMalloc;
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 /// High-level zkSNARK circuits for Transformer models.
 pub mod circuits;
 

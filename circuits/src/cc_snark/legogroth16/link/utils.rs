@@ -6,10 +6,13 @@ use ark_ec::{
 use ark_ff::{PrimeField, Zero};
 use ark_std::{
     marker::PhantomData,
-    ops::{AddAssign, Mul},
+    ops::Mul,
     vec,
     vec::Vec,
 };
+
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
 
 use crate::cc_snark::legogroth16::link::error::LinkError;
 
@@ -80,42 +83,50 @@ pub struct SparseLinAlgebra<PE: Pairing> {
 }
 
 impl<PE: Pairing> SparseLinAlgebra<PE> {
-    /// Inner product of a column of a sparse matrix and another (sparse) vector
-    /// this is basically a multi-exp
+
     pub fn sparse_inner_product(
         v: &Vec<PE::ScalarField>,
         w: &Col<PE::G1Affine>,
     ) -> Result<PE::G1Affine, LinkError> {
-        let mut res = PE::G1::zero();
-        for coeffpos in w {
-            let g = coeffpos.val;
-            let i = coeffpos.pos;
-            if v.len() < i {
-                return Err(LinkError::InvalidIndex(i, v.len()));
-            }
-            // XXX: Can be optimized using MSM but its part of setup so less priority
-            // XXX: Should this be optimized for special cases
-            //         (e.g. 0 or 1) or is this already in .mul?
-            let tmp = g.mul(v[i]);
-
-            res.add_assign(&tmp);
+        // Fast path: empty column → identity (zero point).
+        if w.is_empty() {
+            return Ok(PE::G1Affine::zero());
         }
-        Ok(res.into_affine())
+
+        // Collect bases and scalars for a single batched MSM.
+        let mut bases: Vec<PE::G1Affine> = Vec::with_capacity(w.len());
+        let mut scalars: Vec<PE::ScalarField> = Vec::with_capacity(w.len());
+        for cp in w {
+            if v.len() < cp.pos {
+                return Err(LinkError::InvalidIndex(cp.pos, v.len()));
+            }
+            bases.push(cp.val);
+            scalars.push(v[cp.pos]);
+        }
+
+        // Pippenger MSM: O(n / log n) group ops instead of O(n).
+        Ok(PE::G1::msm_unchecked(&bases, &scalars).into_affine())
     }
 
-    /// Inner products of all columns of a sparse matrix and another (sparse) vector to compute the
-    /// matrix multiplication `m^T \dot v` where `m^T` is the transpose of `m`.
-    /// v has dimensions `v.len() x 1` and m has dimensions `nr x nc`. Returns a matrix of dimension `nr x 1`
     pub fn sparse_vector_matrix_mult(
         v: &Vec<PE::ScalarField>,
         m: &SparseMatrix<PE::G1Affine>,
     ) -> Result<Vec<PE::G1Affine>, LinkError> {
-        // the result should contain every column of m multiplied by v
-        let mut res: Vec<PE::G1Affine> = Vec::with_capacity(m.nc);
-        for c in 0..m.nc {
-            res.push(Self::sparse_inner_product(&v, m.get_col(c)?)?);
+        #[cfg(feature = "multicore")]
+        {
+            // Parallel: process all columns concurrently.
+            m.cols
+                .par_iter()
+                .map(|col| Self::sparse_inner_product(v, col))
+                .collect()
         }
-        Ok(res)
+        #[cfg(not(feature = "multicore"))]
+        {
+            m.cols
+                .iter()
+                .map(|col| Self::sparse_inner_product(v, col))
+                .collect()
+        }
     }
 }
 
@@ -124,29 +135,28 @@ pub fn inner_product<PE: Pairing>(a: &[PE::ScalarField], b: &[PE::G1Affine]) -> 
     PE::G1::msm_unchecked(b, &a).into_affine()
 }
 
-/// Scale given vector `v` by scalar `a`
 pub fn scale_vector<PE: Pairing>(
     a: &PE::ScalarField,
     v: &[PE::ScalarField],
 ) -> Vec<PE::ScalarField> {
-    let mut res: Vec<PE::ScalarField> = Vec::with_capacity(v.len());
-    for i in 0..v.len() {
-        let x: PE::ScalarField = a.mul(&v[i]);
-        res.push(x);
-    }
-    res
+    #[cfg(feature = "multicore")]
+    { v.par_iter().map(|vi| a.mul(vi)).collect() }
+    #[cfg(not(feature = "multicore"))]
+    { v.iter().map(|vi| a.mul(vi)).collect() }
 }
 
-/// Given a group element `g` and vector `multiples` of scalars, returns a vector with elements `v_i * g`
+
 pub fn multiples_of_g<G: AffineRepr>(g: &G, multiples: &[G::ScalarField]) -> Vec<G> {
-    // 1. 각 스칼라에 대해 g를 곱하는 연산을 수행합니다.
-    // arkworks 0.5.0의 CurveGroup은 내부적으로 스칼라 곱셈 최적화를 지원합니다.
+    #[cfg(feature = "multicore")]
+    let muls: Vec<G::Group> = multiples
+        .par_iter()
+        .map(|s| g.mul(*s))
+        .collect();
+    #[cfg(not(feature = "multicore"))]
     let muls: Vec<G::Group> = multiples
         .iter()
-        .map(|s| g.mul(*s)) // g(Affine) * s(Scalar) -> Projective
+        .map(|s| g.mul(*s))
         .collect();
 
-    // 2. 결과를 다시 Affine 타입으로 일괄 변환(Normalize)합니다.
-    // G::Group::normalize_batch는 0.5.0에서 Vec<G>를 반환합니다.
     G::Group::normalize_batch(&muls)
 }

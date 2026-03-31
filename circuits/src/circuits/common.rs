@@ -1,5 +1,6 @@
 use anyhow::Result;
 use ark_ec::{AffineRepr, CurveGroup, pairing::Pairing};
+use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::{UniformRand, rand::Rng, Zero};
 
 // ── Memory measurement ───────────────────────────────────────────────────────
@@ -69,6 +70,20 @@ type LassoResult<E> = (
     usize, // actual sparsity before rounding to the next power of two
 );
 
+/// Compute total serialized size (compressed) of the Groth16 Pedersen
+/// commitment (`cm1`) plus all Lasso polynomial commitments.
+pub fn total_commitment_size<E: Pairing>(
+    cm1: &E::G1Affine,
+    lasso_results: &[LassoResult<E>],
+) -> usize {
+    let cm1_size = cm1.serialized_size(Compress::Yes);
+    let lasso_size: usize = lasso_results
+        .iter()
+        .map(|(poly_cm, _, _, _)| poly_cm.serialized_size(Compress::Yes))
+        .sum();
+    cm1_size + lasso_size
+}
+
 // ── BenchmarkResult ─────────────────────────────────────────────────────────
 
 /// Holds all performance metrics for one witness file's proving pipeline.
@@ -110,6 +125,7 @@ pub struct BenchmarkResult {
     pub cp_link_verify_ms: u128,
     pub end_to_end_ms:     u128,
     pub proof_size_bytes:  usize,
+    pub commitment_size_bytes: usize,
     // ── memory (peak-RSS delta per phase, MB) ─────────────────────────────
     pub memory_setup_mb:   f64,
     pub memory_commit_mb:  f64,
@@ -132,6 +148,7 @@ impl BenchmarkResult {
                 "\"constraints\":{c},",
                 "\"setup_ms\":{s},",
                 "\"proof_size_bytes\":{p},",
+                "\"commitment_size_bytes\":{cm_size},",
                 "\"groth16\":{{",
                   "\"commit_ms\":{gc},",
                   "\"prove_ms\":{gp},",
@@ -159,6 +176,7 @@ impl BenchmarkResult {
             c       = self.constraints,
             s       = self.setup_ms,
             p       = self.proof_size_bytes,
+            cm_size = self.commitment_size_bytes,
             gc      = self.groth16_commit_ms,
             gp      = self.groth16_prove_ms,
             gv      = self.groth16_verify_ms,
@@ -290,10 +308,6 @@ pub fn factored_link_verify<E: Pairing>(
 
 
 /// Convenience wrapper that runs all four CP-Link phases in sequence.
-///
-/// For fine-grained timing call `factored_link_setup`, `factored_link_keygen`,
-/// `factored_link_prove`, and `factored_link_verify` directly, bracketing each
-/// with `Instant::now()` / `pad_lasso_u_values`.
 pub fn prove_and_verify_factored_multi_link<E: Pairing>(
     vk: &VerifyingKey<E>,
     num_pub: usize,

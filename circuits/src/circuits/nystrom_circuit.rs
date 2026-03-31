@@ -15,7 +15,7 @@ use crate::{
     circuits::common::{
         BenchmarkResult,
         factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
-        pad_lasso_u_values, rss_mb,
+        pad_lasso_u_values, rss_mb, total_commitment_size,
     },
     gadgets::{
         matmul::{
@@ -808,6 +808,7 @@ where
         let e2e_time = e2e_start.elapsed();
 
         // ── Benchmark output ─────────────────────────────────────────────────
+        let commitment_size = total_commitment_size::<E>(&cm1, &lasso_results);
         BenchmarkResult {
             file: file_path.file_name()
                 .and_then(|n| n.to_str())
@@ -825,6 +826,7 @@ where
             cp_link_verify_ms: cp_verify_ms,
             end_to_end_ms:     e2e_time.as_millis(),
             proof_size_bytes:  proof_size,
+            commitment_size_bytes: commitment_size,
             memory_setup_mb:   mem_post_setup - mem_pre_setup,
             memory_commit_mb:  mem1 - mem0,
             memory_prove_mb:   mem4 - mem1,
@@ -837,7 +839,7 @@ where
 
 #[test]
 fn attention_test() {
-    let outputs = Path::new("outputs_server");
+    let outputs = Path::new("outputs_server_nystrom");
     if !outputs.is_dir() {
         return;
     }
@@ -847,7 +849,7 @@ fn attention_test() {
         if path.is_file()
             && path.file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("mha.attn.witness.npz"))
+                .map_or(false, |n| n.ends_with("transformer_0.mha.attn.witness.npz"))
         {
             targets.push(path);
         }

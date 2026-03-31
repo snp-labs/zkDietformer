@@ -12,6 +12,7 @@ class BertStandardAttention(nn.Module):
         self.seq_len = config["seq_len"]
         
         # BERT는 Landmark를 사용하지 않지만, 인터페이스 통일을 위해 정의
+        # 랜드마크 개수를 시퀀스 개수와 동일하게 통일함으로써, 결과적으로 landmark전략을 쓰지 않는 기존의 BERT를 구현하고 있음
         self.num_landmarks = self.seq_len 
 
     def forward(self, Q, K, V, mask, collect_intermediates: bool = False, save_path: str = None):
@@ -32,7 +33,7 @@ class BertStandardAttention(nn.Module):
         mask2 = mask2.to(Q.dtype).to(Q.device)
 
         # 2. 스케일링 적용 (Nystromformer와 동일한 sqrt(sqrt(d)) 또는 표준 sqrt(d) 선택 가능)
-        # 여기서는 비교의 공정성을 위해 Nystrom 코드의 scale 방식을 따릅니다.
+        # 여기서는 비교의 공정성을 위해 Nystrom 코드의 scale 방식을 따름
         scale = 1.0 / math.sqrt(math.sqrt(self.head_dim))
         
         Q_proc = Q * mask2[:, None, :, None] * scale

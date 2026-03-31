@@ -7,10 +7,13 @@ use crate::cc_snark::linker::{
     Linker,
 };
 
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::Rng, One, UniformRand, Zero};
-use std::ops::{AddAssign, Mul};
+use std::ops::Mul;
+
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
 
 #[derive(Clone, Default, PartialEq, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PP<
@@ -49,13 +52,19 @@ pub struct VK<G2: Clone + Default + CanonicalSerialize + CanonicalDeserialize> {
     pub a: G2,
 }
 
+/// Convert a scalar vector to G2 points by multiplying each scalar with
+/// `pp.g2`.  Parallelized with rayon + batch affine normalization.
 fn vec_to_g2<E: Pairing>(
     pp: &PP<E::G1Affine, E::G2Affine>,
     v: &Vec<E::ScalarField>,
 ) -> Vec<E::G2Affine> {
-    v.iter()
-        .map(|x| (pp.g2 * x).into_affine())
-        .collect::<Vec<_>>()
+    #[cfg(feature = "multicore")]
+    let projective: Vec<E::G2> = v.par_iter().map(|x| pp.g2.mul(*x)).collect();
+    #[cfg(not(feature = "multicore"))]
+    let projective: Vec<E::G2> = v.iter().map(|x| pp.g2.mul(*x)).collect();
+
+    // Batch affine conversion: single Montgomery inversion chain.
+    E::G2::normalize_batch(&projective)
 }
 
 #[derive(Clone, Default, Debug, PartialEq)]
@@ -195,14 +204,9 @@ impl<E: Pairing> Linker<E> for LinkSnark<E> {
 }
 
 impl<E: Pairing> LinkSnark<E> {
+    /// Inner product via batched MSM (Pippenger).
     fn inner_product(w: Vec<E::G1Affine>, v: Vec<E::ScalarField>) -> E::G1Affine {
-        // Take two slices of `ScalarField` and `G1Affine` elements and compute their inner product
         assert_eq!(v.len(), w.len());
-        let mut res: E::G1 = E::G1::zero(); // Initialize a variable to hold the result of the inner product
-        for i in 0..v.len() {
-            let tmp = w[i].mul(v[i]); // Multiply the i-th element of `v` and `w` and store it in a temporary variable
-            res.add_assign(&tmp); // Add the result of the multiplication to `res`
-        }
-        res.into_affine() // Convert `res` to an affine point and return it
+        E::G1::msm_unchecked(&w, &v).into_affine()
     }
 }

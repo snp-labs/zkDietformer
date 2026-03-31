@@ -1,25 +1,28 @@
 use ark_ec::pairing::Pairing;
-use ark_ec::CurveGroup;
+use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_ff::Zero;
 use ark_std::marker::PhantomData;
-use ark_std::ops::{AddAssign, Mul};
+use ark_std::ops::Mul;
 use ark_std::vec;
 use ark_std::vec::Vec;
+
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
 
 /// CoeffPos: A struct to help build sparse matrices.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CoeffPos<T> {
-    val: T,     // value of the coefficient
-    pos: usize, // position of the coefficient in the column
+    pub(crate) val: T,     // value of the coefficient
+    pub(crate) pos: usize, // position of the coefficient in the column
 }
 
 // a column is a vector of CoeffPos-s
-type Col<T> = Vec<CoeffPos<T>>;
+pub(crate) type Col<T> = Vec<CoeffPos<T>>;
 
 /// Column-Major Sparse Matrix
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SparseMatrix<T> {
-    cols: Vec<Col<T>>, // a vector of columns, each column is represented by a vector of CoeffPos-s
+    pub(crate) cols: Vec<Col<T>>, // a vector of columns
     pub nr: usize,     // number of rows
     pub nc: usize,     // number of columns
 }
@@ -59,55 +62,67 @@ pub struct SparseLinAlgebra<E: Pairing> {
 }
 
 impl<E: Pairing> SparseLinAlgebra<E> {
-    // compute the sparse inner product of two vectors: v and w
+    /// Inner product of a sparse column with a dense scalar vector, computed
+    /// via batched MSM (Pippenger's algorithm).
+    ///
+    /// Replaces the previous O(n) individual `g.mul(scalar)` + `add_assign`
+    /// loop with a single `msm_unchecked` call, yielding an O(n / log n)
+    /// speedup for large columns.
     pub fn sparse_inner_product(v: &Vec<E::ScalarField>, w: &Col<E::G1Affine>) -> E::G1Affine {
-        let mut res: E::G1 = E::G1::zero(); // initialize the result as the group's identity element
-        for coeffpos in w {
-            let g = coeffpos.val;
-            let i = coeffpos.pos;
-            // multiply the coefficient with the corresponding element in v and add to the result
-            let tmp = g.mul(v[i]);
-            res.add_assign(&tmp);
+        // Fast path: empty column → identity (zero point).
+        if w.is_empty() {
+            return E::G1::zero().into_affine();
         }
-        res.into_affine() // convert the result back to affine form
+
+        // Collect bases and scalars for a single batched MSM.
+        let mut bases: Vec<E::G1Affine> = Vec::with_capacity(w.len());
+        let mut scalars: Vec<E::ScalarField> = Vec::with_capacity(w.len());
+        for cp in w {
+            bases.push(cp.val);
+            scalars.push(v[cp.pos]);
+        }
+
+        // Pippenger MSM: O(n / log n) group ops instead of O(n).
+        E::G1::msm_unchecked(&bases, &scalars).into_affine()
     }
 
-    // compute the sparse vector-matrix multiplication of a vector v and a sparse matrix m, return the result as a vector
     pub fn sparse_vector_matrix_mult(
         v: &Vec<E::ScalarField>,
         m: &SparseMatrix<E::G1Affine>,
-        t: usize,
+        _t: usize,
     ) -> Vec<E::G1Affine> {
-        // the result should contain every column of m multiplied by v
-        let mut res: Vec<E::G1Affine> = Vec::with_capacity(t);
-        for c in 0..m.nc {
-            res.push(Self::sparse_inner_product(&v, &m.get_col(c)));
+        #[cfg(feature = "multicore")]
+        {
+            m.cols
+                .par_iter()
+                .map(|col| Self::sparse_inner_product(v, col))
+                .collect()
         }
-        res
+        #[cfg(not(feature = "multicore"))]
+        {
+            m.cols
+                .iter()
+                .map(|col| Self::sparse_inner_product(v, col))
+                .collect()
+        }
     }
 }
 
+/// MSM-based inner product between a scalar vector and a G1 vector.
 pub fn inner_product<E: Pairing>(v: &[E::ScalarField], w: &[E::G1Affine]) -> E::G1Affine {
-    // Take two slices of `ScalarField` and `G1Affine` elements and compute their inner product
     assert_eq!(v.len(), w.len());
-    let mut res: E::G1 = E::G1::zero(); // Initialize a variable to hold the result of the inner product
-    for i in 0..v.len() {
-        let tmp = w[i].mul(v[i]); // Multiply the i-th element of `v` and `w` and store it in a temporary variable
-        res.add_assign(&tmp); // Add the result of the multiplication to `res`
-    }
-    res.into_affine() // Convert `res` to an affine point and return it
+    E::G1::msm_unchecked(w, v).into_affine()
 }
 
+/// Scale each element of `v` by scalar `a`.  Parallelized when `multicore`
+/// is enabled.
 pub fn scalar_vector_mult<E: Pairing>(
     a: &E::ScalarField,
     v: &[E::ScalarField],
-    l: usize,
+    _l: usize,
 ) -> Vec<E::ScalarField> {
-    // Multiply each element of the `v` slice by a scalar field element `a`
-    let mut res: Vec<E::ScalarField> = Vec::with_capacity(l); // Create a new vector to hold the result of the multiplication
-    for i in 0..v.len() {
-        let x: E::ScalarField = a.mul(&v[i]); // Multiply the i-th element of `v` by `a` and store it in a new variable `x`
-        res.push(x); // Add `x` to the result vector
-    }
-    res // Return the result vector
+    #[cfg(feature = "multicore")]
+    { v.par_iter().map(|vi| a.mul(vi)).collect() }
+    #[cfg(not(feature = "multicore"))]
+    { v.iter().map(|vi| a.mul(vi)).collect() }
 }
