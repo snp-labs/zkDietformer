@@ -3,47 +3,6 @@ use ark_ec::{AffineRepr, CurveGroup, pairing::Pairing};
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::{UniformRand, rand::Rng, Zero};
 
-// ── Memory measurement ───────────────────────────────────────────────────────
-
-/// Returns the process's **peak** RSS in megabytes via `getrusage(RUSAGE_SELF)`.
-///
-/// On macOS `ru_maxrss` is in **bytes**; on Linux it is in **kilobytes**.
-/// Returns `0.0` on unsupported platforms.
-///
-/// Because `getrusage` reports the high-water mark since process start, two
-/// consecutive calls yield a monotonically non-decreasing value.  The delta
-/// between two calls therefore measures the additional peak memory incurred by
-/// the code that ran between them — a lightweight, zero-dependency proxy for
-/// per-phase memory cost.
-pub fn rss_mb() -> f64 {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        // Minimal repr of POSIX `struct rusage` — only the fields we need.
-        // Both macOS-aarch64/x86_64 and Linux-x86_64 lay out the first three
-        // logical fields identically: two `struct timeval` (each 16 bytes on
-        // 64-bit) followed by `long ru_maxrss`.  We pad the remainder to the
-        // known struct size (144 bytes = 18 × i64) so the stack frame is safe.
-        #[repr(C)]
-        struct RUsage {
-            ru_utime:  [i64; 2],   // struct timeval (tv_sec + tv_usec, 16 B)
-            ru_stime:  [i64; 2],   // struct timeval
-            ru_maxrss: i64,        // peak RSS (bytes on macOS, KB on Linux)
-            _rest:     [i64; 13],  // remaining fields, unused
-        }
-        unsafe extern "C" { fn getrusage(who: i32, usage: *mut RUsage) -> i32; }
-
-        let mut u = RUsage {
-            ru_utime: [0; 2], ru_stime: [0; 2], ru_maxrss: 0, _rest: [0; 13],
-        };
-        unsafe { getrusage(0 /* RUSAGE_SELF */, &mut u as *mut _); }
-        #[cfg(target_os = "macos")]
-        return u.ru_maxrss as f64 / (1024.0 * 1024.0); // bytes → MB
-        #[cfg(target_os = "linux")]
-        return u.ru_maxrss as f64 / 1024.0;             // KB → MB
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    0.0
-}
 use crate::{
     cc_snark::legogroth16::VerifyingKey,
     cc_snark::linker::{
@@ -70,18 +29,17 @@ type LassoResult<E> = (
     usize, // actual sparsity before rounding to the next power of two
 );
 
-/// Compute total serialized size (compressed) of the Groth16 Pedersen
-/// commitment (`cm1`) plus all Lasso polynomial commitments.
-pub fn total_commitment_size<E: Pairing>(
-    cm1: &E::G1Affine,
-    lasso_results: &[LassoResult<E>],
-) -> usize {
-    let cm1_size = cm1.serialized_size(Compress::Yes);
-    let lasso_size: usize = lasso_results
+/// Compressed serialized size of the Groth16 Pedersen commitment (`cm1`).
+pub fn groth16_commitment_size<E: Pairing>(cm1: &E::G1Affine) -> usize {
+    cm1.serialized_size(Compress::Yes)
+}
+
+/// Compressed serialized size of all Lasso polynomial commitments combined.
+pub fn lasso_commitment_size<E: Pairing>(lasso_results: &[LassoResult<E>]) -> usize {
+    lasso_results
         .iter()
         .map(|(poly_cm, _, _, _)| poly_cm.serialized_size(Compress::Yes))
-        .sum();
-    cm1_size + lasso_size
+        .sum()
 }
 
 // ── BenchmarkResult ─────────────────────────────────────────────────────────
@@ -94,21 +52,14 @@ pub fn total_commitment_size<E: Pairing>(
 /// * `groth16_prove_ms` — `create_random_proof`
 /// * `groth16_verify_ms`— `verify_proof`
 /// * `lasso_ms`         — all Lasso `run_lasso_for_*` calls; commit + prove +
-///                        verify are bundled inside the helpers and cannot be
-///                        separated without modifying them
+///                        verify are bundled inside the helpers
 /// * `cp_link_setup_ms` — `factored_link_setup` + `factored_link_keygen`
 /// * `cp_link_prove_ms` — `factored_link_prove`
 /// * `cp_link_verify_ms`— `factored_link_verify`
 ///
-/// # Memory notes
-/// Fields are **peak-RSS deltas** (MB) measured with `rss_mb()`.  Because
-/// `getrusage` reports the high-water mark since process start, the delta
-/// between two consecutive calls measures newly allocated (and not yet freed)
-/// memory for that phase.
-///
 /// Call `print_json()` to emit a single `BENCHMARK_RESULT` JSON line:
 /// ```text
-/// grep 'BENCHMARK_RESULT' test.log | jq '.prove.total_ms'
+/// grep 'BENCHMARK_RESULT' test.log | jq .
 /// ```
 pub struct BenchmarkResult {
     pub file:    String,
@@ -124,22 +75,16 @@ pub struct BenchmarkResult {
     pub cp_link_prove_ms:  u128,
     pub cp_link_verify_ms: u128,
     pub end_to_end_ms:     u128,
+    // ── sizes (bytes) ────────────────────────────────────────────────────
     pub proof_size_bytes:  usize,
-    pub commitment_size_bytes: usize,
-    // ── memory (peak-RSS delta per phase, MB) ─────────────────────────────
-    pub memory_setup_mb:   f64,
-    pub memory_commit_mb:  f64,
-    pub memory_prove_mb:   f64,
-    pub memory_verify_mb:  f64,
+    pub groth16_commitment_size_bytes: usize,
+    pub lasso_commitment_size_bytes:   usize,
 }
 
 impl BenchmarkResult {
     /// Prints a single-line JSON record prefixed with `BENCHMARK_RESULT`.
     /// Parse with: `grep BENCHMARK_RESULT output.log | jq .`
     pub fn print_json(&self) {
-        let total_prove_ms  = self.groth16_prove_ms + self.lasso_ms
-                            + self.cp_link_setup_ms + self.cp_link_prove_ms;
-        let total_verify_ms = self.groth16_verify_ms + self.cp_link_verify_ms;
         println!(
             concat!(
                 "BENCHMARK_RESULT {{",
@@ -148,7 +93,8 @@ impl BenchmarkResult {
                 "\"constraints\":{c},",
                 "\"setup_ms\":{s},",
                 "\"proof_size_bytes\":{p},",
-                "\"commitment_size_bytes\":{cm_size},",
+                "\"groth16_commitment_size_bytes\":{g16_cm},",
+                "\"lasso_commitment_size_bytes\":{lasso_cm},",
                 "\"groth16\":{{",
                   "\"commit_ms\":{gc},",
                   "\"prove_ms\":{gp},",
@@ -160,37 +106,24 @@ impl BenchmarkResult {
                   "\"prove_ms\":{cp},",
                   "\"verify_ms\":{cv}",
                 "}},",
-                "\"prove\":{{\"total_ms\":{tp}}},",
-                "\"verify\":{{\"total_ms\":{tv}}},",
-                "\"memory_mb\":{{",
-                  "\"setup\":{ms:.2},",
-                  "\"commit\":{mc:.2},",
-                  "\"prove\":{mp:.2},",
-                  "\"verify\":{mv:.2}",
-                "}},",
                 "\"end_to_end_ms\":{e2e}",
                 "}}"
             ),
-            file    = self.file,
-            circuit = self.circuit,
-            c       = self.constraints,
-            s       = self.setup_ms,
-            p       = self.proof_size_bytes,
-            cm_size = self.commitment_size_bytes,
-            gc      = self.groth16_commit_ms,
-            gp      = self.groth16_prove_ms,
-            gv      = self.groth16_verify_ms,
-            lp      = self.lasso_ms,
-            cs      = self.cp_link_setup_ms,
-            cp      = self.cp_link_prove_ms,
-            cv      = self.cp_link_verify_ms,
-            tp      = total_prove_ms,
-            tv      = total_verify_ms,
-            ms      = self.memory_setup_mb,
-            mc      = self.memory_commit_mb,
-            mp      = self.memory_prove_mb,
-            mv      = self.memory_verify_mb,
-            e2e     = self.end_to_end_ms,
+            file     = self.file,
+            circuit  = self.circuit,
+            c        = self.constraints,
+            s        = self.setup_ms,
+            p        = self.proof_size_bytes,
+            g16_cm   = self.groth16_commitment_size_bytes,
+            lasso_cm = self.lasso_commitment_size_bytes,
+            gc       = self.groth16_commit_ms,
+            gp       = self.groth16_prove_ms,
+            gv       = self.groth16_verify_ms,
+            lp       = self.lasso_ms,
+            cs       = self.cp_link_setup_ms,
+            cp       = self.cp_link_prove_ms,
+            cv       = self.cp_link_verify_ms,
+            e2e      = self.end_to_end_ms,
         );
     }
 }
