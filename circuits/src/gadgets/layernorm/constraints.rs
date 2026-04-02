@@ -52,7 +52,8 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     let mut shift_high_vars = Vec::new();
     let mut out_low_vars = Vec::new();
     let mut out_high_vars = Vec::new();
-    
+    let bit_limit = (dim as f64).log2().ceil() as usize;
+
     for b in 0..bundle.q_ri.len() {
         let mut batch_q_out_vars = Vec::new();
         for s in 0..bundle.q_ri[b].len() {
@@ -88,9 +89,8 @@ pub fn enforce_rmsnorm<F: PrimeField>(
             let r_ms_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_ms[b][s][0]))?;
             shifted_var.enforce_equal(&((&q_ms_var * &dim_var) + &r_ms_var))?;
 
-            // range_check: r_ms_var < dim
-            let bit_limit = (dim as f64).log2().ceil() as usize; 
-            let r_bits = r_ms_var.to_bits_le()?; 
+            // range_check: r_ms_var < dim (bit_limit is loop-invariant, hoisted to caller)
+            let r_bits = r_ms_var.to_bits_le()?;
             for bit in r_bits.iter().skip(bit_limit) {
                 bit.enforce_equal(&Boolean::constant(false))?;
             }

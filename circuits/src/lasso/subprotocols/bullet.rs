@@ -12,6 +12,9 @@ use ark_std::One;
 use core::iter;
 use merlin::Transcript;
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
 
@@ -122,10 +125,22 @@ impl<G: CurveGroup> BulletReductionProof<G> {
 
       let u_inv = u.inverse().unwrap();
 
+      // Each element i is independent: parallelize the halving step.
+      #[cfg(feature = "multicore")]
+      {
+        a_L.par_iter_mut().zip(a_R.par_iter())
+          .zip(b_L.par_iter_mut().zip(b_R.par_iter()))
+          .zip(G_L.par_iter_mut().zip(G_R.par_iter()))
+          .for_each(|(((a_l, a_r), (b_l, b_r)), (g_l, g_r))| {
+            *a_l = *a_l * u + u_inv * *a_r;
+            *b_l = *b_l * u_inv + u * *b_r;
+            *g_l = *g_l * u_inv + *g_r * u;
+          });
+      }
+      #[cfg(not(feature = "multicore"))]
       for i in 0..n {
         a_L[i] = a_L[i] * u + u_inv * a_R[i];
         b_L[i] = b_L[i] * u_inv + u * b_R[i];
-
         G_L[i] = G_L[i] * u_inv + G_R[i] * u;
       }
 
@@ -264,9 +279,19 @@ pub fn inner_product<F: PrimeField>(a: &[F], b: &[F]) -> F {
     a.len() == b.len(),
     "inner_product(a,b): lengths of vectors do not match"
   );
-  let mut out = F::zero();
-  for i in 0..a.len() {
-    out += a[i] * b[i];
+  #[cfg(feature = "multicore")]
+  {
+    a.par_iter()
+      .zip(b.par_iter())
+      .map(|(a_i, b_i)| *a_i * b_i)
+      .sum()
   }
-  out
+  #[cfg(not(feature = "multicore"))]
+  {
+    let mut out = F::zero();
+    for i in 0..a.len() {
+      out += a[i] * b[i];
+    }
+    out
+  }
 }

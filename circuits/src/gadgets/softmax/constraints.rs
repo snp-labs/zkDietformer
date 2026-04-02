@@ -80,6 +80,9 @@ pub fn enforce_softmax<F: PrimeField>(
     let l_len = q_sim[0].len();
     let frac_scale = F::from(1u128 << frac_bits);
 
+    // Precompute the 5 shift constants used in limb reconstruction.
+    let shift_constants: [F; 5] = std::array::from_fn(|k| F::from(1u128 << (16 * k)));
+
     for i in 0..s_len {
         let mut row_exp_sum = FpVar::zero();
         let mut row_exp_totals = Vec::with_capacity(l_len);
@@ -88,8 +91,7 @@ pub fn enforce_softmax<F: PrimeField>(
             let x_recovered = (&q_sim[i][j] * two_k) + &r_matmul[i][j];
             let mut scaled_x = FpVar::zero();
             for k in 0..5 {
-                scaled_x += &limbs[k][i][j] * F::from(1u128 << (16 * k));
-                // limbs 저장
+                scaled_x += &limbs[k][i][j] * shift_constants[k];
                 h_sm_idx_segs[k].push(limbs[k][i][j].clone());
             }
 

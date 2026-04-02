@@ -235,8 +235,10 @@ pub fn factored_link_setup<E: Pairing, R: Rng>(
         l_rows_vec.push(cm.C.len());
         r_cols_vec.push(gens.n);
         actual_sparsities.push(*actual_sp);
-        let mut ck = vec![gens.h.into_affine()];
-        ck.extend(gens.G.iter().map(|g| g.into_affine()));
+        // Batch conversion: single inversion chain for h + G generators.
+        let mut projective = vec![gens.h];
+        projective.extend_from_slice(&gens.G);
+        let ck = E::G1::normalize_batch(&projective);
         cks_lasso_vec.push(ck);
     }
 
@@ -284,11 +286,14 @@ pub fn factored_link_prove<E: Pairing, R: Rng>(
     rng: &mut R,
 ) -> (E::G1Affine, Vec<E::G1Affine>) {
     let mut rs = vec![v_groth];
-    let mut lasso_cms_all = Vec::new();
+    let mut lasso_cms_projective = Vec::new();
     for (cm, blinds, _, _) in lasso_results {
         rs.extend(&blinds.blinds);
-        lasso_cms_all.extend(cm.C.iter().map(|c| c.into_affine()));
+        lasso_cms_projective.extend_from_slice(&cm.C);
     }
+    // Batch affine conversion: single Montgomery inversion chain instead of
+    // per-element into_affine() calls.
+    let lasso_cms_all = E::G1::normalize_batch(&lasso_cms_projective);
 
     let witness = generate_cp_factored_witness::<E>(rs, u_total);
     let instance = generate_cp_factored_instance::<E>(cm_groth, lasso_cms_all);

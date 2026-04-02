@@ -29,18 +29,22 @@ pub fn enforce_linear<F: PrimeField>(
     let m_prime_var = FpVar::new_constant(cs.clone(), bundle.m_prime_lin)?;
     let two_k = FpVar::new_constant(cs.clone(), F::from(1u128 << k_bits))?;
 
-    let mut all_q_vars = Vec::new();
-    let mut all_r_vars = Vec::new(); // 나머지 와이어 저장용 추가
+    let b_dim = q_in_vars.len();
+    let s_dim = if b_dim > 0 { q_in_vars[0].len() } else { 0 };
+    let out_dim = bundle.q_w_diff.len();
 
-    let mut current_low_vars = Vec::new();
-    let mut current_high_vars = Vec::new();
+    let mut all_q_vars = Vec::with_capacity(b_dim);
+    let mut all_r_vars = Vec::with_capacity(b_dim);
 
-    for b in 0..q_in_vars.len() {
-        let mut batch_q = Vec::new();
-        let mut batch_r = Vec::new();
+    let mut current_low_vars = Vec::with_capacity(b_dim * s_dim * out_dim);
+    let mut current_high_vars = Vec::with_capacity(b_dim * s_dim * out_dim);
+
+    for b in 0..b_dim {
+        let mut batch_q = Vec::with_capacity(s_dim);
+        let mut batch_r = Vec::with_capacity(s_dim);
         for s in 0..q_in_vars[b].len() {
-            let mut seq_q = Vec::new();
-            let mut seq_r = Vec::new();
+            let mut seq_q = Vec::with_capacity(out_dim);
+            let mut seq_r = Vec::with_capacity(out_dim);
             
             // 1. 입력 Zero-centering: (Q_in - z_in)
             let q_in_diff: Vec<FpVar<F>> = q_in_vars[b][s].iter()

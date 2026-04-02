@@ -15,6 +15,9 @@ use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<
   G: CurveGroup,
@@ -243,53 +246,60 @@ impl<F: PrimeField> GrandProducts<F> {
     // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
     let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 
-    // init: M hash evaluations => log(M)-variate polynomial
+    // init & final: M hash evaluations each => log(M)-variate polynomials
     assert_eq!(eval_table.len(), final_i.len());
     let num_mem_cells = eval_table.len();
-    let grand_product_input_init = DensePolynomial::new(
-      (0..num_mem_cells)
-        .map(|i| {
-          // addr is given by i, init value is given by eval_table, and ts = 0
-          hash_func(&F::from(i as u64), &eval_table[i], &F::zero())
-        })
-        .collect::<Vec<F>>(),
-    );
-    // final: M hash evaluations => log(M)-variate polynomial
-    let grand_product_input_final = DensePolynomial::new(
-      (0..num_mem_cells)
-        .map(|i| {
-          // addr is given by i, value is given by eval_table, and ts is given by audit_ts
-          hash_func(&F::from(i as u64), &eval_table[i], &final_i[i])
-        })
-        .collect::<Vec<F>>(),
-    );
 
-    // TODO(#30): Parallelize
-
-    // read: s hash evaluations => log(s)-variate polynomial
+    // read & write: s hash evaluations each => log(s)-variate polynomials
     assert_eq!(dim_i.len(), read_i.len());
     let num_ops = dim_i.len();
-    let grand_product_input_read = DensePolynomial::new(
-      (0..num_ops)
-        .map(|i| {
-          // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
-          hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])
-        })
-        .collect::<Vec<F>>(),
-    );
-    // write: s hash evaluation => log(s)-variate polynomial
-    let grand_product_input_write = DensePolynomial::new(
-      (0..num_ops)
-        .map(|i| {
-          // addr is given by dim_i, value is given by eval_table, and ts is given by write_ts = read_ts + 1
-          hash_func(
-            &dim_i[i],
-            &eval_table[dim_i_usize[i]],
-            &(read_i[i] + F::one()),
-          )
-        })
-        .collect::<Vec<F>>(),
-    );
+
+    // All four grand product inputs are independent element-wise hash evaluations.
+    // Use two sequential rayon::join calls (2 concurrent collections each) instead
+    // of nested joins (4 concurrent).  This caps peak parallelism at 2×, reducing
+    // memory pressure and avoiding thread-pool contention with Groth16 phases.
+    #[cfg(feature = "multicore")]
+    let (grand_product_input_init, grand_product_input_final,
+         grand_product_input_read, grand_product_input_write) = {
+      // Phase 1: init + final (both iterate over num_mem_cells)
+      let (init_vals, final_vals) = rayon::join(
+        || (0..num_mem_cells).into_par_iter()
+            .map(|i| hash_func(&F::from(i as u64), &eval_table[i], &F::zero()))
+            .collect::<Vec<F>>(),
+        || (0..num_mem_cells).into_par_iter()
+            .map(|i| hash_func(&F::from(i as u64), &eval_table[i], &final_i[i]))
+            .collect::<Vec<F>>(),
+      );
+      // Phase 2: read + write (both iterate over num_ops)
+      let (read_vals, write_vals) = rayon::join(
+        || (0..num_ops).into_par_iter()
+            .map(|i| hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i]))
+            .collect::<Vec<F>>(),
+        || (0..num_ops).into_par_iter()
+            .map(|i| hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &(read_i[i] + F::one())))
+            .collect::<Vec<F>>(),
+      );
+      (DensePolynomial::new(init_vals), DensePolynomial::new(final_vals),
+       DensePolynomial::new(read_vals), DensePolynomial::new(write_vals))
+    };
+
+    #[cfg(not(feature = "multicore"))]
+    let (grand_product_input_init, grand_product_input_final,
+         grand_product_input_read, grand_product_input_write) = {
+      let init = DensePolynomial::new(
+        (0..num_mem_cells).map(|i| hash_func(&F::from(i as u64), &eval_table[i], &F::zero())).collect(),
+      );
+      let fin = DensePolynomial::new(
+        (0..num_mem_cells).map(|i| hash_func(&F::from(i as u64), &eval_table[i], &final_i[i])).collect(),
+      );
+      let rd = DensePolynomial::new(
+        (0..num_ops).map(|i| hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])).collect(),
+      );
+      let wr = DensePolynomial::new(
+        (0..num_ops).map(|i| hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &(read_i[i] + F::one()))).collect(),
+      );
+      (init, fin, rd, wr)
+    };
 
     (
       grand_product_input_init,

@@ -136,13 +136,9 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
         for b in 0..b_dim {
             for r in 0..row_dim {
                 for c in 0..col_dim {
-                    let val_f = r_matrix[b][r][c];
-                    let val_bytes = val_f.into_bigint().to_bytes_le();
-                    let val_u64 = u64::from_le_bytes(val_bytes[..8].try_into().unwrap());
-                    
-                    let idx0 = (val_u64 & 0xFFFF) as usize;       
-                    let idx1 = ((val_u64 >> 16) & 0x3F) as usize; 
-                    
+                    let val_u64 = r_matrix[b][r][c].into_bigint().as_ref()[0];
+                    let idx0 = (val_u64 & 0xFFFF) as usize;
+                    let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
                     nz.push([idx0, idx1]);
                 }
             }

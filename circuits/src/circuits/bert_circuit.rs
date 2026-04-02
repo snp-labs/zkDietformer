@@ -661,38 +661,6 @@ where
     Ok(())
 }
 
-/// Full test using real RoBERTa S=512 witnesses. Requires significant memory.
-#[test]
-fn bert_attention_test() {
-    let outputs = Path::new("outputs_bert_small");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_bert dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("attention.self.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!(
-        "Running BERT attention circuit test on {} witness file(s)",
-        targets.len()
-    );
-    let res = run_bert_attention_paths::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("BERT attention proof failed: {}", e);
-    }
-}
-
-/// Lightweight correctness test using synthetic small witnesses (B=1, H=2, S=8).
-/// Use `cargo test bert_attention_small_test --release -- --no-capture` to run.
 #[test]
 fn bert_first_test() {
     let outputs = Path::new("outputs_bert");

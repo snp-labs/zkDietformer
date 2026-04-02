@@ -84,10 +84,9 @@ pub fn run_all_bert_remainders_with_link(
             for h in 0..h_dim {
                 for r in 0..row_dim {
                     for c in 0..col_dim {
-                        let val_bytes = r_matrix[b][h][r][c].into_bigint().to_bytes_le();
-                        let val_u64 = u64::from_le_bytes(val_bytes[..8].try_into().unwrap());
-                        let idx0 = (val_u64 & 0xFFFF) as usize;        // low 16 bits
-                        let idx1 = ((val_u64 >> 16) & 0x3F) as usize;  // next 6 bits
+                        let val_u64 = r_matrix[b][h][r][c].into_bigint().as_ref()[0];
+                        let idx0 = (val_u64 & 0xFFFF) as usize;
+                        let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
                         nz.push([idx0, idx1]);
                     }
                 }
@@ -131,11 +130,7 @@ pub fn run_all_bert_remainders_with_link(
                 for s1 in 0..s1_num {
                     for s2 in 0..s2_num {
                         for k in 0..c_seg {
-                            let val_bytes = r_exp_5d[k][b][h][s1][s2].into_bigint().to_bytes_le();
-                            let val_u64 = u64::from_le_bytes(
-                                val_bytes[..8].try_into().unwrap_or([0u8; 8])
-                            );
-                            nz.push([val_u64 as usize]);
+                            nz.push([r_exp_5d[k][b][h][s1][s2].into_bigint().as_ref()[0] as usize]);
                         }
                     }
                 }
@@ -175,11 +170,7 @@ pub fn run_all_bert_remainders_with_link(
             for h in 0..h_dim {
                 for s in 0..s_dim {
                     for l in 0..l_dim {
-                        let val_bytes = matrix_4d[b][h][s][l].into_bigint().to_bytes_le();
-                        let val_u64 = u64::from_le_bytes(
-                            val_bytes[..8].try_into().unwrap_or([0u8; 8])
-                        );
-                        nz.push([val_u64 as usize]);
+                        nz.push([matrix_4d[b][h][s][l].into_bigint().as_ref()[0] as usize]);
                     }
                 }
             }

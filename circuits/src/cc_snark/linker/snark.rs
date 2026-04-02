@@ -164,7 +164,7 @@ impl<E: Pairing> Linker<E> for LinkSnark<E> {
         rng: &mut R,
     ) -> (Self::Proof, Self::CM) {
         (
-            Self::inner_product(ek.p.clone(), witness.to_vec()),
+            Self::inner_product(&ek.p, &witness),
             PhantomData,
         )
     }
@@ -205,8 +205,8 @@ impl<E: Pairing> Linker<E> for LinkSnark<E> {
 
 impl<E: Pairing> LinkSnark<E> {
     /// Inner product via batched MSM (Pippenger).
-    fn inner_product(w: Vec<E::G1Affine>, v: Vec<E::ScalarField>) -> E::G1Affine {
+    fn inner_product(w: &[E::G1Affine], v: &[E::ScalarField]) -> E::G1Affine {
         assert_eq!(v.len(), w.len());
-        E::G1::msm_unchecked(&w, &v).into_affine()
+        E::G1::msm_unchecked(w, v).into_affine()
     }
 }

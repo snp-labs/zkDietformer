@@ -78,11 +78,7 @@ pub fn prove_lasso_for_softmax(
                 for l in 0..l_dim {
                     let mut idx_arr = [0usize; SOFTMAX_C];
                     for seg in 0..c_seg {
-                        let val_bigint = limbs[seg][b][h][s][l].into_bigint();
-                        let bytes = val_bigint.to_bytes_le();
-                        let mut limb_bytes = [0u8; 8];
-                        limb_bytes.copy_from_slice(&bytes[0..8]);
-                        idx_arr[seg] = u64::from_le_bytes(limb_bytes) as usize; 
+                        idx_arr[seg] = limbs[seg][b][h][s][l].into_bigint().as_ref()[0] as usize;
                     }
                     nz_indices.push(idx_arr);
                 }
@@ -298,7 +294,8 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
     target_22bit.push((&circuit.sm3.r_sm, "softmax_k3_remainder"));
 
     for (i, r_inv) in circuit.pseudo_inv.r_inv_remainders.iter().enumerate() {
-        target_22bit.push((r_inv, format!("pseudoinverse_step{}_remainder", i).leak()));
+        let label: &'static str = Box::leak(format!("pseudoinverse_step{}_remainder", i).into_boxed_str());
+        target_22bit.push((r_inv, label));
     }
 
     target_22bit.push((&circuit.matmul_temp.r_matmul, "matmul_v_remainder"));
@@ -317,12 +314,9 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
             for h in 0..h_dim {
                 for r in 0..row_dim {
                     for c in 0..col_dim {
-                        let val_f = r_matrix[b][h][r][c];
-                        let val_bytes = val_f.into_bigint().to_bytes_le();
-                        let val_u64 = u64::from_le_bytes(val_bytes[..8].try_into().unwrap());
-                        
-                        let idx0 = (val_u64 & 0xFFFF) as usize;       // 하위 16비트
-                        let idx1 = ((val_u64 >> 16) & 0x3F) as usize; // 상위 6비트
+                        let val_u64 = r_matrix[b][h][r][c].into_bigint().as_ref()[0];
+                        let idx0 = (val_u64 & 0xFFFF) as usize;
+                        let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
                         nz.push([idx0, idx1]);
                     }
                 }
@@ -376,10 +370,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
                 for s in 0..s_dim {
                     for l in 0..l_dim {
                         for c in 0..c_dim {
-                            let val_bytes = r_exp_5d[b][h][s][l][c].into_bigint().to_bytes_le();
-                            let val_u64 = u64::from_le_bytes(val_bytes[..8].try_into().unwrap_or([0; 8]));
-                            // 16비트이므로 청크가 1개만 필요함 (C=1)
-                            nz.push([val_u64 as usize]);
+                            nz.push([r_exp_5d[b][h][s][l][c].into_bigint().as_ref()[0] as usize]);
                         }
                     }
                 }
@@ -418,9 +409,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
             for h in 0..matrix_4d[b].len() {
                 for s in 0..matrix_4d[b][h].len() {
                     for l in 0..matrix_4d[b][h][s].len() {
-                        let val_bytes = matrix_4d[b][h][s][l].into_bigint().to_bytes_le();
-                        let val_u64 = u64::from_le_bytes(val_bytes[..8].try_into().unwrap_or([0; 8]));
-                        nz.push([val_u64 as usize]);
+                        nz.push([matrix_4d[b][h][s][l].into_bigint().as_ref()[0] as usize]);
                     }
                 }
             }

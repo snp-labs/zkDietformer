@@ -826,7 +826,7 @@ where
             cp_link_verify_ms: cp_verify_ms,
             end_to_end_ms:     e2e_time.as_millis(),
             proof_size_bytes:  proof_size,
-            commitment_size_bytes: commitment_size,
+            commitment_size_bytes: commitment_size, // 라쏘까지 합한 값
             memory_setup_mb:   mem_post_setup - mem_pre_setup,
             memory_commit_mb:  mem1 - mem0,
             memory_prove_mb:   mem4 - mem1,
