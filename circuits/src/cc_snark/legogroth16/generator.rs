@@ -4,8 +4,8 @@ use crate::cc_snark::legogroth16::{
     link::{PESubspaceSnark, PP, SparseMatrix, SubspaceSnark},
     r1cs_to_qap::LibsnarkReduction,
 };
-use ark_ec::{CurveGroup, pairing::Pairing, PrimeGroup, VariableBaseMSM};
-use ark_ff::{Field, PrimeField, UniformRand, Zero};
+use ark_ec::{CurveGroup, pairing::Pairing, PrimeGroup};
+use ark_ff::{Field, PrimeField, UniformRand};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError, SynthesisMode,
@@ -315,22 +315,11 @@ where
         num_instance_variables + commit_witness_count_1 as usize + commit_witness_count_2 as usize;
 
     let reduction_time = start_timer!(|| "R1CS to QAP Instance Map with Evaluation");
-    let (a, b, c, zt, qap_num_variables, m_raw) = LibsnarkReduction::instance_map_with_evaluation::<
+    let (a, b, c, zt, _qap_num_variables, m_raw) = LibsnarkReduction::instance_map_with_evaluation::<
         E::ScalarField,
         D<E::ScalarField>,
     >(cs, &t)?;
     end_timer!(reduction_time);
-
-    // Compute query densities
-    let non_zero_a: usize = cfg_into_iter!(0..qap_num_variables)
-        .map(|i| usize::from(!a[i].is_zero()))
-        .sum();
-
-    let non_zero_b: usize = cfg_into_iter!(0..qap_num_variables)
-        .map(|i| usize::from(!b[i].is_zero()))
-        .sum();
-
-    let scalar_bits = E::ScalarField::MODULUS_BIT_SIZE as usize;
 
     let gamma_inverse = gamma.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
     let delta_inverse = delta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;

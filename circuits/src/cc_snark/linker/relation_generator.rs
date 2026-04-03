@@ -201,6 +201,15 @@ pub fn generate_cp_factored_relation<E: Pairing>(
 
     let mut crs = SparseMatrix::new(l_rows, t_cols);
 
+    // Pre-allocate column capacities based on known sparsity:
+    // - Column 0: 1 entry (ck_joint blinding key)
+    // - Columns 1..total_lasso_points: 1-2 entries (blinding + optional row-0)
+    // - Data columns: at most 2 entries (row-0 joint key + one Lasso row)
+    // Most columns get exactly 1 or 2 entries; reserve 2 to avoid reallocation.
+    for col in crs.cols.iter_mut() {
+        col.reserve(2);
+    }
+
     // 1. Row 0: Groth16 joint commitment.
     //
     // ck_joint has (1 + u_len) keys where u_len = committed_group1.len() = Σ actual_sparsity_j.
@@ -213,20 +222,20 @@ pub fn generate_cp_factored_relation<E: Pairing>(
     //     = cm1 - v1 * H
     //
     // Generators for the zero-padded positions are omitted (0·G = identity).
+    let data_col_start = 1 + total_lasso_points;
     crs.insert_val(0, 0, &ck_joint[0]);
     let n_ck_keys = ck_joint.len() - 1; // = u_len = Σ actual_sparsity_j
     let mut ck_idx = 0usize;            // walks ck_joint[1..]
     let mut blk_data_col = 0usize;      // data-column start for the current block
     for j in 0..n_lasso {
         let sp = actual_sparsities[j];
-        let l  = l_rows_vec[j];
-        let r  = r_cols_vec[j];
+        let col_base = data_col_start + blk_data_col;
         for k in 0..sp {
             if ck_idx >= n_ck_keys { break; }
-            crs.insert_val(0, (1 + total_lasso_points) + blk_data_col + k, &ck_joint[ck_idx + 1]);
+            crs.insert_val(0, col_base + k, &ck_joint[ck_idx + 1]);
             ck_idx += 1;
         }
-        blk_data_col += l * r;
+        blk_data_col += l_rows_vec[j] * r_cols_vec[j];
         if ck_idx >= n_ck_keys { break; }
     }
 
@@ -234,24 +243,23 @@ pub fn generate_cp_factored_relation<E: Pairing>(
     let mut current_row_offset = 1;
     let mut current_data_col_offset = 0;
     
+    let data_col_base = 1 + total_lasso_points;
     for j in 0..n_lasso {
-        let L = l_rows_vec[j]; 
-        let R = r_cols_vec[j]; 
-        let ck_lasso = &cks_lasso_vec[j]; 
-        
+        let L = l_rows_vec[j];
+        let R = r_cols_vec[j];
+        let ck_lasso = &cks_lasso_vec[j];
+
         for row_idx in 0..L {
             let row = current_row_offset + row_idx;
-            let r_col = current_row_offset + row_idx; 
-            
-            crs.insert_val(row, r_col, &ck_lasso[0]);
-            
+
+            crs.insert_val(row, row, &ck_lasso[0]);
+
+            let row_data_base = data_col_base + current_data_col_offset + row_idx * R;
             for k in 0..R {
-                let data_idx = row_idx * R + k;
-                let v_col = (1 + total_lasso_points) + current_data_col_offset + data_idx;
-                crs.insert_val(row, v_col, &ck_lasso[k + 1]);
+                crs.insert_val(row, row_data_base + k, &ck_lasso[k + 1]);
             }
         }
-        
+
         current_row_offset += L;
         current_data_col_offset += L * R;
     }

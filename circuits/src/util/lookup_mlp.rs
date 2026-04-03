@@ -102,7 +102,7 @@ pub fn run_lasso_for_gelu(
 
     let sparsity = indices.len();
     let gens = SparsePolyCommitmentGens::<G1>::new(label, GELU_C, sparsity.next_power_of_two(), GELU_C, 16);
-    let (pure_data_commitment, blinds, lasso_gens_n, sparsity_out) = prove_lasso_for_gelu(&indices, &gens, rng, label)?;
+    let (pure_data_commitment, blinds, lasso_gens_n, sparsity_out) = prove_lasso_for_gelu(indices, &gens, rng, label)?;
     Ok((pure_data_commitment, blinds, lasso_gens_n, sparsity_out))
 }
 
@@ -154,7 +154,7 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
 
         let start = Instant::now();
         let link_data = prove_lasso_for_range(
-            &nz,
+            nz,
             &gens,
             rng,
             label.as_bytes(),
@@ -170,7 +170,7 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
 }
 
 pub fn prove_lasso_for_range(
-    nz_indices: &Vec<[usize; KBITS_C]>,
+    nz_indices: Vec<[usize; KBITS_C]>,
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
@@ -178,7 +178,7 @@ pub fn prove_lasso_for_range(
     let sparsity = nz_indices.len();
 
     let log_m = KBITS_M.trailing_zeros() as usize;
-    let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices.clone(), log_m);
+    let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices, log_m);
     let mut densified = DensifiedRepresentation::<Fr, KBITS_C>::from(&lookup_matrix);
 
     println!("\n[Debug] Lasso Range (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
@@ -308,15 +308,15 @@ pub fn prove_lasso_for_rmsnorm(
 }
 
 pub fn prove_lasso_for_gelu(
-    nz_indices: &Vec<[usize; GELU_C]>,
+    nz_indices: Vec<[usize; GELU_C]>,
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
 ) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
     let sparsity = nz_indices.len();
-    
+
     let log_m = GELU_M.trailing_zeros() as usize;
-    let lookup_matrix = SparseLookupMatrix::<GELU_C>::new(nz_indices.clone(), log_m);
+    let lookup_matrix = SparseLookupMatrix::<GELU_C>::new(nz_indices, log_m);
     let mut densified = DensifiedRepresentation::<Fr, GELU_C>::from(&lookup_matrix);
 
     println!("\n[Debug] Lasso GeLU (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());

@@ -3,7 +3,6 @@
 use ark_ec::{
     AffineRepr, CurveGroup, VariableBaseMSM, pairing::Pairing,
 };
-use ark_ff::{PrimeField, Zero};
 use ark_std::{
     marker::PhantomData,
     ops::Mul,

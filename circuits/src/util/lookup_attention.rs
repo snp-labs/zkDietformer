@@ -154,7 +154,7 @@ pub fn prove_lasso_for_softmax(
 
 
 pub fn prove_lasso_for_range_22(
-    nz_indices: &Vec<[usize; KBITS_C]>,
+    nz_indices: Vec<[usize; KBITS_C]>,
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
@@ -162,7 +162,7 @@ pub fn prove_lasso_for_range_22(
     let sparsity = nz_indices.len();
 
     let log_m = KBITS_M.trailing_zeros() as usize;
-    let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices.clone(), log_m);
+    let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices, log_m);
     let mut densified = DensifiedRepresentation::<Fr, KBITS_C>::from(&lookup_matrix);
 
     println!("\n[Debug] Lasso Range (Label: {:?}, Total: {})", std::str::from_utf8(label).unwrap(), densified.dim[0].len());
@@ -219,7 +219,7 @@ pub fn prove_lasso_for_range_22(
 }
 
 pub fn prove_lasso_for_range_16(
-    nz_indices: &Vec<[usize; FRACBITS_C]>,
+    nz_indices: Vec<[usize; FRACBITS_C]>,
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
@@ -227,7 +227,7 @@ pub fn prove_lasso_for_range_16(
     let sparsity = nz_indices.len();
 
     let log_m = FRACBITS_M.trailing_zeros() as usize;
-    let lookup_matrix = SparseLookupMatrix::<FRACBITS_C>::new(nz_indices.clone(), log_m);
+    let lookup_matrix = SparseLookupMatrix::<FRACBITS_C>::new(nz_indices, log_m);
     let mut densified = DensifiedRepresentation::<Fr, FRACBITS_C>::from(&lookup_matrix);
 
     for i in 0..FRACBITS_C {
@@ -333,7 +333,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
 
         let start = Instant::now();
         let link_data = prove_lasso_for_range_22(
-            &nz,
+            nz,
             &gens,
             rng,
             label.as_bytes(),
@@ -387,12 +387,12 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
 
         let start = Instant::now();
         let link_data = prove_lasso_for_range_16(
-            &nz,
+            nz,
             &gens,
             rng,
             label.as_bytes(),
         )?;
-        
+
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
         all_results.push(link_data);
     }
@@ -425,7 +425,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
 
         let start = Instant::now();
         let link_data = prove_lasso_for_range_16(
-            &nz,
+            nz,
             &gens,
             rng,
             label.as_bytes(),

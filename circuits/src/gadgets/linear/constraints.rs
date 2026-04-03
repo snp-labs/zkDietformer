@@ -53,10 +53,11 @@ pub fn enforce_linear<F: PrimeField>(
 
             for out_d in 0..bundle.q_w_diff.len() {
                 // 2. MatMul + Bias: sum((Q_in-z_in)*(Q_w-z_w)) + (Q_b-z_b)
-                let mut acc = FpVar::new_constant(cs.clone(), bundle.q_b_diff[out_d])?;
+                // Use FpVar::Constant for the bias so it stays in the Constant variant.
+                // Multiply FpVar witnesses by native F values via mul_constant (zero constraints).
+                let mut acc = FpVar::Constant(bundle.q_b_diff[out_d]);
                 for in_d in 0..q_in_diff.len() {
-                    let w_diff_var = FpVar::new_constant(cs.clone(), bundle.q_w_diff[out_d][in_d])?;
-                    acc += &q_in_diff[in_d] * &w_diff_var;
+                    acc += &q_in_diff[in_d] * bundle.q_w_diff[out_d][in_d];
                 }
 
                 // 3. Rescaling: numerator = M * (acc + M_prime)

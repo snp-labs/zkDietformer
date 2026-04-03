@@ -48,8 +48,12 @@ pub fn enforce_gelu<F: PrimeField>(
     let two_k = FpVar::new_constant(cs.clone(), F::from(1u128 << k_bits))?;
     
     // Lasso와 동일한 상수 설정
-    let offset = 32768i128; 
+    let offset = 32768i128;
     let gelu_m_limit = 65536i128;
+
+    // Hoist loop-invariant BigInt conversions — these are constant across all (b, s, d).
+    let z_in_i128 = bundle.z_in.into_bigint().as_ref()[0] as i128;
+    let m_gelu_idx_u128 = bundle.m_gelu_idx.into_bigint().as_ref()[0] as u128;
 
     let mut all_out_vars = Vec::new();
     let mut current_low_vars = Vec::new();
@@ -67,11 +71,11 @@ pub fn enforce_gelu<F: PrimeField>(
                 let acc_var = &q_in_diff * &sigmoid_val_var;
                 // Rescaling: numerator = M * (acc + M_prime)
                 let numerator = &m_var * (&acc_var + &m_prime_var);
-                
+
                 // numerator = (Q_out << k) + R_out
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out_sim[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out_gelu[b][s][d]))?;
-                
+
                 let (low, high) = split_remainder_and_push(cs.clone(), &r_out_var, bundle.r_out_gelu[b][s][d])?;
                 current_low_vars.push(low);
                 current_high_vars.push(high);
@@ -84,13 +88,11 @@ pub fn enforce_gelu<F: PrimeField>(
                 // 2. CP-Link를 위한 Lasso 인덱스 생성 및 수집
                 let idx_var = FpVar::new_witness(cs.clone(), || {
                     let q_in_val = q_in_vars[b][s][d].value()?.into_bigint().as_ref()[0] as i128;
-                    let z_in_val = bundle.z_in.into_bigint().as_ref()[0] as i128;
                     let r_in_val = r_in_vars[b][s][d].value()?.into_bigint().as_ref()[0] as i128;
-                    let m_gelu_idx = bundle.m_gelu_idx.into_bigint().as_ref()[0] as u128;
 
-                    let diff = q_in_val - z_in_val;
+                    let diff = q_in_val - z_in_i128;
                     let x_diff_full = (diff << k_bits) + r_in_val;
-                    let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> k_bits;
+                    let scaled_diff = (x_diff_full * m_gelu_idx_u128 as i128) >> k_bits;
                     let mut idx = scaled_diff + offset;
 
                     // Clipping
@@ -100,7 +102,7 @@ pub fn enforce_gelu<F: PrimeField>(
                     Ok(F::from(idx as u64))
                 })?;
 
-                gelu_pool.push(idx_var); 
+                gelu_pool.push(idx_var);
             }
             batch_vars.push(seq_vars);
         }

@@ -162,17 +162,31 @@ pub fn factored_link_setup<E: Pairing, R: Rng>(
     let mut l_rows_vec = Vec::new();
     let mut r_cols_vec = Vec::new();
     let mut actual_sparsities = Vec::new();
-    let mut cks_lasso_vec = Vec::new();
+
+    // Collect all Lasso generator points into a single buffer for one
+    // batched Montgomery inversion chain instead of N separate ones.
+    let mut all_projective = Vec::new();
+    let mut ck_lengths = Vec::new(); // track per-Lasso slice boundaries
 
     for (cm, _, gens, actual_sp) in lasso_results {
         l_rows_vec.push(cm.C.len());
         r_cols_vec.push(gens.n);
         actual_sparsities.push(*actual_sp);
-        // Batch conversion: single inversion chain for h + G generators.
-        let mut projective = vec![gens.h];
-        projective.extend_from_slice(&gens.G);
-        let ck = E::G1::normalize_batch(&projective);
-        cks_lasso_vec.push(ck);
+        let len = 1 + gens.G.len(); // h + G
+        ck_lengths.push(len);
+        all_projective.push(gens.h);
+        all_projective.extend_from_slice(&gens.G);
+    }
+
+    // Single normalize_batch for all Lasso generators combined.
+    let all_affine = E::G1::normalize_batch(&all_projective);
+
+    // Split the flat affine buffer back into per-Lasso commitment key vectors.
+    let mut cks_lasso_vec = Vec::with_capacity(ck_lengths.len());
+    let mut offset = 0;
+    for len in &ck_lengths {
+        cks_lasso_vec.push(all_affine[offset..offset + len].to_vec());
+        offset += len;
     }
 
     // Reuse Groth16 commitment keys: the same bases used to compute proof.d1.

@@ -110,12 +110,13 @@ pub fn compute_circuit_landmarks<F: PrimeField>(
         let mut head_landmarks = Vec::with_capacity(num_landmarks);
 
         for l in 0..num_landmarks {
+            let base = l * seg_size;
             let mut row_landmarks = Vec::with_capacity(dim);
             for d in 0..dim {
                 // 1. 서킷 내에서 구간 합(Sum) 계산
                 let mut sum_val = FpVar::zero();
                 for s in 0..seg_size {
-                    sum_val += &head_matrix[l * seg_size + s][d];
+                    sum_val += &head_matrix[base + s][d];
                 }
 
                 // 2. Landmark 값을 위트니스로 할당 (몫 계산)
@@ -172,10 +173,14 @@ pub fn compute_grouped_rhs<F: PrimeField>(
     let qxt_r_sum: FpVar<F> = qxt_r.iter().sum();
     let g3_r = z_q * &qxt_r_sum;
 
-    // M * (G1_r + constant_term*r_sum - G2_r - G3_r)
-    let mut rhs = Vec::new();
+    // Hoist loop-invariant products: both are constant across i.
+    let const_r_sum = &constant_term * &r_sum;
+    let const_offset = &const_r_sum - &g3_r;
+
+    // M * (G1_r[i] + constant_term*r_sum - G2_r[i] - G3_r)
+    let mut rhs = Vec::with_capacity(g1_r.len());
     for i in 0..g1_r.len() {
-        let val = &g1_r[i] + (&constant_term * &r_sum) - &g2_r[i] - &g3_r;
+        let val = &g1_r[i] + &const_offset - &g2_r[i];
         rhs.push(val * m_var);
     }
     Ok(rhs)

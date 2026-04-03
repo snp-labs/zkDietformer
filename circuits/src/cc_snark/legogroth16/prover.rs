@@ -310,13 +310,6 @@ where
     end_timer!(c_acc_time);
 
     let s_repr = s.into_bigint();
-    let delta_g1_proj = pk_common.delta_g1.into_group();
-
-    let window_size = 3;
-    let scalar_size =
-        <<E as Pairing>::G1Affine as AffineRepr>::ScalarField::MODULUS_BIT_SIZE as usize;
-    let outerc = (scalar_size + window_size - 1) / window_size;
-    //let delta_g1_table = FixedBase::get_window_table(scalar_size, window_size, delta_g1_proj);
 
     let input_assignment_wth_one = cfg_iter!(input_assignment)
         .map(|s| s.into_bigint())

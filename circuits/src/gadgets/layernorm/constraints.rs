@@ -44,6 +44,10 @@ pub fn enforce_rmsnorm<F: PrimeField>(
     let m_prime_var = FpVar::new_constant(cs.clone(), bundle.m_prime_ms)?;
     let gamma_vars = bundle.q_gamma.iter().map(|g| FpVar::new_witness(cs.clone(), || Ok(*g))).collect::<Result<Vec<_>, _>>()?;
     let z_gamma_var = FpVar::new_constant(cs.clone(), bundle.z_gamma)?;
+    // Precompute (gamma[d] - z_gamma) once — invariant across all (b, s) iterations.
+    let gamma_diffs: Vec<FpVar<F>> = gamma_vars.iter()
+        .map(|g| g - &z_gamma_var)
+        .collect();
     let m_norm_var = FpVar::new_constant(cs.clone(), bundle.m_norm)?;
     let m_prime_norm_var = FpVar::new_constant(cs.clone(), bundle.m_prime_norm)?;
     let mut all_q_out_vars = Vec::new();
@@ -101,10 +105,10 @@ pub fn enforce_rmsnorm<F: PrimeField>(
             for d in 0..bundle.q_ri[b][s].len() {
                 // Reuse the linear combination computed in the first loop — no new witness needed.
                 let q_diff_var = q_diff_vars[d].clone();
-                let q_gamma_diff = &gamma_vars[d] - &z_gamma_var;
-                
+
                 // (Q_diff * inv_rms * Q_gamma_diff)
-                let product = &q_diff_var * &inv_rms_var * &q_gamma_diff;
+                // gamma_diffs[d] = (gamma[d] - z_gamma) is precomputed above.
+                let product = &q_diff_var * &inv_rms_var * &gamma_diffs[d];
                 
                 let q_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.q_out[b][s][d]))?;
                 let r_out_var = FpVar::new_witness(cs.clone(), || Ok(bundle.r_out[b][s][d]))?;

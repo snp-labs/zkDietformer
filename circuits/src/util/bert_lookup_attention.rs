@@ -102,7 +102,7 @@ pub fn run_all_bert_remainders_with_link(
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_22(&nz, &gens, rng, label.as_bytes())?;
+        let link_data = prove_lasso_for_range_22(nz, &gens, rng, label.as_bytes())?;
         all_results.extend(link_data);
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
@@ -146,7 +146,7 @@ pub fn run_all_bert_remainders_with_link(
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_16(&nz, &gens, rng, label.as_bytes())?;
+        let link_data = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
@@ -185,7 +185,7 @@ pub fn run_all_bert_remainders_with_link(
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_16(&nz, &gens, rng, label.as_bytes())?;
+        let link_data = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
