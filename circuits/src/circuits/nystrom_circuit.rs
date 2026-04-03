@@ -837,7 +837,7 @@ fn attention_test() {
         if path.is_file()
             && path.file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("transformer_0.mha.attn.witness.npz"))
+                .map_or(false, |n| n.ends_with("mha.attn.witness.npz"))
         {
             targets.push(path);
         }
