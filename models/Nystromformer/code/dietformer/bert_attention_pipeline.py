@@ -126,4 +126,3 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         k_bits=np.uint32(k_bits),
         mask=mask.astype(np.int64)
     )
-    print(f"✅ BERT Standard Attention Witness saved to {out_npz_path}")

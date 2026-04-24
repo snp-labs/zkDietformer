@@ -10,7 +10,7 @@ from gelu_table import generate_gelu_sigmoid_tables, extract_gelu_sigmoid_single
 def process_standard_normalization_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     """
     BERT의 Feed-Forward Network 및 RMSNorm 중간값을 읽어와 
-    Nystromformer와 동일한 규격의 Witness 데이터로 변환합니다.
+    Nystromformer와 동일한 규격의 Witness 데이터로 변환.
     """
     debug = np.load(debug_npz_path, allow_pickle=True)
     
@@ -215,4 +215,3 @@ def process_standard_normalization_debug_npz(debug_npz_path, out_npz_path, k_bit
         rms_table=rms_table,
         gelu_table=gelu_table
     )
-    print(f"✅ BERT Normalization Witness saved to {out_npz_path}")
