@@ -6,3 +6,4 @@
 /// Constraint implementations for matrix multiplication gadgets.
 pub mod constraints;
 pub mod quantized;
+pub mod naive_quantized;
