@@ -20,7 +20,7 @@ use crate::{
     gadgets::{
         matmul::{
             constraints::{MatrixVar, new_matrix_witness},
-            quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivald, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix},
+            quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivalds, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix},
         },
         softmax::constraints::{SoftmaxBundle, enforce_softmax},
     },
@@ -43,7 +43,6 @@ use crate::{
 type G1 = G1Projective;
 #[derive(Clone)]
 pub struct NystromAttentionCircuit<F: PrimeField> {
-    // 공통 입력 (한 번만 로드)
     pub q_q: Vec<Vec<Vec<Vec<F>>>>,       
     pub q_k: Vec<Vec<Vec<Vec<F>>>>,     
     pub q_v: Vec<Vec<Vec<Vec<F>>>>,  
@@ -76,11 +75,7 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
 
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
     /// d2 group: q_q, q_k, q_v — committed via v2 but NOT CP-linked to Lasso.
-    /// NOTE: For the d2 Pedersen commitment in the proof to match these values,
-    /// these witnesses must occupy witness positions [N1..N1+N2] in the R1CS
-    /// assignment. Due to early allocation of q_proc/k_proc/v_proc in
-    /// generate_constraints, a witness-ordering restructure is needed for full
-    /// correctness; this field tracks the references for value extraction.
+    /// NOTE: these witnesses must occupy witness positions [N1..N1+N2] in the R1CS
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
@@ -177,7 +172,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 // Kernel 1
                 let mut h_k1_lows = Vec::new(); 
                 let mut h_k1_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &q_proc[b][h], 
                     &k_l_t, 
@@ -197,7 +192,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let mut h_k2_highs = Vec::new();
                 let q_l_h = &q_landmarks[h];
                 let r_pows_k2: Vec<FpVar<F>> = gen_challenge_vector(&r_var, k2_data.q_sim[b][h][0].len());
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     q_l_h, 
                     &k_l_t, 
@@ -217,7 +212,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let mut h_k3_highs = Vec::new();
                 let k_full_t = transpose_matrix(&k_proc[b][h]);
                 let r_pows_k3 = gen_challenge_vector(&r_var, k3_data.q_sim[b][h][0].len()); 
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &q_landmarks[h], 
                     &k_full_t, 
@@ -363,7 +358,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 // Step 1: P_k2 * Q_inv_k2 = Q_y1
                 let mut h_inv0_lows = Vec::new(); 
                 let mut h_inv0_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &sm2_vars.p[b][h], 
                     &q_inv_var[b][h], 
@@ -380,7 +375,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 // Step 2: Q_y1 * P_k2 = P_k2
                 let mut h_inv1_lows = Vec::new(); 
                 let mut h_inv1_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &q_y_vars[0][b][h], 
                     &sm2_vars.p[b][h], 
@@ -398,7 +393,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 // Step 2-1: Q_inv (A+) * P_k2 (A) = Q_y3
                 let mut h_inv2_lows = Vec::new(); 
                 let mut h_inv2_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &q_inv_var[b][h],             
                     &sm2_vars.p[b][h], 
@@ -415,7 +410,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 // Step 2-2: Q_y3 * Q_inv (A+) = Q_y4
                 let mut h_inv3_lows = Vec::new(); 
                 let mut h_inv3_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &q_y_vars[2][b][h],            
                     &q_inv_var[b][h],
@@ -434,7 +429,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let mut h_temp_lows = Vec::new(); 
                 let mut h_temp_highs = Vec::new();
                 let r_pows_temp = gen_challenge_vector(&r_var, temp_data.q_sim[b][h][0].len());
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &sm3_vars.p[b][h],            
                     &v_proc[b][h],                
@@ -452,7 +447,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let mut h_mid_lows = Vec::new(); 
                 let mut h_mid_highs = Vec::new();
                 let r_pows_mid = gen_challenge_vector(&r_var, mid_data.q_sim[b][h][0].len()); // 길이 L
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &sm1_vars.p[b][h],        
                     &q_inv_var[b][h],         
@@ -470,7 +465,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 let mut h_x_lows = Vec::new(); 
                 let mut h_x_highs = Vec::new();
                 let r_pows_x = gen_challenge_vector(&r_var, x_data.q_sim[b][h][0].len()); // 길이 D
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &mid_data.q_sim[b][h],    
                     &temp_data.q_sim[b][h],   

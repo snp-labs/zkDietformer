@@ -200,7 +200,7 @@ pub fn transpose_matrix<F: PrimeField>(m: &MatrixVar<F>) -> MatrixVar<F> {
     transposed
 }
 
-pub fn enforce_freivald<F: PrimeField>(
+pub fn enforce_freivalds<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
     w_matrix: &MatrixVar<F>,        
     x_matrix_t: &MatrixVar<F>,      

@@ -24,7 +24,7 @@ use crate::{
         matmul::{
             constraints::new_matrix_witness,
             quantized::{
-                MatmulBundle, enforce_freivald, gen_challenge_vector,
+                MatmulBundle, enforce_freivalds, gen_challenge_vector,
                 new_matrix_witness_4d, transpose_matrix,
             },
         },
@@ -148,7 +148,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BertAttentionCircuit<F> {
                     gen_challenge_vector(&r_var, attn_data.q_sim[b][h][0].len());
                 let mut h_attn_lows  = Vec::new();
                 let mut h_attn_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &q_proc[b][h],
                     &k_t,
@@ -207,7 +207,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BertAttentionCircuit<F> {
                 let r_pows_x = gen_challenge_vector(&r_var, x_data.q_sim[b][h][0].len());
                 let mut h_x_lows  = Vec::new();
                 let mut h_x_highs = Vec::new();
-                enforce_freivald(
+                enforce_freivalds(
                     cs.clone(),
                     &sm_vars.p[b][h],
                     &v_proc[b][h],
