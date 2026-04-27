@@ -19,7 +19,7 @@ use crate::{
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
-        bert_circuit::{BertAttentionCircuit, load_bert_attention_circuit},
+        freivalds_matmul::roberta_attn_circuit::{RoBERTaAttentionCircuit, load_roberta_attention_circuit},
     },
     gadgets::{
         matmul::{
@@ -30,19 +30,19 @@ use crate::{
         softmax::constraints::enforce_softmax,
     },
     util::{
-        bert_lookup_attention::{run_bert_lasso_bundle, run_all_bert_remainders_with_link},
+        roberta_attn_lookup::{run_roberta_lasso_bundle, run_all_roberta_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };
 
 type G1 = G1Projective;
 
-/// Newtype wrapper around `BertAttentionCircuit` that uses naive matmul
+/// Newtype wrapper around `RoBertaAttentionCircuit` that uses naive matmul
 /// instead of Freivalds for `generate_constraints`.
 #[derive(Clone)]
-pub struct BertAttentionCircuitNot<F: PrimeField>(pub BertAttentionCircuit<F>);
+pub struct RoBERTaAttentionCircuitNot<F: PrimeField>(pub RoBERTaAttentionCircuit<F>);
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for BertAttentionCircuitNot<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for RoBERTaAttentionCircuitNot<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let inner = self.0;
         inner.committed_vars.borrow_mut().clear();
@@ -205,7 +205,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BertAttentionCircuitNot<F> {
 
 // ── Proving pipeline ─────────────────────────────────────────────────────────
 
-pub fn run_bert_attention_not_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
+pub fn run_roberta_attention_not_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
     E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
@@ -214,26 +214,26 @@ where
 
     for file_path in targets {
         let e2e_start = Instant::now();
-        println!("\n=== [BERT Attention NOT] Processing: {:?} ===", file_path);
+        println!("\n=== [RoBERTa Attention NOT] Processing: {:?} ===", file_path);
 
         // ── Dry-run: count committed witnesses ───────────────────────────────
         let (num_commit_1, num_commit_2) = {
-            let temp = load_bert_attention_circuit::<E>(file_path)?;
+            let temp = load_roberta_attention_circuit::<E>(file_path)?;
             let v1_ptr = Rc::clone(&temp.committed_vars);
             let v2_ptr = Rc::clone(&temp.committed_vars_2);
             let cs = ConstraintSystem::<Fr>::new_ref();
-            BertAttentionCircuitNot(temp).generate_constraints(cs)?;
+            RoBERTaAttentionCircuitNot(temp).generate_constraints(cs)?;
             (v1_ptr.borrow().len() as u32, v2_ptr.borrow().len() as u32)
         };
         println!("Commit counts: d1={}, d2={}", num_commit_1, num_commit_2);
 
-        let sample_circuit = load_bert_attention_circuit::<E>(file_path)?;
+        let sample_circuit = load_roberta_attention_circuit::<E>(file_path)?;
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup (d1={}, d2={}) ===", num_commit_1, num_commit_2);
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
-            BertAttentionCircuitNot(sample_circuit.clone()),
+            RoBERTaAttentionCircuitNot(sample_circuit.clone()),
             num_commit_1,
             num_commit_2,
             &mut rng,
@@ -245,7 +245,7 @@ where
 
         // ── Witness extraction ────────────────────────────────────────────────
         let cs_witness = ConstraintSystem::<Fr>::new_ref();
-        BertAttentionCircuitNot(sample_circuit.clone()).generate_constraints(cs_witness.clone())?;
+        RoBERTaAttentionCircuitNot(sample_circuit.clone()).generate_constraints(cs_witness.clone())?;
         let num_constraints = cs_witness.num_constraints();
 
         let committed_group1 = {
@@ -276,7 +276,7 @@ where
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
         println!("=== [1] Rebuilding circuit with Fiat-Shamir challenge ===");
-        let final_inner = BertAttentionCircuit {
+        let final_inner = RoBERTaAttentionCircuit {
             r_challenge: r_fs,
             ..sample_circuit.clone()
         };
@@ -284,7 +284,7 @@ where
         // ── [1] Groth16 Prove ────────────────────────────────────────────────
         let g16_prove_start = Instant::now();
         let proof = create_random_proof::<E, _, _>(
-            BertAttentionCircuitNot(final_inner.clone()),
+            RoBERTaAttentionCircuitNot(final_inner.clone()),
             v1,
             v2,
             &params,
@@ -305,18 +305,18 @@ where
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let g16_verify_time = g16_verify_start.elapsed();
 
-        println!("  - BERT Attention NOT SNARK Verification: {:?}", result);
+        println!("  - RoBERTa Attention NOT SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
         // ── [2] Lasso (uses original circuit type — data fields identical) ───
-        println!("=== [2] BERT Attention NOT Lasso Lookup Proofs ===");
+        println!("=== [2] RoBERTa Attention NOT Lasso Lookup Proofs ===");
         let lasso_start = Instant::now();
         let lasso_sm =
-            run_bert_lasso_bundle(&final_inner.sm, b"bert_lasso_sm", &mut rng)?;
+            run_roberta_lasso_bundle(&final_inner.sm, b"roberta_lasso_sm", &mut rng)?;
         let lasso_remainders =
-            run_all_bert_remainders_with_link(&final_inner, &mut rng)?;
+            run_all_roberta_remainders_with_link(&final_inner, &mut rng)?;
         let lasso_time = lasso_start.elapsed();
 
         let mut lasso_results = Vec::new();
@@ -350,7 +350,7 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "bert_attention_not".to_string(),
+            circuit:           "roberta_attention_not".to_string(),
             constraints:       num_constraints,
             setup_ms:          setup_time.as_millis(),
             groth16_commit_ms: g16_commit_ms,
@@ -371,13 +371,13 @@ where
 }
 
 #[test]
-fn bert_attention_not_test() {
-    let outputs = Path::new("outputs_bert");
+fn roberta_attention_not_test() {
+    let outputs = Path::new("outputs_roberta");
     if !outputs.is_dir() {
         return;
     }
     let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_bert dir") {
+    for entry in fs::read_dir(outputs).expect("reading outputs_roberta dir") {
         let path = entry.expect("dir entry").path();
         if path.is_file()
             && path
@@ -390,11 +390,11 @@ fn bert_attention_not_test() {
     }
     targets.sort();
     println!(
-        "Running BERT attention NOT circuit test on {} witness file(s)",
+        "Running RoBERTa attention NOT circuit test on {} witness file(s)",
         targets.len()
     );
-    let res = run_bert_attention_not_paths::<Bn254>(&targets);
+    let res = run_roberta_attention_not_paths::<Bn254>(&targets);
     if let Err(e) = res {
-        panic!("BERT attention NOT proof failed: {}", e);
+        panic!("RoBERTa attention NOT proof failed: {}", e);
     }
 }

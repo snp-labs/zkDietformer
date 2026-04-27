@@ -3,7 +3,7 @@ import os
 import glob
 
 def debug_bert_normalization(witness_path, k_bits=22, frac_bits=16):
-    print(f"=== 🔍 BERT Normalization Circuit Debugging: {os.path.basename(witness_path)} ===")
+    print(f"=== 🔍 RoBERTa Normalization Circuit Debugging: {os.path.basename(witness_path)} ===")
     sim = np.load(witness_path, allow_pickle=True)
     
     # [1] RMSNorm 검증 (rms1, rms2)

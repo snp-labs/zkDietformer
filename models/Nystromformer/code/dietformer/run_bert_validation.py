@@ -53,7 +53,7 @@ dataset = CorpusDataset(folder_path=data_folder, file_json="dev.json", files_per
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
 data_loader = DataLoader(dataset, batch_size=pretraining_config["batch_size"], collate_fn=data_collator)
 
-########################### Loading BERT Model ###########################
+########################### Loading RoBERTa Model ###########################
 
 device = torch.device("cpu") # 실험을 위해 CPU 설정 (GPU 사용 시 "cuda"로 변경)
 
@@ -212,7 +212,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
             # Attention witness
             witness_path = debug_path.replace(".npz", ".witness.npz")
             process_standard_attn_debug_npz(debug_path, witness_path, k_bits=22)
-            print(f"[BERT Batch {batch_idx}] Generated Standard Attention Witness: {witness_path}")
+            print(f"[RoBERTa Batch {batch_idx}] Generated Standard Attention Witness: {witness_path}")
 
             # Normalization witness: 어텐션 모듈명에서 레이어 인덱스 추출하여 매핑
             m = re.search(r'layer\.(\d+)', name)
@@ -225,11 +225,11 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
 
                     norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
                     process_standard_normalization_debug_npz(norm_debug_path, norm_witness_path, k_bits=22)
-                    print(f"[BERT Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
+                    print(f"[RoBERTa Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
 
 ########################### Main Loop ###########################
 
-print(f"Starting BERT Baseline Validation for {pretraining_config['validate_batches_per_epoch']} batches...")
+print(f"Starting RoBERTa Baseline Validation for {pretraining_config['validate_batches_per_epoch']} batches...")
 pretrain_dataloader_iter = enumerate(data_loader)
 
 for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
@@ -252,7 +252,7 @@ for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
             inputs = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**inputs)
             
-            # Loss 및 Accuracy 추출 (BERT 기본 출력 사용)
+            # Loss 및 Accuracy 추출 (RoBERTa 기본 출력 사용)
             summary["loss"] = outputs.loss.item() if outputs.loss is not None else 0.0
             # MLM 정확도 계산 생략(필요시 추가)
         t1 = time.time()
@@ -266,4 +266,4 @@ for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
             log_f.flush()
 
 log_f.close()
-print("BERT Baseline Validation Completed.")
+print("RoBERTa Baseline Validation Completed.")

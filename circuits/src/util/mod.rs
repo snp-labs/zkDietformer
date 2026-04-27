@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 pub mod load;
 pub mod utils;
-pub mod lookup_mlp;
-pub mod lookup_attention;
-pub mod bert_lookup_attention;
+pub mod mlp_lookup;
+pub mod nystrom_attn_lookup;
+pub mod roberta_attn_lookup;

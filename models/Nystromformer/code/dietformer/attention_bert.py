@@ -59,7 +59,7 @@ class BertStandardAttention(nn.Module):
         # Context Vector 계산: (B, H, S, D)
         X = torch.matmul(attn_weights, V)
 
-        # 4. 중간값 저장 (BERT 전용)
+        # 4. 중간값 저장 (RoBERTa 전용)
         if collect_intermediates:
             debug["raw_scores"] = raw_scores.detach().cpu().numpy()
             debug["attn_weights"] = attn_weights.detach().cpu().numpy()
@@ -82,7 +82,7 @@ class BertStandardAttention(nn.Module):
         try:
             np.savez_compressed(save_path, **np_save)
         except Exception as e:
-            print(f"Warning: failed to save BERT attention debug npz to {save_path}: {e}")
+            print(f"Warning: failed to save RoBERTa attention debug npz to {save_path}: {e}")
 
     def extra_repr(self):
         return f'standard_attention, seq_len={self.seq_len}, heads={self.num_head}'

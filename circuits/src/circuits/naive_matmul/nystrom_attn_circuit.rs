@@ -16,7 +16,7 @@ use crate::{
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
-        nystrom_circuit::{NystromAttentionCircuit, load_nystrom_circuit},
+        freivalds_matmul::nystrom_attn_circuit::{NystromAttentionCircuit, load_nystrom_circuit},
     },
     gadgets::{
         matmul::{
@@ -31,7 +31,7 @@ use crate::{
         softmax::constraints::enforce_softmax,
     },
     util::{
-        lookup_attention::{run_lasso_bundle, run_all_remainders_with_link},
+        nystrom_attn_lookup::{run_lasso_bundle, run_all_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };

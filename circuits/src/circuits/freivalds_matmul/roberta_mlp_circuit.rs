@@ -15,31 +15,31 @@ use crate::{
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
-        mlp_circuit::{NystromMLPCircuit, load_nystrom_circuit},
+        freivalds_matmul::nystrom_mlp_circuit::{NystromMLPCircuit, load_nystrom_circuit},
     },
     util::{
-        lookup_mlp::{run_lasso_for_gelu, run_lasso_for_rmsnorm, run_mlp_remainders},
+        mlp_lookup::{run_lasso_for_gelu, run_lasso_for_rmsnorm, run_mlp_remainders},
         utils::cm1_from_vk,
     },
 };
 
 type G1 = G1Projective;
 
-/// BERT MLP circuit is structurally identical to `NystromMLPCircuit`.
-pub type BertMLPCircuit<F> = NystromMLPCircuit<F>;
+/// RoBERTa MLP circuit is structurally identical to `NystromMLPCircuit`.
+pub type RoBERTaMLPCircuit<F> = NystromMLPCircuit<F>;
 
-/// Load a BERT MLP witness NPZ.
+/// Load a RoBERTa MLP witness NPZ.
 ///
 /// Key naming matches the existing Nystromformer MLP loader exactly
 /// (prefixes: rms1, lin1, gelu, lin2, rms2).
-pub fn load_bert_mlp_circuit<E: Pairing>(path: &Path) -> Result<BertMLPCircuit<E::ScalarField>>
+pub fn load_roberta_mlp_circuit<E: Pairing>(path: &Path) -> Result<RoBERTaMLPCircuit<E::ScalarField>>
 where
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
     load_nystrom_circuit::<E>(path)
 }
 
-pub fn run_bert_mlp_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
+pub fn run_roberta_mlp_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
     E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
@@ -48,11 +48,11 @@ where
 
     for file_path in targets {
         let e2e_start = Instant::now();
-        println!("\n=== [BERT MLP] Processing: {:?} ===", file_path);
+        println!("\n=== [RoBERTa MLP] Processing: {:?} ===", file_path);
 
         // ── Dry-run ──────────────────────────────────────────────────────────
         let num_commit_1 = {
-            let temp = load_bert_mlp_circuit::<E>(file_path)?;
+            let temp = load_roberta_mlp_circuit::<E>(file_path)?;
             let vars_ptr = Rc::clone(&temp.committed_vars);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
@@ -60,7 +60,7 @@ where
         };
         println!("Commit count d1={}", num_commit_1);
 
-        let sample_circuit = load_bert_mlp_circuit::<E>(file_path)?;
+        let sample_circuit = load_roberta_mlp_circuit::<E>(file_path)?;
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup ===");
@@ -143,17 +143,17 @@ where
         let result = verify_proof::<E>(&pvk, &proof, &[]);
         let g16_verify_time = g16_verify_start.elapsed();
 
-        println!("  - BERT MLP SNARK Verification: {:?}", result);
+        println!("  - RoBERTa MLP SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
         // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
-        println!("=== [2] BERT MLP Lasso Lookup Proofs ===");
+        println!("=== [2] RoBERTa MLP Lasso Lookup Proofs ===");
         let lasso_start = Instant::now();
 
         let (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1) =
-            run_lasso_for_rmsnorm(&sample_circuit.norm1, b"bert_mlp_rms1", &mut rng)?;
+            run_lasso_for_rmsnorm(&sample_circuit.norm1, b"roberta_mlp_rms1", &mut rng)?;
 
         let (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2) = run_lasso_for_gelu(
             &sample_circuit.gelu1,
@@ -174,12 +174,12 @@ where
                 .collect::<Vec<Vec<Vec<Fr>>>>(),
             &sample_circuit.ff1.r_out_lin,
             sample_circuit.k_bits,
-            b"bert_mlp_gelu",
+            b"roberta_mlp_gelu",
             &mut rng,
         )?;
 
         let (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3) =
-            run_lasso_for_rmsnorm(&sample_circuit.norm2, b"bert_mlp_rms2", &mut rng)?;
+            run_lasso_for_rmsnorm(&sample_circuit.norm2, b"roberta_mlp_rms2", &mut rng)?;
 
         let mut lasso_results = vec![
             (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1),
@@ -247,7 +247,7 @@ where
 }
 
 #[test]
-fn bert_second_test() {
+fn mlp_baseline_test() {
     let outputs = Path::new("outputs_bert");
     if !outputs.is_dir() {
         return;
@@ -266,11 +266,11 @@ fn bert_second_test() {
     }
     targets.sort();
     println!(
-        "Running BERT MLP circuit test on {} witness file(s)",
+        "Running RoBERTa MLP circuit test on {} witness file(s)",
         targets.len()
     );
-    let res = run_bert_mlp_paths::<Bn254>(&targets);
+    let res = run_roberta_mlp_paths::<Bn254>(&targets);
     if let Err(e) = res {
-        panic!("BERT MLP proof failed: {}", e);
+        panic!("RoBERTa MLP proof failed: {}", e);
     }
 }

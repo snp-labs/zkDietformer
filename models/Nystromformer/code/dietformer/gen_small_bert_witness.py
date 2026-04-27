@@ -1,5 +1,5 @@
 """
-Generate a synthetic small-sequence BERT attention witness NPZ for testing.
+Generate a synthetic small-sequence RoBERTa attention witness NPZ for testing.
 Uses B=1, H=2, S=8, head_dim=8 so the circuit runs in seconds.
 """
 import os

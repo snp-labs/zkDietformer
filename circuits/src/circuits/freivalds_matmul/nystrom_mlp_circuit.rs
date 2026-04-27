@@ -37,7 +37,7 @@ use crate::{
     },
     util::{
         load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64},
-        lookup_mlp::{run_lasso_for_gelu, run_lasso_for_rmsnorm, run_mlp_remainders},
+        mlp_lookup::{run_lasso_for_gelu, run_lasso_for_rmsnorm, run_mlp_remainders},
         utils::{cm1_from_vk, hash_cm_to_field_vec},
     },
 };
@@ -346,7 +346,7 @@ where
 
 #[test]
 fn mlp_test() {
-    let outputs = Path::new("outputs_server");
+    let outputs = Path::new("outputs");
     if !outputs.is_dir() {
         return;
     }

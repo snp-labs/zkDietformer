@@ -35,7 +35,7 @@ use crate::{
     },
     util::{
         load::{read_array_i64, to_field_2d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
-        lookup_attention::{prove_lasso_for_softmax, run_lasso_bundle, run_all_remainders_with_link},
+        nystrom_attn_lookup::{prove_lasso_for_softmax, run_lasso_bundle, run_all_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };
@@ -822,7 +822,7 @@ where
 
 #[test]
 fn attention_test() {
-    let outputs = Path::new("outputs_server_nystrom");
+    let outputs = Path::new("outputs");
     if !outputs.is_dir() {
         return;
     }

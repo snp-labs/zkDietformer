@@ -21,4 +21,4 @@ for idx, chunk in enumerate(chunks, start=1):
         for line in chunk:
             f.write(line.strip() + "\n")
 
-print(f"Saved {len(lines)} lines into 2 files: books_large_p1.txt, books_large_p2.txt")
+print(f"Saved {len(lines)} lines into 2 files: books_small_p1.txt, books_small_p2.txt")

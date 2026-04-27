@@ -1,5 +1,5 @@
 """
-Generate a synthetic small-scale BERT normalization+FFN witness NPZ for testing.
+Generate a synthetic small-scale RoBERTa normalization+FFN witness NPZ for testing.
 Uses B=1, S=4, hidden_dim=8, ffn_dim=16 so the circuit runs in seconds.
 
 Output goes to outputs_bert_small/ as

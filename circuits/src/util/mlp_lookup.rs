@@ -10,7 +10,7 @@ use ark_r1cs_std::{select::CondSelectGadget,alloc::AllocVar, eq::EqGadget, field
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use merlin::Transcript;
 use crate::{
-    cc_snark::legogroth16::{LinkPublicGenerators, create_random_proof_incl_cp_link, generate_random_parameters_incl_cp_link, prepare_verifying_key, verify_proof_incl_cp_link}, circuits::mlp_circuit::NystromMLPCircuit, config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
+    cc_snark::legogroth16::{LinkPublicGenerators, create_random_proof_incl_cp_link, generate_random_parameters_incl_cp_link, prepare_verifying_key, verify_proof_incl_cp_link}, circuits::freivalds_matmul::nystrom_mlp_circuit::NystromMLPCircuit, config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
         activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
     }, lasso::{
         lasso::{
