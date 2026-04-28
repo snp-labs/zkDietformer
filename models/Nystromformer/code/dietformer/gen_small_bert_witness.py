@@ -1,5 +1,5 @@
 """
-Generate a synthetic small-sequence RoBERTa attention witness NPZ for testing.
+Generate a synthetic small-sequence BERT attention witness NPZ for testing.
 Uses B=1, H=2, S=8, head_dim=8 so the circuit runs in seconds.
 """
 import os
@@ -23,7 +23,7 @@ from softmax_table import (
 B, H, S, D = 1, 2, 8, 8   # batch, heads, seq_len, head_dim
 K_BITS = 22
 OUT_DIR = "outputs_bert_small"
-OUT_NAME = "outputs_bert_small-batch0-roberta.encoder.layer.0.attention.self.witness.npz"
+OUT_NAME = "outputs_bert_small-batch0-bert.encoder.layer.0.attention.self.witness.npz"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 rng = np.random.default_rng(42)

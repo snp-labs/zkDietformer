@@ -10,9 +10,9 @@ import numpy as np
 import argparse
 import utils
 
-# BERT/RoBERTa 환경을 위한 라이브러리
-from transformers import RobertaForMaskedLM, RobertaTokenizerFast, DataCollatorForLanguageModeling
-from transformers.models.roberta.modeling_roberta import RobertaSelfAttention
+# BERT 환경을 위한 라이브러리
+from transformers import BertForMaskedLM, BertTokenizerFast, DataCollatorForLanguageModeling
+from transformers.models.bert.modeling_bert import BertSelfAttention
 from torch.utils.data import DataLoader
 
 # 데이터셋 로드
@@ -48,17 +48,17 @@ checkpoint_dir = os.path.abspath(os.path.join(base_dir, "..", "..", relative_cp_
 
 ########################### Loading Dataset ###########################
 
-tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base", model_max_length=model_config["max_seq_len"])
+tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased", model_max_length=model_config["max_seq_len"])
 dataset = CorpusDataset(folder_path=data_folder, file_json="dev.json", files_per_batch=128)
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
 data_loader = DataLoader(dataset, batch_size=pretraining_config["batch_size"], collate_fn=data_collator)
 
-########################### Loading RoBERTa Model ###########################
+########################### Loading BERT Model ###########################
 
 device = torch.device("cpu") # 실험을 위해 CPU 설정 (GPU 사용 시 "cuda"로 변경)
 
-# Baseline용 표준 RoBERTa 모델 로드
-model = RobertaForMaskedLM.from_pretrained("roberta-base").to(device)
+# Baseline용 표준 BERT 모델 로드
+model = BertForMaskedLM.from_pretrained("bert-base-uncased").to(device)
 
 # 로그 설정
 log_f_path = os.path.join(checkpoint_dir, "bert_validation_output.log")
@@ -70,7 +70,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
     os.makedirs(output_dir, exist_ok=True)
 
     # 1. Attention Hook 타겟 모듈 설정
-    target_modules = [(n, m) for n, m in model.named_modules() if isinstance(m, RobertaSelfAttention)]
+    target_modules = [(n, m) for n, m in model.named_modules() if isinstance(m, BertSelfAttention)]
 
     # attention_mask: transformers 4.x에서 keyword arg이므로 클로저로 캡처
     if 'attention_mask' in current_batch and current_batch['attention_mask'] is not None:
@@ -121,22 +121,24 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
         return hook_fn
 
     # ── Normalization / FFN Hooks ────────────────────────────────────────────
-    # bert_normalization_pipeline.py 가 요구하는 모든 키를 캡처한다.
-    # HuggingFace는 nn.LayerNorm을 사용하지만, ZKP 파이프라인은 RMSNorm 규격으로
-    # 처리하므로 ms = x².mean(-1, keepdim=True) 를 LayerNorm 입력에서 직접 계산한다.
+    # bert_normalization_pipeline.py (LayerNorm 식 기반)이 요구하는 키를 캡처한다.
+    # 정확한 평균 μ 와 분산 var 를 hook 안에서 계산해 저장한다 (var는 unbiased=False
+    # 로 PyTorch nn.LayerNorm 의 내부 식과 일치시킨다).
     def make_norm_hooks(layer_key):
-        # Hook 1: post-attention LayerNorm (RobertaSelfOutput.LayerNorm)
+        # Hook 1: post-attention LayerNorm (BertSelfOutput.LayerNorm)
         # inputs[0] = hidden_after_dense_dropout + residual (residual-added tensor)
         def hook_attn_layernorm(module, inputs, output):
             x = inputs[0].detach().cpu()
             saved_norm.setdefault(layer_key, {}).update({
-                "rms_input":  x.numpy(),
-                "ms":         x.pow(2).mean(dim=-1, keepdim=True).numpy(),
-                "rms_weight": module.weight.detach().cpu().numpy(),
-                "rms_output": output.detach().cpu().numpy(),
+                "ln_input":  x.numpy(),
+                "mean":      x.mean(dim=-1, keepdim=True).numpy(),
+                "var":       x.var(dim=-1, unbiased=False, keepdim=True).numpy(),
+                "ln_weight": module.weight.detach().cpu().numpy(),
+                "ln_bias":   module.bias.detach().cpu().numpy(),
+                "ln_output": output.detach().cpu().numpy(),
             })
 
-        # Hook 2: FFN up-projection dense (RobertaIntermediate.dense, before GeLU)
+        # Hook 2: FFN up-projection dense (BertIntermediate.dense, before GeLU)
         def hook_ff1_dense(module, _inputs, output):
             entry = {
                 "linear_weight": module.weight.detach().cpu().numpy(),
@@ -146,11 +148,11 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
                 entry["linear_bias"] = module.bias.detach().cpu().numpy()
             saved_norm.setdefault(layer_key, {}).update(entry)
 
-        # Hook 3: full RobertaIntermediate output (after GeLU activation)
+        # Hook 3: full BertIntermediate output (after GeLU activation)
         def hook_intermediate(_module, _inputs, output):
             saved_norm.setdefault(layer_key, {})["gelu_output"] = output.detach().cpu().numpy()
 
-        # Hook 4: FFN down-projection dense (RobertaOutput.dense, before residual+LayerNorm)
+        # Hook 4: FFN down-projection dense (BertOutput.dense, before residual+LayerNorm)
         def hook_ff2_dense(module, _inputs, output):
             entry = {
                 "linear_weight_ff2": module.weight.detach().cpu().numpy(),
@@ -160,15 +162,17 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
                 entry["linear_bias_ff2"] = module.bias.detach().cpu().numpy()
             saved_norm.setdefault(layer_key, {}).update(entry)
 
-        # Hook 5: post-FFN LayerNorm (RobertaOutput.LayerNorm)
+        # Hook 5: post-FFN LayerNorm (BertOutput.LayerNorm)
         # inputs[0] = ff2_dropout_output + residual (from attention output LayerNorm)
         def hook_ffn_layernorm(module, inputs, output):
             x = inputs[0].detach().cpu()
             saved_norm.setdefault(layer_key, {}).update({
-                "rms_input_rms2":  x.numpy(),
-                "ms_rms2":         x.pow(2).mean(dim=-1, keepdim=True).numpy(),
-                "rms_weight_rms2": module.weight.detach().cpu().numpy(),
-                "rms_output_rms2": output.detach().cpu().numpy(),
+                "ln_input_2":  x.numpy(),
+                "mean_2":      x.mean(dim=-1, keepdim=True).numpy(),
+                "var_2":       x.var(dim=-1, unbiased=False, keepdim=True).numpy(),
+                "ln_weight_2": module.weight.detach().cpu().numpy(),
+                "ln_bias_2":   module.bias.detach().cpu().numpy(),
+                "ln_output_2": output.detach().cpu().numpy(),
             })
 
         return hook_attn_layernorm, hook_ff1_dense, hook_intermediate, hook_ff2_dense, hook_ffn_layernorm
@@ -180,7 +184,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
     norm_handles = []
     num_layers = model.config.num_hidden_layers
     for i in range(num_layers):
-        layer = model.roberta.encoder.layer[i]
+        layer = model.bert.encoder.layer[i]
         layer_key = f"layer_{i}"
         h_aln, h_ff1, h_int, h_ff2, h_fln = make_norm_hooks(layer_key)
         norm_handles.extend([
@@ -212,7 +216,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
             # Attention witness
             witness_path = debug_path.replace(".npz", ".witness.npz")
             process_standard_attn_debug_npz(debug_path, witness_path, k_bits=22)
-            print(f"[RoBERTa Batch {batch_idx}] Generated Standard Attention Witness: {witness_path}")
+            print(f"[BERT Batch {batch_idx}] Generated Standard Attention Witness: {witness_path}")
 
             # Normalization witness: 어텐션 모듈명에서 레이어 인덱스 추출하여 매핑
             m = re.search(r'layer\.(\d+)', name)
@@ -225,11 +229,11 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
 
                     norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
                     process_standard_normalization_debug_npz(norm_debug_path, norm_witness_path, k_bits=22)
-                    print(f"[RoBERTa Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
+                    print(f"[BERT Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
 
 ########################### Main Loop ###########################
 
-print(f"Starting RoBERTa Baseline Validation for {pretraining_config['validate_batches_per_epoch']} batches...")
+print(f"Starting BERT Baseline Validation for {pretraining_config['validate_batches_per_epoch']} batches...")
 pretrain_dataloader_iter = enumerate(data_loader)
 
 for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
@@ -252,7 +256,7 @@ for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
             inputs = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**inputs)
             
-            # Loss 및 Accuracy 추출 (RoBERTa 기본 출력 사용)
+            # Loss 및 Accuracy 추출 (BERT 기본 출력 사용)
             summary["loss"] = outputs.loss.item() if outputs.loss is not None else 0.0
             # MLM 정확도 계산 생략(필요시 추가)
         t1 = time.time()
@@ -266,4 +270,4 @@ for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
             log_f.flush()
 
 log_f.close()
-print("RoBERTa Baseline Validation Completed.")
+print("BERT Baseline Validation Completed.")

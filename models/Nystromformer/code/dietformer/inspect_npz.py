@@ -34,5 +34,5 @@ def inspect_npz(path: str) -> None:
 
 if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else \
-        "outputs_bert/outputs_bert-batch0-roberta.encoder.layer.0.attention.self.witness.npz"
+        "outputs_bert/outputs_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz"
     inspect_npz(path)

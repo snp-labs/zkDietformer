@@ -3,7 +3,7 @@ import os
 import glob
 
 def debug_bert_normalization(witness_path, k_bits=22, frac_bits=16):
-    print(f"=== 🔍 RoBERTa Normalization Circuit Debugging: {os.path.basename(witness_path)} ===")
+    print(f"=== 🔍 BERT Normalization Circuit Debugging: {os.path.basename(witness_path)} ===")
     sim = np.load(witness_path, allow_pickle=True)
     
     # [1] RMSNorm 검증 (rms1, rms2)
@@ -70,7 +70,7 @@ def debug_bert_normalization(witness_path, k_bits=22, frac_bits=16):
         print(f"  - GeLU Lookup & Rescale:   {'✅ PASS' if ok_gelu else '❌ FAIL'}")
 
 if __name__ == "__main__":
-    witness_file = "outputs_bert/outputs_bert-batch0-roberta.encoder.layer.1.attention.self.norm.witness.npz"
+    witness_file = "outputs_bert/outputs_bert-batch0-bert.encoder.layer.1.attention.self.norm.witness.npz"
     if os.path.exists(witness_file):
         debug_bert_normalization(witness_file)
     else:

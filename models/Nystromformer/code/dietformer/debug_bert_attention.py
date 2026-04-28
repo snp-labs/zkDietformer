@@ -40,7 +40,7 @@ def verify_matmul_zen(W, X, Y_sim, R_mat, M, M_prime, z_w, z_x, k_bits):
     return True
 
 def debug_bert_witness(npz_path, k_bits=22, frac_bits=16):
-    print(f"=== 🔍 RoBERTa Attention Circuit Debugging: {os.path.basename(npz_path)} ===")
+    print(f"=== 🔍 BERT Attention Circuit Debugging: {os.path.basename(npz_path)} ===")
     data = np.load(npz_path)
     
     # [1] Attention Score Matmul 검증: (Q-zq) @ (K-zk)^T
@@ -108,5 +108,5 @@ def debug_bert_witness(npz_path, k_bits=22, frac_bits=16):
         print("  - Division Consistency: ❌ FAIL")
 
 if __name__ == "__main__":
-    # 생성된 RoBERTa NPZ 파일 경로를 넣으세요
-    debug_bert_witness("outputs_bert/outputs_bert-batch0-roberta.encoder.layer.0.attention.self.witness.npz")
+    # 생성된 BERT NPZ 파일 경로를 넣으세요
+    debug_bert_witness("outputs_bert/outputs_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz")
