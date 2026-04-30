@@ -36,15 +36,16 @@ use crate::{
     },
     util::{
         load::{to_field_2d_i64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
-        roberta_attn_lookup::{run_roberta_lasso_bundle, run_all_roberta_remainders_with_link},
+        bert_attn_lookup::{run_bert_lasso_bundle, run_all_bert_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };
+use crate::lasso::subtables::softmax::set_softmax_table_dir;
 
 type G1 = G1Projective;
 
 #[derive(Clone)]
-pub struct RoBERTaAttentionCircuit<F: PrimeField> {
+pub struct BERTAttentionCircuit<F: PrimeField> {
     /// Quantized Q, K, V: [batch][head][seq][head_dim]
     pub q_q: Vec<Vec<Vec<Vec<F>>>>,
     pub q_k: Vec<Vec<Vec<Vec<F>>>>,
@@ -75,7 +76,7 @@ pub struct RoBERTaAttentionCircuit<F: PrimeField> {
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for RoBERTaAttentionCircuit<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
         self.committed_vars_2.borrow_mut().clear();
@@ -256,13 +257,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for RoBERTaAttentionCircuit<F> {
 }
 
 
-pub fn load_roberta_attention_circuit<E: Pairing>(
+pub fn load_bert_attention_circuit<E: Pairing>(
     path: &Path,
-) -> Result<RoBERTaAttentionCircuit<E::ScalarField>>
+) -> Result<BERTAttentionCircuit<E::ScalarField>>
 where
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
-    let f = File::open(path).context(format!("opening RoBERTa witness npz {:?}", path))?;
+    let f = File::open(path).context(format!("opening BERT witness npz {:?}", path))?;
     let mut npz = NpzReader::new(f)?;
 
     // ── Inputs ───────────────────────────────────────────────────────────────
@@ -458,7 +459,7 @@ where
         "mask must be [B={b}, S={s}]"
     );
 
-    Ok(RoBERTaAttentionCircuit {
+    Ok(BERTAttentionCircuit {
         q_q: to_field_4d_i64(&q_q_raw),
         q_k: to_field_4d_i64(&q_k_raw),
         q_v: to_field_4d_i64(&q_v_raw),
@@ -481,7 +482,7 @@ where
 
 // ── Proving pipeline ─────────────────────────────────────────────────────────
 
-pub fn run_roberta_attention_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
+pub fn run_bert_attention_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
     E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
@@ -490,11 +491,11 @@ where
 
     for file_path in targets {
         let e2e_start = Instant::now();
-        println!("\n=== [RoBERTa Attention] Processing: {:?} ===", file_path);
+        println!("\n=== [BERT Attention] Processing: {:?} ===", file_path);
 
         // ── Dry-run: count committed witnesses ───────────────────────────────
         let (num_commit_1, num_commit_2) = {
-            let temp = load_roberta_attention_circuit::<E>(file_path)?;
+            let temp = load_bert_attention_circuit::<E>(file_path)?;
             let v1_ptr = Rc::clone(&temp.committed_vars);
             let v2_ptr = Rc::clone(&temp.committed_vars_2);
             let cs = ConstraintSystem::<Fr>::new_ref();
@@ -503,7 +504,7 @@ where
         };
         println!("Commit counts: d1={}, d2={}", num_commit_1, num_commit_2);
 
-        let sample_circuit = load_roberta_attention_circuit::<E>(file_path)?;
+        let sample_circuit = load_bert_attention_circuit::<E>(file_path)?;
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup (d1={}, d2={}) ===", num_commit_1, num_commit_2);
@@ -555,7 +556,7 @@ where
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
         println!("=== [1] Rebuilding circuit with Fiat-Shamir challenge ===");
-        let final_circuit = RoBERTaAttentionCircuit {
+        let final_circuit = BERTAttentionCircuit {
             r_challenge: r_fs,
             ..sample_circuit.clone()
         };
@@ -584,18 +585,18 @@ where
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let g16_verify_time = g16_verify_start.elapsed();
 
-        println!("  - RoBERTa Attention SNARK Verification: {:?}", result);
+        println!("  - BERT Attention SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
         // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
-        println!("=== [2] RoBERTa Attention Lasso Lookup Proofs ===");
+        println!("=== [2] BERT Attention Lasso Lookup Proofs ===");
         let lasso_start = Instant::now();
         let lasso_sm =
-            run_roberta_lasso_bundle(&final_circuit.sm, b"roberta_lasso_sm", &mut rng)?;
+            run_bert_lasso_bundle(&final_circuit.sm, b"bert_lasso_sm", &mut rng)?;
         let lasso_remainders =
-            run_all_roberta_remainders_with_link(&final_circuit, &mut rng)?;
+            run_all_bert_remainders_with_link(&final_circuit, &mut rng)?;
         let lasso_time = lasso_start.elapsed();
 
         let mut lasso_results = Vec::new();
@@ -629,7 +630,7 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "roberta_attention".to_string(),
+            circuit:           "bert_attention".to_string(),
             constraints:       num_constraints,
             setup_ms:          setup_time.as_millis(),
             groth16_commit_ms: g16_commit_ms,
@@ -651,12 +652,12 @@ where
 
 #[test]
 fn attention_baseline_test() {
-    let outputs = Path::new("outputs_roberta");
+    let outputs = Path::new("outputs_bert");
     if !outputs.is_dir() {
         return;
     }
     let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_roberta_small dir") {
+    for entry in fs::read_dir(outputs).expect("reading outputs_bert_small dir") {
         let path = entry.expect("dir entry").path();
         if path.is_file()
             && path
@@ -669,11 +670,116 @@ fn attention_baseline_test() {
     }
     targets.sort();
     println!(
-        "Running RoBERTa attention small circuit test on {} witness file(s)",
+        "Running BERT attention small circuit test on {} witness file(s)",
         targets.len()
     );
-    let res = run_roberta_attention_paths::<Bn254>(&targets);
+    let res = run_bert_attention_paths::<Bn254>(&targets);
     if let Err(e) = res {
-        panic!("RoBERTa attention proof (small) failed: {}", e);
+        panic!("BERT attention proof (small) failed: {}", e);
     }
+}
+
+
+// ── Phase 5-B B6-3: HF BERT Attention 단일 layer prove + verify (Freivalds) ──
+//
+// 자체학습 측 `attention_baseline_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
+// 회로 (`BERTAttentionCircuit`), loader (`load_bert_attention_circuit`),
+// runner (`run_bert_attention_paths`) 모두 자체학습과 동일 — 변경 없이 재사용
+// (B6-3 키 정합성 분석에서 Type A/B/C/E 0 mismatch 확인).
+//
+// 차이점 (자체학습 BERT vs 본 마이그레이션 BERT):
+//   - 디렉터리 default: outputs_bert → outputs_bert (실제 데이터 위치)
+//   - 파일 필터: 동일 (*attention.self.witness.npz)
+//
+// 회로 파일명 `bert_*` 는 legacy 명 (BERT→BERT 마이그레이션 잔여).
+// 실제 사용자 환경 데이터: outputs_bert/ 12 layer × witness.
+//
+// 환경 변수 (모두 optional):
+//   BERT_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_bert")
+//   BERT_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
+//   SOFTMAX_TABLE_PATH       : B6-A1 setter — 미설정 시 witness_dir 자동 사용
+//
+// 메모리 추정: ~40-80 GB (full O(S²=448²) attention).
+//              사용자 노트북 32 GB 부족 가능성 → 클라우드 r5.4xlarge 권장.
+//
+// 실행:
+//   BERT_ATTN_WITNESS_DIR=/path/to/outputs_bert \
+//     cargo test --release bert_attn_hf_single_layer_test -- --nocapture
+#[test]
+fn bert_attn_hf_single_layer_test() {
+    use std::env;
+
+    // ── 환경 변수 ───────────────────────────────────────────────────────────
+    let witness_dir = env::var("BERT_ATTN_WITNESS_DIR")
+        .unwrap_or_else(|_| "outputs_bert".to_string());
+    let layer_idx: usize = env::var("BERT_ATTN_LAYER_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let dir = Path::new(&witness_dir);
+    if !dir.is_dir() {
+        eprintln!(
+            "[skip] BERT_ATTN_WITNESS_DIR={} not a directory. \
+             Set the env var to a valid HF BERT outputs_bert/ dir to run.",
+            witness_dir
+        );
+        return;
+    }
+
+    // ── softmax 표 경로 결정: env var 미설정 시 witness_dir 안의 softmax_tables.npz ─
+    if env::var("SOFTMAX_TABLE_PATH").is_err() {
+        set_softmax_table_dir(dir);
+        println!(
+            "[info] SOFTMAX_TABLE_PATH not set; using {}/softmax_tables.npz",
+            witness_dir
+        );
+    }
+
+    // ── npz 수집 + 정렬 + layer_idx 단일 추출 ──────────────────────────────
+    let mut all_targets: Vec<std::path::PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir).expect("reading witness dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with("attention.self.witness.npz"))
+        {
+            all_targets.push(path);
+        }
+    }
+    all_targets.sort();
+
+    if all_targets.is_empty() {
+        eprintln!(
+            "[skip] no '*attention.self.witness.npz' files in {}. \
+             Run HF BERT attention pipeline first.",
+            witness_dir
+        );
+        return;
+    }
+    if layer_idx >= all_targets.len() {
+        panic!(
+            "BERT_ATTN_LAYER_IDX={} out of range (have {} layers).",
+            layer_idx,
+            all_targets.len()
+        );
+    }
+
+    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    let single = vec![all_targets[layer_idx].clone()];
+    println!(
+        "\n=== [BERT Attention 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
+        witness_dir,
+        layer_idx,
+        all_targets.len() - 1,
+        single[0].file_name().unwrap_or_default().to_string_lossy()
+    );
+
+    let res = run_bert_attention_paths::<Bn254>(&single);
+    if let Err(e) = res {
+        panic!("[BERT Attention] proof generate/verify failed: {}", e);
+    }
+    println!("\n=== [BERT Attention 1-layer prove+verify] PASS ===");
 }

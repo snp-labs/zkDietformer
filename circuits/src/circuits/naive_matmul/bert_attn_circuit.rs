@@ -19,7 +19,7 @@ use crate::{
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
-        freivalds_matmul::roberta_attn_circuit::{RoBERTaAttentionCircuit, load_roberta_attention_circuit},
+        freivalds_matmul::bert_attn_circuit::{BERTAttentionCircuit, load_bert_attention_circuit},
     },
     gadgets::{
         matmul::{
@@ -30,19 +30,20 @@ use crate::{
         softmax::constraints::enforce_softmax,
     },
     util::{
-        roberta_attn_lookup::{run_roberta_lasso_bundle, run_all_roberta_remainders_with_link},
+        bert_attn_lookup::{run_bert_lasso_bundle, run_all_bert_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };
+use crate::lasso::subtables::softmax::set_softmax_table_dir;
 
 type G1 = G1Projective;
 
 /// Newtype wrapper around `RoBertaAttentionCircuit` that uses naive matmul
 /// instead of Freivalds for `generate_constraints`.
 #[derive(Clone)]
-pub struct RoBERTaAttentionCircuitNot<F: PrimeField>(pub RoBERTaAttentionCircuit<F>);
+pub struct BERTAttentionCircuitNot<F: PrimeField>(pub BERTAttentionCircuit<F>);
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for RoBERTaAttentionCircuitNot<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let inner = self.0;
         inner.committed_vars.borrow_mut().clear();
@@ -205,7 +206,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for RoBERTaAttentionCircuitNot<F> {
 
 // ── Proving pipeline ─────────────────────────────────────────────────────────
 
-pub fn run_roberta_attention_not_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
+pub fn run_bert_attention_not_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
     E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
@@ -214,26 +215,26 @@ where
 
     for file_path in targets {
         let e2e_start = Instant::now();
-        println!("\n=== [RoBERTa Attention NOT] Processing: {:?} ===", file_path);
+        println!("\n=== [BERT Attention NOT] Processing: {:?} ===", file_path);
 
         // ── Dry-run: count committed witnesses ───────────────────────────────
         let (num_commit_1, num_commit_2) = {
-            let temp = load_roberta_attention_circuit::<E>(file_path)?;
+            let temp = load_bert_attention_circuit::<E>(file_path)?;
             let v1_ptr = Rc::clone(&temp.committed_vars);
             let v2_ptr = Rc::clone(&temp.committed_vars_2);
             let cs = ConstraintSystem::<Fr>::new_ref();
-            RoBERTaAttentionCircuitNot(temp).generate_constraints(cs)?;
+            BERTAttentionCircuitNot(temp).generate_constraints(cs)?;
             (v1_ptr.borrow().len() as u32, v2_ptr.borrow().len() as u32)
         };
         println!("Commit counts: d1={}, d2={}", num_commit_1, num_commit_2);
 
-        let sample_circuit = load_roberta_attention_circuit::<E>(file_path)?;
+        let sample_circuit = load_bert_attention_circuit::<E>(file_path)?;
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup (d1={}, d2={}) ===", num_commit_1, num_commit_2);
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
-            RoBERTaAttentionCircuitNot(sample_circuit.clone()),
+            BERTAttentionCircuitNot(sample_circuit.clone()),
             num_commit_1,
             num_commit_2,
             &mut rng,
@@ -245,7 +246,7 @@ where
 
         // ── Witness extraction ────────────────────────────────────────────────
         let cs_witness = ConstraintSystem::<Fr>::new_ref();
-        RoBERTaAttentionCircuitNot(sample_circuit.clone()).generate_constraints(cs_witness.clone())?;
+        BERTAttentionCircuitNot(sample_circuit.clone()).generate_constraints(cs_witness.clone())?;
         let num_constraints = cs_witness.num_constraints();
 
         let committed_group1 = {
@@ -276,7 +277,7 @@ where
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
         println!("=== [1] Rebuilding circuit with Fiat-Shamir challenge ===");
-        let final_inner = RoBERTaAttentionCircuit {
+        let final_inner = BERTAttentionCircuit {
             r_challenge: r_fs,
             ..sample_circuit.clone()
         };
@@ -284,7 +285,7 @@ where
         // ── [1] Groth16 Prove ────────────────────────────────────────────────
         let g16_prove_start = Instant::now();
         let proof = create_random_proof::<E, _, _>(
-            RoBERTaAttentionCircuitNot(final_inner.clone()),
+            BERTAttentionCircuitNot(final_inner.clone()),
             v1,
             v2,
             &params,
@@ -305,18 +306,18 @@ where
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let g16_verify_time = g16_verify_start.elapsed();
 
-        println!("  - RoBERTa Attention NOT SNARK Verification: {:?}", result);
+        println!("  - BERT Attention NOT SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
         // ── [2] Lasso (uses original circuit type — data fields identical) ───
-        println!("=== [2] RoBERTa Attention NOT Lasso Lookup Proofs ===");
+        println!("=== [2] BERT Attention NOT Lasso Lookup Proofs ===");
         let lasso_start = Instant::now();
         let lasso_sm =
-            run_roberta_lasso_bundle(&final_inner.sm, b"roberta_lasso_sm", &mut rng)?;
+            run_bert_lasso_bundle(&final_inner.sm, b"bert_lasso_sm", &mut rng)?;
         let lasso_remainders =
-            run_all_roberta_remainders_with_link(&final_inner, &mut rng)?;
+            run_all_bert_remainders_with_link(&final_inner, &mut rng)?;
         let lasso_time = lasso_start.elapsed();
 
         let mut lasso_results = Vec::new();
@@ -350,7 +351,7 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "roberta_attention_not".to_string(),
+            circuit:           "bert_attention_not".to_string(),
             constraints:       num_constraints,
             setup_ms:          setup_time.as_millis(),
             groth16_commit_ms: g16_commit_ms,
@@ -371,13 +372,13 @@ where
 }
 
 #[test]
-fn roberta_attention_not_test() {
-    let outputs = Path::new("outputs_roberta");
+fn bert_attention_not_test() {
+    let outputs = Path::new("outputs_bert");
     if !outputs.is_dir() {
         return;
     }
     let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_roberta dir") {
+    for entry in fs::read_dir(outputs).expect("reading outputs_bert dir") {
         let path = entry.expect("dir entry").path();
         if path.is_file()
             && path
@@ -390,11 +391,106 @@ fn roberta_attention_not_test() {
     }
     targets.sort();
     println!(
-        "Running RoBERTa attention NOT circuit test on {} witness file(s)",
+        "Running BERT attention NOT circuit test on {} witness file(s)",
         targets.len()
     );
-    let res = run_roberta_attention_not_paths::<Bn254>(&targets);
+    let res = run_bert_attention_not_paths::<Bn254>(&targets);
     if let Err(e) = res {
-        panic!("RoBERTa attention NOT proof failed: {}", e);
+        panic!("BERT attention NOT proof failed: {}", e);
     }
+}
+
+
+// ── Phase 5-B B6-6: HF BERT Attention 단일 layer prove + verify (Naive matmul) ──
+//
+// 자체학습 측 `bert_attention_not_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
+// B6-3 (Freivalds 측 `bert_attn_hf_single_layer_test`) 와 거의 동일 — 단지
+// runner 호출이 `run_bert_attention_paths` → `run_bert_attention_not_paths`
+// (naive O(n³) matmul).
+//
+// 회로 (`BERTAttentionCircuitNot` newtype wrapper) + loader (`load_bert_attention_circuit`
+// 재사용) 모두 자체학습과 동일.
+//
+// 환경 변수 (모두 optional):
+//   NAIVE_ROBERTA_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_bert")
+//   NAIVE_ROBERTA_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
+//   SOFTMAX_TABLE_PATH             : B6-A1 setter — 미설정 시 witness_dir 사용
+//
+// 메모리 추정: ~120-200 GB (Freivalds 대비 2-3× — full O(S²) attention × naive matmul).
+//              사용자 노트북 32 GB 매우 부족 → 클라우드 큰 메모리 instance 필수.
+//
+// 실행:
+//   NAIVE_ROBERTA_ATTN_WITNESS_DIR=/path/to/outputs_bert \
+//     cargo test --release bert_attn_naive_single_layer_test -- --nocapture
+#[test]
+fn bert_attn_naive_single_layer_test() {
+    use std::env;
+
+    let witness_dir = env::var("NAIVE_ROBERTA_ATTN_WITNESS_DIR")
+        .unwrap_or_else(|_| "outputs_bert".to_string());
+    let layer_idx: usize = env::var("NAIVE_ROBERTA_ATTN_LAYER_IDX")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let dir = Path::new(&witness_dir);
+    if !dir.is_dir() {
+        eprintln!(
+            "[skip] NAIVE_ROBERTA_ATTN_WITNESS_DIR={} not a directory.",
+            witness_dir
+        );
+        return;
+    }
+
+    if env::var("SOFTMAX_TABLE_PATH").is_err() {
+        set_softmax_table_dir(dir);
+        println!(
+            "[info] SOFTMAX_TABLE_PATH not set; using {}/softmax_tables.npz",
+            witness_dir
+        );
+    }
+
+    let mut all_targets: Vec<std::path::PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir).expect("reading witness dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with("attention.self.witness.npz"))
+        {
+            all_targets.push(path);
+        }
+    }
+    all_targets.sort();
+
+    if all_targets.is_empty() {
+        eprintln!(
+            "[skip] no '*attention.self.witness.npz' files in {}.",
+            witness_dir
+        );
+        return;
+    }
+    if layer_idx >= all_targets.len() {
+        panic!(
+            "NAIVE_ROBERTA_ATTN_LAYER_IDX={} out of range (have {} layers).",
+            layer_idx,
+            all_targets.len()
+        );
+    }
+
+    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    let single = vec![all_targets[layer_idx].clone()];
+    println!(
+        "\n=== [BERT Attention NAIVE 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
+        witness_dir,
+        layer_idx,
+        all_targets.len() - 1,
+        single[0].file_name().unwrap_or_default().to_string_lossy()
+    );
+
+    // run_bert_attention_not_paths: B6-6 차이점 (B6-3 의 freivalds runner → naive runner)
+    let res = run_bert_attention_not_paths::<Bn254>(&single);
+    if let Err(e) = res {
+        panic!("[BERT Attention NAIVE] proof generate/verify failed: {}", e);
+    }
+    println!("\n=== [BERT Attention NAIVE 1-layer prove+verify] PASS ===");
 }

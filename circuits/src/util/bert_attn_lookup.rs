@@ -4,7 +4,7 @@ use ark_bn254::{Fr, G1Projective};
 use ark_ff::{BigInteger, PrimeField};
 use ark_std::rand::rngs::StdRng;
 use crate::{
-    circuits::freivalds_matmul::roberta_attn_circuit::RoBERTaAttentionCircuit,
+    circuits::freivalds_matmul::bert_attn_circuit::BERTAttentionCircuit,
     config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::softmax::constraints::SoftmaxBundle,
     lasso::{
@@ -17,11 +17,11 @@ use crate::{
 type G1 = G1Projective;
 type LassoResult = (PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize);
 
-/// Run Lasso proof for the single RoBERTa full-sequence softmax bundle.
+/// Run Lasso proof for the single BERT full-sequence softmax bundle.
 ///
-/// RoBERTa uses one softmax over the full [S×S] attention score matrix,
+/// BERT uses one softmax over the full [S×S] attention score matrix,
 /// unlike Nystromformer which has three landmark-based softmax kernels.
-pub fn run_roberta_lasso_bundle(
+pub fn run_bert_lasso_bundle(
     bundle: &SoftmaxBundle<Fr>,
     label: &'static [u8],
     rng: &mut StdRng,
@@ -43,7 +43,7 @@ pub fn run_roberta_lasso_bundle(
     let start = Instant::now();
     let results = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
     println!(
-        "  - Lasso Total Time (RoBERTa Softmax {:?}): {:?}",
+        "  - Lasso Total Time (BERT Softmax {:?}): {:?}",
         std::str::from_utf8(label).unwrap_or("?"),
         start.elapsed()
     );
@@ -51,25 +51,25 @@ pub fn run_roberta_lasso_bundle(
     Ok(results)
 }
 
-/// Run all range-check Lasso proofs for a RoBERTa attention circuit.
+/// Run all range-check Lasso proofs for a BERT attention circuit.
 ///
 /// Targets:
 ///   22-bit (C=2): matmul_attn.r_matmul, sm.r_sm, matmul_x.r_matmul
 ///   16-bit 5D:    sm.r_exp
 ///   16-bit 4D:    sm.r_div
-pub fn run_all_roberta_remainders_with_link(
-    circuit: &RoBERTaAttentionCircuit<Fr>,
+pub fn run_all_bert_remainders_with_link(
+    circuit: &BERTAttentionCircuit<Fr>,
     rng: &mut StdRng,
 ) -> Result<Vec<LassoResult>> {
-    println!("\n=== [Lasso Lookup] RoBERTa Attention: Verifying All Remainders ===");
+    println!("\n=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===");
 
     let mut all_results = Vec::new();
 
     // ── 22-bit range checks ──────────────────────────────────────────────────
     let target_22bit: &[(&Vec<Vec<Vec<Vec<Fr>>>>, &str)] = &[
-        (&circuit.matmul_attn.r_matmul, "roberta_attn_remainder"),
-        (&circuit.sm.r_sm,              "roberta_sm_remainder"),
-        (&circuit.matmul_x.r_matmul,   "roberta_x_remainder"),
+        (&circuit.matmul_attn.r_matmul, "bert_attn_remainder"),
+        (&circuit.sm.r_sm,              "bert_sm_remainder"),
+        (&circuit.matmul_x.r_matmul,   "bert_x_remainder"),
     ];
 
     for (r_matrix, label) in target_22bit {
@@ -113,7 +113,7 @@ pub fn run_all_roberta_remainders_with_link(
     // ── 16-bit 5D: sm.r_exp ──────────────────────────────────────────────────
     {
         let r_exp_5d = &circuit.sm.r_exp;
-        let label = "roberta_sm_r_exp";
+        let label = "bert_sm_r_exp";
 
         let c_seg  = r_exp_5d.len();                    // C (K_SEGMENTS-1)
         let b_batch = r_exp_5d[0].len();                 // B
@@ -157,7 +157,7 @@ pub fn run_all_roberta_remainders_with_link(
     // ── 16-bit 4D: sm.r_div ──────────────────────────────────────────────────
     {
         let matrix_4d = &circuit.sm.r_div;
-        let label = "roberta_sm_r_div";
+        let label = "bert_sm_r_div";
 
         let b_dim = matrix_4d.len();
         let h_dim = matrix_4d[0].len();

@@ -6,4 +6,4 @@
 ///
 /// Difference from original: NONE — this file re-exports the original
 /// circuit unchanged because it already uses naive matmul.
-pub use crate::circuits::freivalds_matmul::roberta_mlp_circuit::*;
+pub use crate::circuits::freivalds_matmul::bert_mlp_circuit::*;

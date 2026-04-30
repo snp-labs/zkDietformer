@@ -4,8 +4,17 @@ import os
 TABLE_SIZE = 1 << 16
 FRAC_BITS = 8
 
-# Phase 4: var 인덱스 fixed-point scaling
-VAR_SCALE = 256
+# Phase 4: var 인덱스 fixed-point scaling.
+#
+# SCALE 변경 이력:
+#   Phase 2 초기: 정수 인덱스 (real_var[i] = i) — var ∈ (0,1) 영역에서 catastrophic.
+#   Phase 4 1차 (2026-04-28):  256 — Nystromformer var max 192 까지 커버하는 전제.
+#   Phase 4 2차 (2026-04-28): 1000 — 사용자 측정 (BERT [0.13, 0.55], Nystrom
+#                              [0.05, 65.2]) 기반 재선정. 두 모델 영역 100% 커버
+#                              + 정수 인덱스 0% 오차. cover = 65536/1000 = 65.54
+#                              ≈ Nystrom max 65.2 와 정확히 일치.
+#                              (상세: docs/migration/14-scale-factor-analysis.md)
+VAR_SCALE = 1000
 
 # 모델별 LayerNorm eps (HF config의 layer_norm_eps)
 EPS_BERT = 1e-12
@@ -62,7 +71,7 @@ def get_layernorm_index_multiplier(s_var, k_bits=22, var_scale=VAR_SCALE):
 def extract_inv_std_single(Q_var_sim, R_var, dim, ln_table, M_ln, k_bits):
     """
         양자화된 입력으로부터 테이블에 적혀있는 역수 값을 꺼내오는 함수
-        index ≈ var_real · VAR_SCALE  (256배 scaled)
+        index ≈ var_real · VAR_SCALE  (현재 VAR_SCALE = 1000)
     """
     shifted_val = (Q_var_sim.astype(object) * dim) + R_var.astype(object)
     numerator = shifted_val * M_ln

@@ -25,21 +25,21 @@ use crate::{
 
 type G1 = G1Projective;
 
-/// RoBERTa MLP circuit is structurally identical to `NystromMLPCircuit`.
-pub type RoBERTaMLPCircuit<F> = NystromMLPCircuit<F>;
+/// BERT MLP circuit is structurally identical to `NystromMLPCircuit`.
+pub type BERTMLPCircuit<F> = NystromMLPCircuit<F>;
 
-/// Load a RoBERTa MLP witness NPZ.
+/// Load a BERT MLP witness NPZ.
 ///
 /// Key naming matches the existing Nystromformer MLP loader exactly
 /// (prefixes: rms1, lin1, gelu, lin2, rms2).
-pub fn load_roberta_mlp_circuit<E: Pairing>(path: &Path) -> Result<RoBERTaMLPCircuit<E::ScalarField>>
+pub fn load_bert_mlp_circuit<E: Pairing>(path: &Path) -> Result<BERTMLPCircuit<E::ScalarField>>
 where
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
 {
     load_nystrom_circuit::<E>(path)
 }
 
-pub fn run_roberta_mlp_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
+pub fn run_bert_mlp_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
     E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
     <E::ScalarField as FromStr>::Err: core::fmt::Debug,
@@ -48,11 +48,11 @@ where
 
     for file_path in targets {
         let e2e_start = Instant::now();
-        println!("\n=== [RoBERTa MLP] Processing: {:?} ===", file_path);
+        println!("\n=== [BERT MLP] Processing: {:?} ===", file_path);
 
         // ── Dry-run ──────────────────────────────────────────────────────────
         let num_commit_1 = {
-            let temp = load_roberta_mlp_circuit::<E>(file_path)?;
+            let temp = load_bert_mlp_circuit::<E>(file_path)?;
             let vars_ptr = Rc::clone(&temp.committed_vars);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
@@ -60,7 +60,7 @@ where
         };
         println!("Commit count d1={}", num_commit_1);
 
-        let sample_circuit = load_roberta_mlp_circuit::<E>(file_path)?;
+        let sample_circuit = load_bert_mlp_circuit::<E>(file_path)?;
 
         // ── [0] Setup ────────────────────────────────────────────────────────
         println!("=== [0] LegoGroth16 Setup ===");
@@ -143,17 +143,17 @@ where
         let result = verify_proof::<E>(&pvk, &proof, &[]);
         let g16_verify_time = g16_verify_start.elapsed();
 
-        println!("  - RoBERTa MLP SNARK Verification: {:?}", result);
+        println!("  - BERT MLP SNARK Verification: {:?}", result);
         if let Err(e) = result {
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
         // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
-        println!("=== [2] RoBERTa MLP Lasso Lookup Proofs ===");
+        println!("=== [2] BERT MLP Lasso Lookup Proofs ===");
         let lasso_start = Instant::now();
 
         let (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1) =
-            run_lasso_for_rmsnorm(&sample_circuit.norm1, b"roberta_mlp_rms1", &mut rng)?;
+            run_lasso_for_rmsnorm(&sample_circuit.norm1, b"bert_mlp_rms1", &mut rng)?;
 
         let (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2) = run_lasso_for_gelu(
             &sample_circuit.gelu1,
@@ -174,12 +174,12 @@ where
                 .collect::<Vec<Vec<Vec<Fr>>>>(),
             &sample_circuit.ff1.r_out_lin,
             sample_circuit.k_bits,
-            b"roberta_mlp_gelu",
+            b"bert_mlp_gelu",
             &mut rng,
         )?;
 
         let (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3) =
-            run_lasso_for_rmsnorm(&sample_circuit.norm2, b"roberta_mlp_rms2", &mut rng)?;
+            run_lasso_for_rmsnorm(&sample_circuit.norm2, b"bert_mlp_rms2", &mut rng)?;
 
         let mut lasso_results = vec![
             (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1),
@@ -266,11 +266,119 @@ fn mlp_baseline_test() {
     }
     targets.sort();
     println!(
-        "Running RoBERTa MLP circuit test on {} witness file(s)",
+        "Running BERT MLP circuit test on {} witness file(s)",
         targets.len()
     );
-    let res = run_roberta_mlp_paths::<Bn254>(&targets);
+    let res = run_bert_mlp_paths::<Bn254>(&targets);
     if let Err(e) = res {
-        panic!("RoBERTa MLP proof failed: {}", e);
+        panic!("BERT MLP proof failed: {}", e);
     }
+}
+
+
+// ── Phase 5-B B6-4: HF BERT MLP 단일 layer prove + verify (Freivalds, LayerNorm) ──
+//
+// 자체학습 측 `mlp_baseline_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
+// 단, 본 함수는 LayerNorm 인프라 사용 (B3-2 + B5-2 재사용):
+//   - Loader: `load_nystrom_layernorm_circuit::<E>` (B3-2)
+//   - Runner: `run_paths_layernorm::<E>` (B5-2)
+//   - Lookup: `run_mlp_remainders_layernorm` + `run_lasso_for_layernorm` (B5-1)
+//
+// 기존 `mlp_baseline_test` 는 `load_bert_mlp_circuit` (= `load_nystrom_circuit`,
+// RMSNorm loader) 를 사용 — BERT 시절 자체학습 호환. 사용자 원칙 (변경 금지)
+// 으로 보존. BERT npz 의 LayerNorm 키는 본 신규 함수가 처리.
+//
+// 환경 변수 (모두 optional):
+//   BERT_MLP_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_bert")
+//   BERT_MLP_LAYER_IDX   : 처리할 layer index (기본 0)
+//   LAYERNORM_TABLE_PATH    : B1 setter — 미설정 시 witness_dir 자동 사용
+//
+// 메모리 추정: ~10-15 GB (LayerNorm + 2 Linear + GeLU, S=448, H=768, D_ff=3072).
+//              사용자 노트북 32 GB 가능 영역.
+//
+// 실행:
+//   BERT_MLP_WITNESS_DIR=/path/to/outputs_bert \
+//     cargo test --release bert_mlp_hf_single_layer_test -- --nocapture
+#[test]
+fn bert_mlp_hf_single_layer_test() {
+    use std::env;
+    use std::path::Path;
+    use ark_std::fs;
+    use crate::circuits::freivalds_matmul::nystrom_mlp_circuit::run_paths_layernorm;
+    use crate::lasso::subtables::layernorm::set_layernorm_table_dir;
+
+    // ── 환경 변수 ───────────────────────────────────────────────────────────
+    let witness_dir = env::var("BERT_MLP_WITNESS_DIR")
+        .unwrap_or_else(|_| "outputs_bert".to_string());
+    let layer_idx: usize = env::var("BERT_MLP_LAYER_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let dir = Path::new(&witness_dir);
+    if !dir.is_dir() {
+        eprintln!(
+            "[skip] BERT_MLP_WITNESS_DIR={} not a directory. \
+             Set the env var to a valid HF BERT outputs_bert/ dir to run.",
+            witness_dir
+        );
+        return;
+    }
+
+    // ── LayerNorm 표 경로 결정: env var 미설정 시 witness_dir 안의 layernorm_tables.npz ─
+    if env::var("LAYERNORM_TABLE_PATH").is_err() {
+        set_layernorm_table_dir(dir);
+        println!(
+            "[info] LAYERNORM_TABLE_PATH not set; using {}/layernorm_tables.npz",
+            witness_dir
+        );
+    }
+
+    // ── npz 수집 + 정렬 + layer_idx 단일 추출 ──────────────────────────────
+    let mut all_targets: Vec<std::path::PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir).expect("reading witness dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with(".norm.witness.npz"))
+        {
+            all_targets.push(path);
+        }
+    }
+    all_targets.sort();
+
+    if all_targets.is_empty() {
+        eprintln!(
+            "[skip] no '*.norm.witness.npz' files in {}. \
+             Run HF BERT normalization pipeline first.",
+            witness_dir
+        );
+        return;
+    }
+    if layer_idx >= all_targets.len() {
+        panic!(
+            "BERT_MLP_LAYER_IDX={} out of range (have {} layers).",
+            layer_idx,
+            all_targets.len()
+        );
+    }
+
+    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    let single = vec![all_targets[layer_idx].clone()];
+    println!(
+        "\n=== [BERT MLP 1-layer prove+verify (LayerNorm)] dir={} | layer_idx={}/{} | file={} ===",
+        witness_dir,
+        layer_idx,
+        all_targets.len() - 1,
+        single[0].file_name().unwrap_or_default().to_string_lossy()
+    );
+
+    // run_paths_layernorm: B5-2 신규 함수 (LayerNorm 흐름 + Lasso for layernorm)
+    let res = run_paths_layernorm::<Bn254>(&single);
+    if let Err(e) = res {
+        panic!("[BERT MLP] proof generate/verify failed: {}", e);
+    }
+    println!("\n=== [BERT MLP 1-layer prove+verify] PASS ===");
 }

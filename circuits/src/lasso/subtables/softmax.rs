@@ -1,8 +1,9 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use ndarray_npy::NpzReader;
+use std::env;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock; // 메모리 캐싱을 위해 추가
 use ndarray::{Array2, Ix2};
 use super::SubtableStrategy;
@@ -12,14 +13,62 @@ pub enum SoftmaxSubtableStrategy {}
 /// 필드 독립적인 u64 데이터를 캐싱하기 위한 정적 변수
 static SOFTMAX_CACHE: OnceLock<Array2<u64>> = OnceLock::new();
 
+// ── Phase 5-B B6-A1: Softmax 표 path 동적화 (LayerNorm B1 평행 패턴) ─────────
+//
+// LayerNorm B1 (`subtables/layernorm.rs`) 와 정확히 동일 디자인 — 자체학습
+// 호환을 위해 default fallback `"outputs/softmax_tables.npz"` 보존.
+//
+// 우선순위 (3-tier):
+//   1. `set_softmax_table_dir(dir)` 로 설정된 경로 (OnceLock first-write-wins)
+//   2. 환경 변수 `SOFTMAX_TABLE_PATH`
+//   3. default `"outputs/softmax_tables.npz"` (자체학습 호환)
+//
+// Python `softmax_table.py:generate_softmax_tables(out_dir, ...)` 로 만든 파일을
+// witness 와 같은 dir 에 두고 setter 로 지정. 또는 env var 로 직접 path 명시.
+static SOFTMAX_TABLE_PATH: OnceLock<String> = OnceLock::new();
+
+/// 프로그램 측 setter — Python pipeline 이 작성한 `softmax_tables.npz` 가
+/// 들어 있는 디렉터리를 지정. 보통 attention witness npz 와 같은 dir.
+///
+/// Usage:
+///     set_softmax_table_dir("outputs_m64");   // Nyström attention
+///     set_softmax_table_dir("outputs_bert");  // BERT attention
+///
+/// OnceLock 의미상 두 번째 호출은 silently 무시됨 (first-write-wins).
+pub fn set_softmax_table_dir(dir: impl AsRef<Path>) {
+    let path: PathBuf = dir.as_ref().join("softmax_tables.npz");
+    let path_str = path.to_string_lossy().into_owned();
+    let _ = SOFTMAX_TABLE_PATH.set(path_str);
+}
+
+/// 현재 적용될 표 파일 경로 결정. setter > env var > default 순.
+fn get_softmax_table_path() -> String {
+    if let Some(p) = SOFTMAX_TABLE_PATH.get() {
+        return p.clone();
+    }
+    if let Ok(env_path) = env::var("SOFTMAX_TABLE_PATH") {
+        return env_path;
+    }
+    "outputs/softmax_tables.npz".to_string()
+}
+
 /// 파일에서 테이블을 한 번만 로드하는 헬퍼 함수
 fn get_or_init_softmax_cache(c: usize, m: usize) -> &'static Array2<u64> {
     SOFTMAX_CACHE.get_or_init(|| {
-        let lookup_npz_path = "outputs/softmax_tables.npz".to_string();
+        let lookup_npz_path = get_softmax_table_path();
         let path = Path::new(&lookup_npz_path);
 
-        let file = File::open(path)
-            .expect("evaluate_subtable_mle: failed to open softmax lookup npz");
+        let file = File::open(path).unwrap_or_else(|e| {
+            panic!(
+                "Softmax table file not found at '{}': {}.\n\
+                 Set the path via `set_softmax_table_dir()` (call before first lookup),\n\
+                 via env var `SOFTMAX_TABLE_PATH=path/to/softmax_tables.npz`,\n\
+                 or place the file at default path `outputs/softmax_tables.npz`.\n\
+                 Generate via Python: `from softmax_table import generate_softmax_tables; \
+                 generate_softmax_tables('<out_dir>', k_bits=22, frac_bits=16)`.",
+                lookup_npz_path, e,
+            )
+        });
         let mut npz = NpzReader::new(file).expect("failed to create NpzReader");
 
         let tables_arr_dyn = npz

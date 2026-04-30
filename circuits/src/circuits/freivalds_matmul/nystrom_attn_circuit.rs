@@ -39,6 +39,7 @@ use crate::{
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };
+use crate::lasso::subtables::softmax::set_softmax_table_dir;
 
 type G1 = G1Projective;
 #[derive(Clone)]
@@ -843,4 +844,108 @@ fn attention_test() {
     if let Err(e) = res {
         panic!("proof generate failed: {}", e);
     }
+}
+
+
+// ── Phase 5-B B6-2: HF Nyström Attention 단일 layer prove + verify (Freivalds) ──
+//
+// 자체학습 측 `attention_test` (위) 와 평행. 사용자 노트북 메모리 한계 (12 layer
+// 전체 prove 금지) 준수 — 단일 layer 만 처리.
+//
+// 차이점 (자체학습 vs 본 마이그레이션):
+//   - 디렉터리: outputs/ → outputs_m{N}/ (env var)
+//   - 파일 필터: *mha.attn.witness.npz → *attention.self.witness.npz
+//   - 단일 npz 추출
+//
+// 회로 (`NystromAttentionCircuit`) + lookup + `run_paths::<E>` 모두 자체학습과
+// 동일 — 변경 없이 재사용 (B6-1 키 정합성 분석에서 Type A/B/C/E 0 mismatch 확인).
+//
+// 환경 변수 (모두 optional):
+//   NYSTROM_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_m64")
+//   NYSTROM_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
+//   SOFTMAX_TABLE_PATH       : softmax 표 path 직접 지정 (subtables/softmax.rs B6-A1)
+//                              미설정 시 본 함수가 set_softmax_table_dir(witness_dir) 호출
+//
+// 실행:
+//   NYSTROM_ATTN_WITNESS_DIR=/path/to/outputs_m64 \
+//     cargo test --release nystrom_attn_hf_single_layer_test -- --nocapture
+//
+// peak memory: macOS `/usr/bin/time -l ...` 권장 (회로 측 측정 안 함, OS 측 위임).
+#[test]
+fn nystrom_attn_hf_single_layer_test() {
+    use std::env;
+
+    // ── 환경 변수 ───────────────────────────────────────────────────────────
+    let witness_dir = env::var("NYSTROM_ATTN_WITNESS_DIR")
+        .unwrap_or_else(|_| "outputs_m64".to_string());
+    let layer_idx: usize = env::var("NYSTROM_ATTN_LAYER_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let dir = Path::new(&witness_dir);
+    if !dir.is_dir() {
+        eprintln!(
+            "[skip] NYSTROM_ATTN_WITNESS_DIR={} not a directory. \
+             Set the env var to a valid Phase 4 outputs_m{{N}}/ dir to run.",
+            witness_dir
+        );
+        return;
+    }
+
+    // ── softmax 표 경로 결정: env var 미설정 시 witness_dir 안의 softmax_tables.npz ─
+    // (자체학습 attention_test 는 default `outputs/softmax_tables.npz` fallback 그대로)
+    if env::var("SOFTMAX_TABLE_PATH").is_err() {
+        set_softmax_table_dir(dir);
+        println!(
+            "[info] SOFTMAX_TABLE_PATH not set; using {}/softmax_tables.npz",
+            witness_dir
+        );
+    }
+
+    // ── npz 수집 + 정렬 + layer_idx 만 단일 추출 ───────────────────────────
+    let mut all_targets: Vec<std::path::PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir).expect("reading witness dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_file()
+            && path.file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with("attention.self.witness.npz"))
+        {
+            all_targets.push(path);
+        }
+    }
+    all_targets.sort();
+
+    if all_targets.is_empty() {
+        eprintln!(
+            "[skip] no '*attention.self.witness.npz' files in {}. \
+             Run Phase 4 attention pipeline first.",
+            witness_dir
+        );
+        return;
+    }
+    if layer_idx >= all_targets.len() {
+        panic!(
+            "NYSTROM_ATTN_LAYER_IDX={} out of range (have {} layers).",
+            layer_idx,
+            all_targets.len()
+        );
+    }
+
+    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    let single = vec![all_targets[layer_idx].clone()];
+    println!(
+        "\n=== [Nyström Attention 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
+        witness_dir,
+        layer_idx,
+        all_targets.len() - 1,
+        single[0].file_name().unwrap_or_default().to_string_lossy()
+    );
+
+    let res = run_paths::<Bn254>(&single);
+    if let Err(e) = res {
+        panic!("[Nyström Attention] proof generate/verify failed: {}", e);
+    }
+    println!("\n=== [Nyström Attention 1-layer prove+verify] PASS ===");
 }

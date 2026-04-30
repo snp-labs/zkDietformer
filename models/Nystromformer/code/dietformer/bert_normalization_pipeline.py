@@ -131,10 +131,20 @@ def _flatten_block(suffix, block_dict):
 
 def process_standard_normalization_debug_npz(
     debug_npz_path, out_npz_path, k_bits=22, eps=EPS_BERT,
+    table_dir="outputs_bert",
 ):
-    debug = np.load(debug_npz_path, allow_pickle=True)
+    """LayerNorm + FFN 디버그 npz → 양자화 witness npz 변환.
 
-    table_dir = "outputs_bert"
+    Args:
+        debug_npz_path: hook 으로 캡처된 입력 npz.
+        out_npz_path: 출력 witness npz 경로.
+        k_bits: 양자화 shift bits (회로 호환, 변경 금지).
+        eps: LayerNorm eps. BERT 1e-12, Nystromformer 1e-5 (각자 사전학습 정합).
+        table_dir: layernorm_tables.npz / gelu sigmoid table 저장 디렉터리.
+            BERT 측 호출: "outputs_bert", Nystrom 측 호출: "outputs".
+            두 모델이 같은 함수를 호출해도 표 파일은 dir 분리로 충돌 없음.
+    """
+    debug = np.load(debug_npz_path, allow_pickle=True)
 
     # 표 생성/로드 (1회).
     ln_table_path = generate_layernorm_tables(

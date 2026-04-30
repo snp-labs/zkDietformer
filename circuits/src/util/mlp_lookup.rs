@@ -10,8 +10,8 @@ use ark_r1cs_std::{select::CondSelectGadget,alloc::AllocVar, eq::EqGadget, field
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use merlin::Transcript;
 use crate::{
-    cc_snark::legogroth16::{LinkPublicGenerators, create_random_proof_incl_cp_link, generate_random_parameters_incl_cp_link, prepare_verifying_key, verify_proof_incl_cp_link}, circuits::freivalds_matmul::nystrom_mlp_circuit::NystromMLPCircuit, config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
-        activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
+    cc_snark::legogroth16::{LinkPublicGenerators, create_random_proof_incl_cp_link, generate_random_parameters_incl_cp_link, prepare_verifying_key, verify_proof_incl_cp_link}, circuits::freivalds_matmul::nystrom_mlp_circuit::{NystromMLPCircuit, NystromMLPLayerNormCircuit}, config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
+        activation::gelu::{GeLUBundle, enforce_gelu}, layernorm::constraints::{NormBundle, LayerNormBundle, enforce_rmsnorm}, linear::constraints::{LinearBundle, enforce_linear}
     }, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
@@ -56,6 +56,49 @@ pub fn run_lasso_for_rmsnorm(
     let start = Instant::now();
     let (pure_data_commitment, blinds, lasso_gens_n, sparsity) = prove_lasso_for_rmsnorm(&indices_x, &gens, rng, label)?;
     println!("  - Lasso Total Time (RMSNorm): {:?}", start.elapsed());
+
+    Ok((pure_data_commitment, blinds, lasso_gens_n.clone(), sparsity))
+}
+
+
+// ── Phase 5-B B5-2: LayerNorm 측 inv_std lookup (Phase 4 65536-entry table) ──
+//
+// `run_lasso_for_rmsnorm` 와 평행. RMSNormSubtableStrategy 를 LayerNorm 으로
+// alias 한 (B1-B2) 동일 strategy 사용. 차이는 인덱스 출처:
+//   - RMSNorm: `bundle.q_ms_sim` (mean-square index)
+//   - LayerNorm: `bundle.q_var_sim` (variance index, mean-제거 후)
+//
+// 표 자체는 set_layernorm_table_dir() / LAYERNORM_TABLE_PATH 로 결정 (B1).
+// var_scale=1000 sanity check 은 표 로드 시 (subtables/layernorm.rs:get_or_init).
+pub fn run_lasso_for_layernorm(
+    bundle: &LayerNormBundle<Fr>,
+    label: &'static [u8],
+    rng: &mut StdRng,
+) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
+    let b_dim = bundle.q_var_sim.len();
+    let s_dim = bundle.q_var_sim[0].len();
+
+    let mut indices_x = vec![vec![vec![Fr::zero(); 1]; s_dim]; b_dim];
+
+    for b in 0..b_dim {
+        for s in 0..s_dim {
+            indices_x[b][s][0] = bundle.q_var_sim[b][s][0];
+        }
+    }
+
+    let total_sparsity = b_dim * s_dim;
+    let gens = SparsePolyCommitmentGens::<G1>::new(
+        label,
+        RMSNORM_C,
+        total_sparsity.next_power_of_two(),
+        RMSNORM_C,
+        RMSNORM_M.trailing_zeros() as usize,
+    );
+
+    let start = Instant::now();
+    let (pure_data_commitment, blinds, lasso_gens_n, sparsity) =
+        prove_lasso_for_rmsnorm(&indices_x, &gens, rng, label)?;
+    println!("  - Lasso Total Time (LayerNorm): {:?}", start.elapsed());
 
     Ok((pure_data_commitment, blinds, lasso_gens_n.clone(), sparsity))
 }
@@ -166,7 +209,98 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     }
     println!("All MLP remainders verified sequentially.");
     Ok(all_link_results)
-    
+
+}
+
+// ── Phase 5-B B5-1: LayerNorm 측 22-bit Lasso remainder lookup ───────────────
+//
+// `NystromMLPLayerNormCircuit` 의 r_pool 순서 (enforce_layernorm + generate_constraints
+// 정합) 를 따라 9 행렬 처리:
+//   1. norm1.r_shift_var (3D)        — Step C (variance shift)
+//   2. norm1.r_out (3D)              — Step F (final rescale)
+//   3. norm1.r_beta_lift (1D)        — Step E (β lifting)
+//   4. ff1.r_out_lin (3D)            — Linear1
+//   5. gelu1.r_out_gelu (3D)         — GELU
+//   6. ff2.r_out_lin (3D)            — Linear2
+//   7. norm2.r_shift_var (3D)        — Step C
+//   8. norm2.r_out (3D)              — Step F
+//   9. norm2.r_beta_lift (1D)        — Step E
+//
+// RMSNorm 측 `run_mlp_remainders` 의 7 행렬 패턴을 LayerNorm 의 β lifting
+// 추가분 (× 2) 만큼 확장. R_mean 은 option A 채택 (B5-1 분석) 으로 r_pool 미포함.
+pub fn run_mlp_remainders_layernorm<F: PrimeField, G: CurveGroup<ScalarField = F>>(
+    circuit: &NystromMLPLayerNormCircuit<F>,
+    rng: &mut StdRng,
+) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>>  {
+    println!("\n=== [MLP-LayerNorm] Lasso Lookup Proofs: 22-bit Remainders (R) ===");
+    let mut all_link_results = Vec::new();
+
+    // Shape dispatch: 3D matrix vs 1D vector (R_beta_lift) — generic over F.
+    enum RTarget<'a, F: PrimeField> {
+        D3(&'a Vec<Vec<Vec<F>>>),
+        D1(&'a Vec<F>),
+    }
+
+    // Targets: r_pool 순서 (norm1 shift → out → beta, lin1, gelu, lin2, norm2 shift → out → beta)
+    let targets: Vec<(RTarget<F>, &'static str)> = vec![
+        (RTarget::D3(&circuit.norm1.r_shift_var), "R_mlp_ln1_shift"),
+        (RTarget::D3(&circuit.norm1.r_out),       "R_mlp_ln1_out"),
+        (RTarget::D1(&circuit.norm1.r_beta_lift), "R_mlp_ln1_beta"),
+        (RTarget::D3(&circuit.ff1.r_out_lin),     "R_mlp_lin1"),
+        (RTarget::D3(&circuit.gelu1.r_out_gelu),  "R_mlp_gelu"),
+        (RTarget::D3(&circuit.ff2.r_out_lin),     "R_mlp_lin2"),
+        (RTarget::D3(&circuit.norm2.r_shift_var), "R_mlp_ln2_shift"),
+        (RTarget::D3(&circuit.norm2.r_out),       "R_mlp_ln2_out"),
+        (RTarget::D1(&circuit.norm2.r_beta_lift), "R_mlp_ln2_beta"),
+    ];
+
+    for (target, label) in targets {
+        let mut nz: Vec<[usize; KBITS_C]> = Vec::new();
+        match target {
+            RTarget::D3(m) => {
+                for batch in m {
+                    for row in batch {
+                        for v in row {
+                            let val_u64 = v.into_bigint().as_ref()[0];
+                            let idx0 = (val_u64 & 0xFFFF) as usize;
+                            let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
+                            nz.push([idx0, idx1]);
+                        }
+                    }
+                }
+            }
+            RTarget::D1(m) => {
+                for v in m {
+                    let val_u64 = v.into_bigint().as_ref()[0];
+                    let idx0 = (val_u64 & 0xFFFF) as usize;
+                    let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
+                    nz.push([idx0, idx1]);
+                }
+            }
+        }
+        let total_sparsity = nz.len();
+
+        let gens = SparsePolyCommitmentGens::<G1>::new(
+            label.as_bytes(),
+            KBITS_C,
+            total_sparsity.next_power_of_two(),
+            KBITS_C,
+            KBITS_M.trailing_zeros() as usize,
+        );
+
+        let start = Instant::now();
+        let link_data = prove_lasso_for_range(
+            nz,
+            &gens,
+            rng,
+            label.as_bytes(),
+        )?;
+        all_link_results.extend(link_data);
+
+        println!(" - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
+    }
+    println!("All MLP-LayerNorm remainders verified sequentially.");
+    Ok(all_link_results)
 }
 
 pub fn prove_lasso_for_range(

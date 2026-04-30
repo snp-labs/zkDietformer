@@ -1,70 +1,130 @@
 #!/usr/bin/env python3
-import re
-import torch
-import torch.nn as nn
-import time
-import os
+"""
+BERT-base-uncased baseline evaluation — fixture 기반 입력 + GELU swap.
+
+작업 1C 변경:
+- CorpusDataset 의존 제거 → evaluation_fixtures.SAMPLE_TEXTS 사용
+  (이로써 RoBERTa BPE pickle vs BERT vocab 토크나이저 불일치 버그 해결)
+- BertTokenizerFast 로 on-the-fly 인코딩 (padding=max_length, max_length=510)
+- random seed 42 (torch + numpy + random)
+- replace_activation_with_sigmoid_gelu(model, "bert") — 회로 lookup 정합성
+- hook 메커니즘 / npz 키 (ln_*) 은 Step C 결과 그대로 보존
+
+이전 단계와의 정렬:
+- Step B: RoBERTa → BERT 교체 완료
+- Step C: LayerNorm 전환, ln_* 키 컨벤션
+- Phase 4: layernorm_table.py VAR_SCALE=256 (이미 적용)
+
+회로 verify 는 Phase 5 (Rust 가젯 enforce_layernorm 추가) 후에야 통과 가능.
+"""
+import argparse
 import json
 import math
+import os
+import random
+import re
+import time
+
 import numpy as np
-import argparse
-import utils
+import torch
+import torch.nn as nn
 
-# BERT 환경을 위한 라이브러리
-from transformers import BertForMaskedLM, BertTokenizerFast, DataCollatorForLanguageModeling
+from transformers import BertForMaskedLM, BertTokenizerFast
 from transformers.models.bert.modeling_bert import BertSelfAttention
-from torch.utils.data import DataLoader
 
-# 데이터셋 로드
-from dataset import CorpusDataset
+from evaluation_fixtures import (
+    SAMPLE_TEXTS, NUM_SAMPLES, MAX_SEQ_LEN, assert_fixture_invariants,
+)
+from gelu_swap import replace_activation_with_sigmoid_gelu, SigmoidGELU
 from bert_attention_pipeline import process_standard_attn_debug_npz
 from bert_normalization_pipeline import process_standard_normalization_debug_npz
+from layernorm_table import EPS_BERT
 
+
+# ── 재현성 seed ────────────────────────────────────────────────────────────
+SEED = 42
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+random.seed(SEED)
+
+# ── argparse ───────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument("--checkpoint", type=int, help="checkpoint index", default=None)
-parser.add_argument("--batch_size", type=int, help="batch size", default=None)
-parser.add_argument("--num_batch", type=int, help="number of batches", default=None)
-parser.add_argument("--save_attn_npz", type=str, help="prefix path for saving npz", default=None)
+parser.add_argument(
+    "--checkpoint", type=int, default=None,
+    help="(deprecated, 무시됨) HF 사전학습 모델을 사용하므로 체크포인트 인덱스 불필요.",
+)
+parser.add_argument("--batch_size", type=int, default=1)
+parser.add_argument("--num_batch", type=int, default=1)
+parser.add_argument(
+    "--save_attn_npz", type=str, default=None,
+    help="prefix string for npz files (저장 위치는 outputs_bert/). 예: 'run1' 또는 'outputs_bert'",
+)
 args = parser.parse_args()
 
-# 설정 로드
-base_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(base_dir, "..", "..", "bookcorpus-512", "config.json")
+# fixture 무결성 self-check
+assert_fixture_invariants()
 
-with open(config_path, "r") as f:
-    config = json.load(f)
+total_needed = args.num_batch * args.batch_size
+if total_needed > NUM_SAMPLES:
+    raise ValueError(
+        f"requested {total_needed} samples (num_batch={args.num_batch} × "
+        f"batch_size={args.batch_size}) but fixture has only {NUM_SAMPLES}. "
+        f"increase NUM_SAMPLES in evaluation_fixtures.py 또는 명령 인자를 줄이세요."
+    )
 
-model_config = config["model"]
-pretraining_config = config["pretraining_setting"]
+# ── tokenizer + model ──────────────────────────────────────────────────────
+tokenizer = BertTokenizerFast.from_pretrained(
+    "bert-base-uncased", model_max_length=MAX_SEQ_LEN,
+)
 
-if args.batch_size is not None: pretraining_config["batch_size"] = args.batch_size
-if args.num_batch is not None: pretraining_config["validate_batches_per_epoch"] = args.num_batch
-
-# 경로 설정
-relative_data_path = config["data_folder"].lstrip("/")
-data_folder = os.path.abspath(os.path.join(base_dir, "..", "..", relative_data_path))
-relative_cp_path = config["model_checkpoints"].lstrip("/")
-checkpoint_dir = os.path.abspath(os.path.join(base_dir, "..", "..", relative_cp_path))
-
-########################### Loading Dataset ###########################
-
-tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased", model_max_length=model_config["max_seq_len"])
-dataset = CorpusDataset(folder_path=data_folder, file_json="dev.json", files_per_batch=128)
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
-data_loader = DataLoader(dataset, batch_size=pretraining_config["batch_size"], collate_fn=data_collator)
-
-########################### Loading BERT Model ###########################
-
-device = torch.device("cpu") # 실험을 위해 CPU 설정 (GPU 사용 시 "cuda"로 변경)
-
-# Baseline용 표준 BERT 모델 로드
+device = torch.device("cpu")  # 실험을 위해 CPU. GPU는 "cuda"로 변경.
 model = BertForMaskedLM.from_pretrained("bert-base-uncased").to(device)
+model.eval()  # 중요: dropout 비활성화로 결정성 보장
 
-# 로그 설정
-log_f_path = os.path.join(checkpoint_dir, "bert_validation_output.log")
-os.makedirs(os.path.dirname(log_f_path), exist_ok=True)
+# GELU swap (회로 lookup 정합성 — gelu_table.py 가 σ(1.702x) 가정)
+n_swapped = replace_activation_with_sigmoid_gelu(model, "bert")
+expected_layers = model.config.num_hidden_layers
+assert n_swapped == expected_layers, (
+    f"GELU swap incomplete: {n_swapped}/{expected_layers}"
+)
+print(f"[BERT] swapped {n_swapped}/{expected_layers} layer activations to SigmoidGELU")
+print(f"[BERT] hidden_size={model.config.hidden_size}, "
+      f"num_hidden_layers={model.config.num_hidden_layers}, "
+      f"num_attention_heads={model.config.num_attention_heads}")
+
+# ── batch 생성: fixture → on-the-fly tokenization ──────────────────────────
+def _make_batches() -> list[dict]:
+    """SAMPLE_TEXTS 의 앞 total_needed 개 를 batch_size 단위로 묶음.
+
+    각 batch shape = [batch_size, MAX_SEQ_LEN] (padding=max_length).
+    """
+    batches = []
+    texts = SAMPLE_TEXTS[:total_needed]
+    for i in range(0, len(texts), args.batch_size):
+        chunk = list(texts[i : i + args.batch_size])
+        enc = tokenizer(
+            chunk,
+            padding="max_length",
+            max_length=MAX_SEQ_LEN,
+            truncation=True,
+            return_tensors="pt",
+        )
+        batches.append({
+            "input_ids": enc["input_ids"].to(device),
+            "attention_mask": enc["attention_mask"].to(device),
+        })
+    return batches
+
+
+# ── 출력 디렉터리 + 로그 ───────────────────────────────────────────────────
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "outputs_bert")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+log_f_path = os.path.join(OUTPUT_DIR, "bert_validation_output.log")
 log_f = open(log_f_path, "a+")
 
+
+# ── capture 함수 (Step C 그대로, ln_* 키) ──────────────────────────────────
 def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, save_prefix):
     output_dir = "outputs_bert"
     os.makedirs(output_dir, exist_ok=True)
@@ -120,13 +180,9 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
             }
         return hook_fn
 
-    # ── Normalization / FFN Hooks ────────────────────────────────────────────
-    # bert_normalization_pipeline.py (LayerNorm 식 기반)이 요구하는 키를 캡처한다.
-    # 정확한 평균 μ 와 분산 var 를 hook 안에서 계산해 저장한다 (var는 unbiased=False
-    # 로 PyTorch nn.LayerNorm 의 내부 식과 일치시킨다).
+    # ── Normalization / FFN Hooks (Step C 결과 — ln_* 키) ────────────────────
     def make_norm_hooks(layer_key):
         # Hook 1: post-attention LayerNorm (BertSelfOutput.LayerNorm)
-        # inputs[0] = hidden_after_dense_dropout + residual (residual-added tensor)
         def hook_attn_layernorm(module, inputs, output):
             x = inputs[0].detach().cpu()
             saved_norm.setdefault(layer_key, {}).update({
@@ -163,7 +219,6 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
             saved_norm.setdefault(layer_key, {}).update(entry)
 
         # Hook 5: post-FFN LayerNorm (BertOutput.LayerNorm)
-        # inputs[0] = ff2_dropout_output + residual (from attention output LayerNorm)
         def hook_ffn_layernorm(module, inputs, output):
             x = inputs[0].detach().cpu()
             saved_norm.setdefault(layer_key, {}).update({
@@ -195,11 +250,10 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
             layer.output.LayerNorm.register_forward_hook(h_fln),
         ])
 
-    # 2. Forward Pass (single pass captures both attention and normalization)
-    inputs = {k: v.to(device) for k, v in current_batch.items()}
+    # 2. Forward pass — 단일 forward 로 12 layer × 모든 hook 캡처
     model.eval()
     with torch.no_grad():
-        model(**inputs)
+        model(**current_batch)
 
     for h in handles:
         h.remove()
@@ -228,24 +282,22 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
                     np.savez_compressed(norm_debug_path, **norm_data)
 
                     norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
-                    process_standard_normalization_debug_npz(norm_debug_path, norm_witness_path, k_bits=22)
+                    process_standard_normalization_debug_npz(
+                        norm_debug_path, norm_witness_path,
+                        k_bits=22, eps=EPS_BERT, table_dir="outputs_bert",
+                    )
                     print(f"[BERT Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
 
-########################### Main Loop ###########################
 
-print(f"Starting BERT Baseline Validation for {pretraining_config['validate_batches_per_epoch']} batches...")
-pretrain_dataloader_iter = enumerate(data_loader)
+# ── Main loop ──────────────────────────────────────────────────────────────
+print(f"Starting BERT Baseline Validation: {args.num_batch} batches × "
+      f"{args.batch_size} samples (max_seq_len={MAX_SEQ_LEN})")
 
-for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
-    epoch_summary = {}
+batches = _make_batches()
 
-    for batch_idx in range(pretraining_config["validate_batches_per_epoch"]):
-        try:
-            _, batch = next(pretrain_dataloader_iter)
-        except StopIteration:
-            break
-
-        # 1. Witness 캡처 (BERT용)
+for epoch in range(1):  # Baseline 은 학습된 모델 1회 평가
+    for batch_idx, batch in enumerate(batches):
+        # 1. Capture (witness 생성)
         if args.save_attn_npz is not None:
             _capture_and_process_bert_intermediates(model, batch, batch_idx, args.save_attn_npz)
 
@@ -253,17 +305,14 @@ for epoch in range(1): # Baseline은 보통 학습된 모델 1회 평가
         t0 = time.time()
         summary = {}
         with torch.no_grad():
-            inputs = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(**inputs)
-            
-            # Loss 및 Accuracy 추출 (BERT 기본 출력 사용)
+            outputs = model(**batch)
+            # labels 없이 호출하므로 outputs.loss 는 None
             summary["loss"] = outputs.loss.item() if outputs.loss is not None else 0.0
-            # MLM 정확도 계산 생략(필요시 추가)
         t1 = time.time()
 
         summary["batch_idx"] = batch_idx
         summary["time"] = round(t1 - t0, 4)
-        
+
         log_f.write(json.dumps(summary, sort_keys=True) + "\n")
         if batch_idx % 10 == 0:
             print(f"Batch {batch_idx}: Time {summary['time']}s, Loss {summary['loss']:.4f}")

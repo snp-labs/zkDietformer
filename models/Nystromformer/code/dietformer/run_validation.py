@@ -1,264 +1,329 @@
 #!/usr/bin/env python3
-from model_wrapper import ModelForMaskedLM
-from dataset import CorpusDataset
-from transformers import RobertaTokenizerFast, DataCollatorForLanguageModeling
-from torch.utils.data import DataLoader
-import torch
-import torch.nn as nn
-import time
-import os
-import json
-import numpy as np
-import argparse
-import utils
-# (추가)
-from attention_nystrom import NystromAttention
-from attention_pipeline import process_attn_debug_npz
-from normalization_pipeline import process_normalization_debug_npz
-from model import Approx_RMSNorm, Approx_Linear
+"""
+Nystromformer evaluation — HF `uw-madison/nystromformer-512` 통합.
 
+작업 2D 결과물. 자체학습 모델 → HF 사전학습 모델 교체 + monkey-patch 통한
+중간값 캡처 + LayerNorm hook (Step C 패턴 재사용) + num_landmarks sweep 지원.
+
+이전 단계와의 정렬:
+- Step B: BERT baseline (`run_bert_validation.py`) HF 교체 완료
+- Step C: BERT LayerNorm 전환 (ln_* 키 컨벤션)
+- Phase 4: layernorm_table.py VAR_SCALE=1000
+- 작업 2A: nystrom_attention_capture.py — monkey-patch
+- 작업 2B: monkey-patch numerical 검증 (max_abs_diff=0 PASS)
+- 작업 2C: bert_normalization_pipeline.py 일반화 (table_dir + eps 인자)
+- 본 단계 (2D): Nystromformer 측 통합
+
+핵심 동작:
+- num_landmarks sweep 변수 (default 64) — §7 contribution 입증용
+- output_dir 자동 분기 — `--save_attn_npz` 미지정 시 `outputs_m{N}/`
+- forward 2회 / batch (1 capture + 1 perf) — BERT 측과 정렬
+- 모든 12 layer × 17 attention 키 + 12 norm 키를 단일 forward 로 캡처
+
+회로 verify 는 Phase 5 (Rust 가젯 enforce_layernorm + VAR_SCALE 인지) 후에야
+가능. 본 단계는 Python 측 정합성 + 측정 환경 통일까지가 목표.
+"""
+import argparse
+import json
+import os
+import random
+import re
+import time
+
+import numpy as np
+import torch
+
+from transformers import AutoTokenizer
+
+from evaluation_fixtures import (
+    SAMPLE_TEXTS, NUM_SAMPLES, MAX_SEQ_LEN, assert_fixture_invariants,
+)
+from gelu_swap import replace_activation_with_sigmoid_gelu
+from nystrom_attention_capture import (
+    load_nystromformer_with_landmarks_override,
+    apply_monkey_patch,
+    valid_landmark_choices,
+)
+from attention_pipeline import process_attn_debug_npz
+from bert_normalization_pipeline import process_standard_normalization_debug_npz
+from layernorm_table import EPS_NYSTROMFORMER
+
+
+# ── 재현성 seed ────────────────────────────────────────────────────────────
+SEED = 42
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+random.seed(SEED)
+
+# ── argparse ───────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument("--checkpoint", type = int, help = "checkpoint", dest = "checkpoint", default = None)
-parser.add_argument("--batch_size", type = int, help = "batch size", dest = "batch_size", default = None)
-parser.add_argument("--num_batch", type = int, help = "number of batches", dest = "num_batch", default = None)
-# (추가/어텐션 수 기록에 필요한 것들)
-parser.add_argument("--save_attn_npz", type = str, help = "prefix path to save attention intermediates npz (optional). Example: /tmp/attn_debug", default = None)
-parser.add_argument("--witness_v_scale", type=int, default=1)
-parser.add_argument("--witness_inv_scale", type=int, default=1)
-parser.add_argument("--witness_scale_input", type=int, default=(1<<8))
-parser.add_argument("--witness_frac_bits", type=int, default=16)
-parser.add_argument("--witness_k_segments", type=int, default=2)
-parser.add_argument("--witness_limb_bits", type=int, default=4)
-parser.add_argument("--witness_tables_outdir", type=str, default="tmp_tables")
+parser.add_argument(
+    "--checkpoint", type=int, default=None,
+    help="(deprecated, 무시됨) HF 사전학습 모델 사용으로 체크포인트 인덱스 불필요.",
+)
+parser.add_argument("--batch_size", type=int, default=1)
+parser.add_argument("--num_batch", type=int, default=1)
+parser.add_argument(
+    "--save_attn_npz", type=str, default=None,
+    help="prefix string + 출력 dir 명시. 미지정 시 outputs_m{num_landmarks}/ 자동 분기.",
+)
+parser.add_argument(
+    "--num_landmarks", type=int, default=64,
+    help=f"Nyström landmark count. seq_len={MAX_SEQ_LEN}의 약수여야 함. "
+         f"sweep 권장: 32, 64, 112. 가능 후보: {valid_landmark_choices(MAX_SEQ_LEN)}.",
+)
 args = parser.parse_args()
 
-# modify
-base_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(base_dir, "..", "..", "bookcorpus-512", "config.json")
+# fixture 무결성 self-check
+assert_fixture_invariants()
 
-with open(config_path, "r") as f:
-    config = json.load(f)
+total_needed = args.num_batch * args.batch_size
+if total_needed > NUM_SAMPLES:
+    raise ValueError(
+        f"requested {total_needed} samples (num_batch={args.num_batch} × "
+        f"batch_size={args.batch_size}) but fixture has only {NUM_SAMPLES}."
+    )
 
-model_config = config["model"]
-pretraining_config = config["pretraining_setting"]
-gpu_config = config["gpu_setting"]
+# ── 출력 디렉터리 자동 분기 ────────────────────────────────────────────────
+output_dir_name = args.save_attn_npz or f"outputs_m{args.num_landmarks}"
+save_prefix = output_dir_name
 
-relative_data_path = config["data_folder"].lstrip("/")
-data_folder = os.path.abspath(os.path.join(base_dir, "..", "..", relative_data_path))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, output_dir_name)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-relative_cp_path = config["model_checkpoints"].lstrip("/")
-checkpoint_dir = os.path.abspath(os.path.join(base_dir, "..", "..", relative_cp_path))
+# ── tokenizer + model ──────────────────────────────────────────────────────
+tokenizer = AutoTokenizer.from_pretrained("uw-madison/nystromformer-512")
 
-print("Using data folder:", data_folder)
-print("Using checkpoint folder:", checkpoint_dir)
+device = torch.device("cpu")  # 실험을 위해 CPU. GPU 사용 시 "cuda"로 변경.
 
-if args.batch_size is not None:
-    pretraining_config["batch_size"] = args.batch_size
-
-if args.num_batch is not None:
-    pretraining_config["validate_batches_per_epoch"] = args.num_batch
-
-device_ids = list(range(torch.cuda.device_count()))
-print(f"GPU list: {device_ids}")
-
-print(json.dumps([model_config, pretraining_config], indent = 4))
-
-########################### Loading Dataset ###########################
-
-tokenizer = RobertaTokenizerFast.from_pretrained(
-    "roberta-base", 
-    model_max_length=model_config["max_seq_len"]
+# Config override 로 num_landmarks + segment_means_seq_len 동기화 → Nyström 분기 강제
+model = load_nystromformer_with_landmarks_override(
+    model_id="uw-madison/nystromformer-512",
+    num_landmarks=args.num_landmarks,
+    seq_len=MAX_SEQ_LEN,
 )
-model_config["vocab_size"] = len(tokenizer.get_vocab())
+model.to(device).eval()  # 중요: dropout 비활성화로 결정성 보장
 
-if "dataset" not in config:
-    config["dataset"] = None
+# GELU swap (회로 lookup 정합성 — gelu_table.py가 σ(1.702x) 가정)
+n_swapped = replace_activation_with_sigmoid_gelu(model, "nystromformer")
+expected_layers = model.config.num_hidden_layers
+assert n_swapped == expected_layers, (
+    f"GELU swap incomplete: {n_swapped}/{expected_layers}"
+)
+print(f"[Nystromformer] swapped {n_swapped}/{expected_layers} layer activations to SigmoidGELU")
+print(
+    f"[Nystromformer] hidden_size={model.config.hidden_size}, "
+    f"num_hidden_layers={model.config.num_hidden_layers}, "
+    f"num_attention_heads={model.config.num_attention_heads}, "
+    f"num_landmarks={model.config.num_landmarks}, "
+    f"segment_means_seq_len={model.config.segment_means_seq_len}, "
+    f"output_dir={output_dir_name}"
+)
 
-dataset = CorpusDataset(folder_path = data_folder, file_json = "dev.json", files_per_batch = 128, option = config["dataset"])
-data_collator = DataCollatorForLanguageModeling(tokenizer = tokenizer, mlm = True, mlm_probability = 0.15)
-data_loader = DataLoader(dataset, batch_size = pretraining_config["batch_size"], collate_fn = data_collator)
+# Monkey-patch 적용 — registry 가 12 layer × 17 키 캡처
+registry = apply_monkey_patch(model)
 
-########################### Loading Model ###########################
-device = torch.device("cpu")
 
-model = ModelForMaskedLM(model_config)
-model = model.to(device)
+# ── batch 생성: fixture → on-the-fly tokenization ──────────────────────────
+def _make_batches() -> list:
+    """SAMPLE_TEXTS 의 앞 total_needed 개를 batch_size 단위로 묶음.
 
-accumu_steps = 1
-print("accumu_steps (CPU mode):", accumu_steps)
-
-# === Robust log handling ===
-if args.checkpoint is None:
-    log_f_path = os.path.join(checkpoint_dir, "validation_output.log")
-    try:
-        open(log_f_path, "a").close()
-    except Exception:
-        os.makedirs(os.path.dirname(log_f_path) or ".", exist_ok=True)
-        open(log_f_path, "a").close()
-
-    log_f = open(log_f_path, "a+")
-    start_epoch = 0
-    try:
-        log = utils.read_data(log_f_path)
-        if log is not None:
-            if hasattr(log, "columns") and "epoch" in log.columns:
-                start_epoch = int(log["epoch"].max())
-            elif isinstance(log, dict) and "epoch" in log:
-                start_epoch = int(np.max(log["epoch"]))
-    except Exception as e:
-        print("Failed to read existing validation log, starting from epoch 0:", e)
-        start_epoch = 0
-
-    end_epoch = pretraining_config["epoch"]
-else:
-    log_f_path = os.path.join(checkpoint_dir, f"validation_output-checkpoint-{args.checkpoint}.log")
-    log_f = open(log_f_path, "w")
-    start_epoch = args.checkpoint
-    end_epoch = args.checkpoint + 1
-
-print(f"Starts from Epoch: {start_epoch}, End at Epoch: {end_epoch}", flush = True)
-
-def _capture_and_process_all_intermediates(model, current_batch, batch_idx, save_prefix):
+    각 batch shape = [batch_size, MAX_SEQ_LEN] (padding=max_length).
     """
-    현재 배치(current_batch)에 대해 중간값을 캡처하고 
-    batch_idx를 포함한 파일명으로 저장합니다.
+    batches = []
+    texts = SAMPLE_TEXTS[:total_needed]
+    for i in range(0, len(texts), args.batch_size):
+        chunk = list(texts[i : i + args.batch_size])
+        enc = tokenizer(
+            chunk,
+            padding="max_length",
+            max_length=MAX_SEQ_LEN,
+            truncation=True,
+            return_tensors="pt",
+        )
+        batches.append({
+            "input_ids": enc["input_ids"].to(device),
+            "attention_mask": enc["attention_mask"].to(device),
+        })
+    return batches
+
+
+# ── log file ───────────────────────────────────────────────────────────────
+log_f_path = os.path.join(OUTPUT_DIR, "nystromformer_validation_output.log")
+log_f = open(log_f_path, "a+")
+
+
+# ── Capture function: monkey-patch (attention) + LayerNorm hook (BERT 패턴) ─
+def _capture_and_process_nystrom_intermediates(
+    model, current_batch, batch_idx, save_prefix, output_dir_abs,
+):
+    """단일 forward 로 12 layer × (17 attention + 12 norm) 키 모두 캡처.
+
+    - Attention: monkey-patch 가 registry 에 push (작업 2A)
+    - LayerNorm: forward hook 으로 saved_norm dict 채움 (BERT Step C 동일 패턴)
+    - 두 캡처를 합쳐 npz 저장 + witness 파이프라인 호출
     """
-    wrapper = model.module if hasattr(model, "module") else model
-    output_dir = "outputs"
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(output_dir_abs, exist_ok=True)
 
-    # 1. 캡처 플래그 활성화
-    for name, m in wrapper.named_modules():
-        if hasattr(m, "capture_intermediates"):
-            m.capture_intermediates = True
-            m.intermediates = []
+    saved_norm = {}  # layer_key → dict (LayerNorm 측 캡처)
 
-    # 2. 메인 루프에서 전달받은 현재 배치 사용 (next 호출 제거)
-    param0 = next(wrapper.parameters())
-    device_local = param0.device
-    inputs = {k: v.to(device_local) for k, v in current_batch.items()}
+    # ── LayerNorm / FFN hooks (Step C 패턴 재사용 — ln_* 키) ────────────
+    def make_norm_hooks(layer_key):
+        # Hook 1: post-attention LayerNorm (NystromformerSelfOutput.LayerNorm)
+        def hook_attn_layernorm(module, inputs, output):
+            x = inputs[0].detach().cpu()
+            saved_norm.setdefault(layer_key, {}).update({
+                "ln_input":  x.numpy(),
+                "mean":      x.mean(dim=-1, keepdim=True).numpy(),
+                "var":       x.var(dim=-1, unbiased=False, keepdim=True).numpy(),
+                "ln_weight": module.weight.detach().cpu().numpy(),
+                "ln_bias":   module.bias.detach().cpu().numpy(),
+                "ln_output": output.detach().cpu().numpy(),
+            })
 
-    # 3. Forward Hook 설정
-    saved_attn_inputs = {}
-    def make_attn_hook(mod_name):
-        def hook_fn(module, hook_inputs, hook_output):
-            saved_attn_inputs[mod_name] = [x.detach().cpu() for x in hook_inputs[:4]]
-        return hook_fn
+        # Hook 2: FFN up-projection dense (NystromformerIntermediate.dense, before SigmoidGELU)
+        def hook_ff1_dense(module, _inputs, output):
+            entry = {
+                "linear_weight": module.weight.detach().cpu().numpy(),
+                "linear_output": output.detach().cpu().numpy(),
+            }
+            if module.bias is not None:
+                entry["linear_bias"] = module.bias.detach().cpu().numpy()
+            saved_norm.setdefault(layer_key, {}).update(entry)
 
-    nystrom_modules = [(n, m) for n, m in wrapper.named_modules() if isinstance(m, NystromAttention)]
-    handles = [mod.register_forward_hook(make_attn_hook(name)) for name, mod in nystrom_modules]
+        # Hook 3: full NystromformerIntermediate output (after SigmoidGELU)
+        def hook_intermediate(_module, _inputs, output):
+            saved_norm.setdefault(layer_key, {})["gelu_output"] = output.detach().cpu().numpy()
 
-    # 4. Forward Pass 실행
-    wrapper.eval()
-    with torch.no_grad():
-        _ = wrapper(**inputs)
+        # Hook 4: FFN down-projection dense (NystromformerOutput.dense, before residual+LayerNorm)
+        def hook_ff2_dense(module, _inputs, output):
+            entry = {
+                "linear_weight_ff2": module.weight.detach().cpu().numpy(),
+                "linear_output_ff2": output.detach().cpu().numpy(),
+            }
+            if module.bias is not None:
+                entry["linear_bias_ff2"] = module.bias.detach().cpu().numpy()
+            saved_norm.setdefault(layer_key, {}).update(entry)
 
-    for h in handles: h.remove()
+        # Hook 5: post-FFN LayerNorm (NystromformerOutput.LayerNorm)
+        def hook_ffn_layernorm(module, inputs, output):
+            x = inputs[0].detach().cpu()
+            saved_norm.setdefault(layer_key, {}).update({
+                "ln_input_2":  x.numpy(),
+                "mean_2":      x.mean(dim=-1, keepdim=True).numpy(),
+                "var_2":       x.var(dim=-1, unbiased=False, keepdim=True).numpy(),
+                "ln_weight_2": module.weight.detach().cpu().numpy(),
+                "ln_bias_2":   module.bias.detach().cpu().numpy(),
+                "ln_output_2": output.detach().cpu().numpy(),
+            })
 
-    # 5. 수집된 데이터 처리 및 Witness 생성
-    for name, m in wrapper.named_modules():
-        if isinstance(m, NystromAttention) and name in saved_attn_inputs:
-            Q, K, V, mask = [x.to(device_local) for x in saved_attn_inputs[name]]
-            file_base = f"{save_prefix}-batch{batch_idx}-{name}.npz"
-            debug_path = os.path.join(output_dir, file_base)
-            
-            m(Q, K, V, mask, collect_intermediates=True, save_path=debug_path)
-            
-            if os.path.exists(debug_path):
-                witness_path = debug_path.replace(".npz", ".witness.npz")
-                process_attn_debug_npz(debug_path, witness_path, k_bits=22)
-                print(f"[Batch {batch_idx}] Generated Attention Witness: {witness_path}")
+        return hook_attn_layernorm, hook_ff1_dense, hook_intermediate, hook_ff2_dense, hook_ffn_layernorm
 
-        elif isinstance(m, Approx_RMSNorm) and "norm1" in name:
-            block_name = name.replace(".norm1", "")
-            named_mods = dict(wrapper.named_modules())
-            ff1_mod, act_mod, ff2_mod, norm2_mod = [named_mods.get(f"{block_name}.{x}") for x in ["ff1", "act", "ff2", "norm2"]]
-            
-            if all(hasattr(mod, "intermediates") and len(mod.intermediates) > 0 for mod in [m, ff1_mod, act_mod, ff2_mod, norm2_mod] if mod is not None):
-                file_base = f"{save_prefix}-batch{batch_idx}-{block_name}.norm_ff_combined.npz"
-                debug_path = os.path.join(output_dir, file_base)
-                
-                combined_data = {
-                    "rms_input": m.intermediates[-1]["rms_input"],
-                    "ms": m.intermediates[-1]["ms"],
-                    "rms_weight": m.intermediates[-1]["rms_weight"],
-                    "rms_output": m.intermediates[-1]["rms_output"],
-                    "linear_weight": ff1_mod.intermediates[-1]["linear_weight"],
-                    "linear_bias": ff1_mod.intermediates[-1]["linear_bias"],
-                    "linear_output": ff1_mod.intermediates[-1]["linear_output"],
-                    "gelu_output": act_mod.intermediates[-1]["gelu_output"],
-                    "linear_weight_ff2": ff2_mod.intermediates[-1]["linear_weight"],
-                    "linear_bias_ff2": ff2_mod.intermediates[-1].get("linear_bias"),
-                    "linear_output_ff2": ff2_mod.intermediates[-1]["linear_output"],
-                    "rms_input_rms2": norm2_mod.intermediates[-1]["rms_input"],
-                    "ms_rms2": norm2_mod.intermediates[-1]["ms"],
-                    "rms_weight_rms2": norm2_mod.intermediates[-1]["rms_weight"],
-                    "rms_output_rms2": norm2_mod.intermediates[-1]["rms_output"],
-                }
-                np.savez_compressed(debug_path, **combined_data)
-                witness_path = debug_path.replace(".npz", ".witness.npz")
-                process_normalization_debug_npz(debug_path, witness_path, k_bits=22)
-                print(f"[Batch {batch_idx}] Generated MLP Witness: {witness_path}")
+    # Norm hook 등록 (12 layer × 5 hook = 60개)
+    norm_handles = []
+    num_layers = model.config.num_hidden_layers
+    for i in range(num_layers):
+        layer = model.nystromformer.encoder.layer[i]
+        layer_key = f"layer_{i}"
+        h_aln, h_ff1, h_int, h_ff2, h_fln = make_norm_hooks(layer_key)
+        norm_handles.extend([
+            layer.attention.output.LayerNorm.register_forward_hook(h_aln),
+            layer.intermediate.dense.register_forward_hook(h_ff1),
+            layer.intermediate.register_forward_hook(h_int),
+            layer.output.dense.register_forward_hook(h_ff2),
+            layer.output.LayerNorm.register_forward_hook(h_fln),
+        ])
 
-    for name, m in wrapper.named_modules():
-        if hasattr(m, "capture_intermediates"):
-            m.capture_intermediates = False
-
-########################### 통합된 Main Loop ###########################
-
-for epoch in range(start_epoch, end_epoch): 
-    checkpoint_path = os.path.join(checkpoint_dir, f"cp-{epoch:04}.model")
-    if not os.path.exists(checkpoint_path): continue
-    
-    model.load_state_dict(torch.load(checkpoint_path, map_location='cpu')['model_state_dict'], strict=False)
-    print(f"Model restored from {checkpoint_path}")
-
-    # 데이터 로더 초기화
-    pretrain_dataloader_iter = enumerate(data_loader)
+    # ── Forward 1회 — 12 layer × 17 attention 키 + 12 layer × 12 norm 키 캡처 ─
+    registry.reset()
+    inputs = {k: v.to(device) for k, v in current_batch.items()}
     model.eval()
-    epoch_summary = {}
+    with torch.no_grad():
+        model(**inputs)
 
-    # 단일 루프로 통합: 캡처와 성능 측정을 하나의 배치에 대해 순차 실행
-    for batch_idx in range(pretraining_config["validate_batches_per_epoch"]):
-        try:
-            _, batch = next(pretrain_dataloader_iter)
-        except StopIteration:
-            break
+    # hook 제거
+    for h in norm_handles:
+        h.remove()
 
-        # 1. 캡처 수행 (Witness 생성)
-        if args.save_attn_npz is not None:
-            _capture_and_process_all_intermediates(model, batch, batch_idx, args.save_attn_npz)
+    # ── 데이터 저장 + witness 변환 ─────────────────────────────────────
+    batch_mask_np = current_batch['attention_mask'].cpu().numpy().astype(np.int64)
 
-        # 2. 성능 측정 및 로그 기록 (동일한 batch 사용)
-        t0 = time.time()
-        summary = {}
-        with torch.no_grad():
-            for percent, inputs in utils.partition_inputs(batch, 1, True):
-                inputs = {k: v.to(device) for k, v in inputs.items()} 
-                outputs = model(**inputs)
-                for key in outputs:
-                    outputs[key] = outputs[key].mean() * percent
-                utils.add_output_to_summary(outputs, summary)
-        t1 = time.time()
+    captured_attn = registry.all()  # {layer_name: {key: array}}
+    for layer_name, attn_data in captured_attn.items():
+        # mask 키는 caller 가 추가 (apply_monkey_patch 명세 — Q3 결정)
+        attn_data = dict(attn_data)  # 사본 (불변 보존)
+        attn_data['mask'] = batch_mask_np
 
-        # 결과 정리
-        for key in summary:
-            if key not in epoch_summary: epoch_summary[key] = []
-            epoch_summary[key].append(summary[key])
-        
-        summary["idx"] = epoch * pretraining_config["validate_batches_per_epoch"] + batch_idx
-        summary["batch_idx"] = batch_idx
-        summary["epoch"] = epoch
-        summary["time"] = round(t1 - t0, 4)
-        
-        log_f.write(json.dumps(summary, sort_keys = True) + "\n")
-        if batch_idx % pretraining_config["batches_per_report"] == 0:
-            print(json.dumps(summary, sort_keys = True), flush = True)
-            log_f.flush()
+        file_base = f"{save_prefix}-batch{batch_idx}-{layer_name}.npz"
+        debug_path = os.path.join(output_dir_abs, file_base)
+        np.savez_compressed(debug_path, **attn_data)
 
-    # 에폭 요약 기록
-    for key in epoch_summary:
-        epoch_summary[key] = np.mean(epoch_summary[key])
-    log_f.write(json.dumps(epoch_summary, sort_keys = True) + "\n")
-    log_f.flush()
-    print(json.dumps(epoch_summary, sort_keys = True), flush = True)
+        if os.path.exists(debug_path):
+            # Attention witness (Nystrom 3-kernel pipeline)
+            witness_path = debug_path.replace(".npz", ".witness.npz")
+            process_attn_debug_npz(debug_path, witness_path, k_bits=22)
+            print(f"[Nystromformer Batch {batch_idx}] Generated Attention Witness: {witness_path}")
+
+            # LayerNorm witness — module name 의 "layer.{i}" 로부터 layer_key 매핑
+            m = re.search(r'layer\.(\d+)', layer_name)
+            if m:
+                layer_key = f"layer_{m.group(1)}"
+                if layer_key in saved_norm:
+                    norm_debug_path = debug_path.replace(".npz", ".norm_debug.npz")
+                    norm_data = {k: np.asarray(v) for k, v in saved_norm[layer_key].items()}
+                    np.savez_compressed(norm_debug_path, **norm_data)
+
+                    norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
+                    process_standard_normalization_debug_npz(
+                        norm_debug_path, norm_witness_path,
+                        k_bits=22,
+                        eps=EPS_NYSTROMFORMER,        # 1e-5 — Nystrom 사전학습 정합
+                        table_dir=output_dir_abs,     # 작업 2C 일반화 인자 활용
+                    )
+                    print(f"[Nystromformer Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
+
+
+# ── Main loop ──────────────────────────────────────────────────────────────
+print(
+    f"Starting Nystromformer Validation: {args.num_batch} batches × "
+    f"{args.batch_size} samples (max_seq_len={MAX_SEQ_LEN}, "
+    f"num_landmarks={args.num_landmarks})"
+)
+
+batches = _make_batches()
+
+for batch_idx, batch in enumerate(batches):
+    # 1. Capture forward (witness 생성)
+    _capture_and_process_nystrom_intermediates(
+        model, batch, batch_idx, save_prefix, OUTPUT_DIR,
+    )
+
+    # 2. Performance forward (loss + 시간 측정)
+    t0 = time.time()
+    summary = {}
+    with torch.no_grad():
+        outputs = model(**batch)
+        # labels 없이 호출하므로 outputs.loss 는 None (HF 기본 동작)
+        summary["loss"] = (
+            outputs.loss.item()
+            if hasattr(outputs, "loss") and outputs.loss is not None
+            else 0.0
+        )
+    t1 = time.time()
+
+    summary["batch_idx"] = batch_idx
+    summary["num_landmarks"] = args.num_landmarks
+    summary["time"] = round(t1 - t0, 4)
+
+    log_f.write(json.dumps(summary, sort_keys=True) + "\n")
+    if batch_idx % 10 == 0:
+        print(
+            f"Batch {batch_idx}: Time {summary['time']}s, "
+            f"Loss {summary['loss']:.4f}, "
+            f"num_landmarks={args.num_landmarks}"
+        )
+        log_f.flush()
+
+log_f.close()
+print(f"Nystromformer Validation Completed. Output: {OUTPUT_DIR}/")
