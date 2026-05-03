@@ -49,9 +49,12 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     assert Q_score_sim.shape == Y_real.shape, \
         f"Q_score_sim shape {Q_score_sim.shape} != Y_real shape {Y_real.shape}"
 
-    # 3. Softmax Tables 로드 (Nystromformer와 공유)
-    table_path = generate_softmax_tables("outputs_bert", k_bits, FRAC_BITS)
-    sm_tables = np.load(table_path)['tables'] 
+    # 3. Softmax Tables 로드 — 출력 디렉터리에 자동 생성 (caller 의 out_npz_path 기준)
+    # 예: out_npz_path="outputs_bert/...witness.npz" → table_dir="outputs_bert"
+    # 다른 디렉터리 (예: --save_attn_npz 가변) 사용 시에도 자동 정합.
+    table_dir = os.path.dirname(out_npz_path) or "."
+    table_path = generate_softmax_tables(table_dir, k_bits, FRAC_BITS)
+    sm_tables = np.load(table_path)['tables']
 
     # 4. Softmax 처리
     # 마스크 적용

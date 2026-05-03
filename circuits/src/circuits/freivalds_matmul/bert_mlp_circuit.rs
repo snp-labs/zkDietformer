@@ -246,59 +246,7 @@ where
     Ok(())
 }
 
-#[test]
-fn mlp_baseline_test() {
-    let outputs = Path::new("outputs_bert");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_bert dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with(".norm.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!(
-        "Running BERT MLP circuit test on {} witness file(s)",
-        targets.len()
-    );
-    let res = run_bert_mlp_paths::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("BERT MLP proof failed: {}", e);
-    }
-}
 
-
-// ── Phase 5-B B6-4: HF BERT MLP 단일 layer prove + verify (Freivalds, LayerNorm) ──
-//
-// 자체학습 측 `mlp_baseline_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
-// 단, 본 함수는 LayerNorm 인프라 사용 (B3-2 + B5-2 재사용):
-//   - Loader: `load_nystrom_layernorm_circuit::<E>` (B3-2)
-//   - Runner: `run_paths_layernorm::<E>` (B5-2)
-//   - Lookup: `run_mlp_remainders_layernorm` + `run_lasso_for_layernorm` (B5-1)
-//
-// 기존 `mlp_baseline_test` 는 `load_bert_mlp_circuit` (= `load_nystrom_circuit`,
-// RMSNorm loader) 를 사용 — BERT 시절 자체학습 호환. 사용자 원칙 (변경 금지)
-// 으로 보존. BERT npz 의 LayerNorm 키는 본 신규 함수가 처리.
-//
-// 환경 변수 (모두 optional):
-//   BERT_MLP_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_bert")
-//   BERT_MLP_LAYER_IDX   : 처리할 layer index (기본 0)
-//   LAYERNORM_TABLE_PATH    : B1 setter — 미설정 시 witness_dir 자동 사용
-//
-// 메모리 추정: ~10-15 GB (LayerNorm + 2 Linear + GeLU, S=448, H=768, D_ff=3072).
-//              사용자 노트북 32 GB 가능 영역.
-//
-// 실행:
-//   BERT_MLP_WITNESS_DIR=/path/to/outputs_bert \
-//     cargo test --release bert_mlp_hf_single_layer_test -- --nocapture
 #[test]
 fn bert_mlp_hf_single_layer_test() {
     use std::env;
@@ -365,7 +313,7 @@ fn bert_mlp_hf_single_layer_test() {
         );
     }
 
-    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    // 우선 단일 layer 만
     let single = vec![all_targets[layer_idx].clone()];
     println!(
         "\n=== [BERT MLP 1-layer prove+verify (LayerNorm)] dir={} | layer_idx={}/{} | file={} ===",
@@ -375,7 +323,6 @@ fn bert_mlp_hf_single_layer_test() {
         single[0].file_name().unwrap_or_default().to_string_lossy()
     );
 
-    // run_paths_layernorm: B5-2 신규 함수 (LayerNorm 흐름 + Lasso for layernorm)
     let res = run_paths_layernorm::<Bn254>(&single);
     if let Err(e) = res {
         panic!("[BERT MLP] proof generate/verify failed: {}", e);

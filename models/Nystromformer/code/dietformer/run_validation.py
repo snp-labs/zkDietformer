@@ -41,6 +41,7 @@ from evaluation_fixtures import (
 from gelu_swap import replace_activation_with_sigmoid_gelu
 from nystrom_attention_capture import (
     load_nystromformer_with_landmarks_override,
+    load_small_nystromformer,
     apply_monkey_patch,
     valid_landmark_choices,
 )
@@ -72,6 +73,16 @@ parser.add_argument(
     help=f"Nyström landmark count. seq_len={MAX_SEQ_LEN}의 약수여야 함. "
          f"sweep 권장: 32, 64, 112. 가능 후보: {valid_landmark_choices(MAX_SEQ_LEN)}.",
 )
+parser.add_argument(
+    "--hidden_size", type=int, default=None,
+    help="Random init 모델 hidden_size. 지정 시 pretrained 대신 random init 사용. "
+         "dim sweep 예: 256, 384, 512.",
+)
+parser.add_argument(
+    "--num_attention_heads", type=int, default=None,
+    help="Random init 모델 head 수. hidden_size 를 나눌 수 있어야 함. "
+         "미지정 시 자동 결정 (hidden_size // 64, 최소 4).",
+)
 args = parser.parse_args()
 
 # fixture 무결성 self-check
@@ -85,7 +96,12 @@ if total_needed > NUM_SAMPLES:
     )
 
 # ── 출력 디렉터리 자동 분기 ────────────────────────────────────────────────
-output_dir_name = args.save_attn_npz or f"outputs_m{args.num_landmarks}"
+if args.save_attn_npz:
+    output_dir_name = args.save_attn_npz
+elif args.hidden_size is not None:
+    output_dir_name = f"outputs_m{args.num_landmarks}_h{args.hidden_size}"
+else:
+    output_dir_name = f"outputs_m{args.num_landmarks}"
 save_prefix = output_dir_name
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -97,12 +113,24 @@ tokenizer = AutoTokenizer.from_pretrained("uw-madison/nystromformer-512")
 
 device = torch.device("cpu")  # 실험을 위해 CPU. GPU 사용 시 "cuda"로 변경.
 
-# Config override 로 num_landmarks + segment_means_seq_len 동기화 → Nyström 분기 강제
-model = load_nystromformer_with_landmarks_override(
-    model_id="uw-madison/nystromformer-512",
-    num_landmarks=args.num_landmarks,
-    seq_len=MAX_SEQ_LEN,
-)
+# ── 모델 로드: --hidden_size 지정 시 random init, 미지정 시 pretrained ───
+if args.hidden_size is not None:
+    n_heads = args.num_attention_heads
+    if n_heads is None:
+        n_heads = max(4, args.hidden_size // 64)
+    model = load_small_nystromformer(
+        hidden_size=args.hidden_size,
+        num_attention_heads=n_heads,
+        num_landmarks=args.num_landmarks,
+        seq_len=MAX_SEQ_LEN,
+    )
+    print(f"[Nystromformer] RANDOM INIT — hidden_size={args.hidden_size}, heads={n_heads}")
+else:
+    model = load_nystromformer_with_landmarks_override(
+        model_id="uw-madison/nystromformer-512",
+        num_landmarks=args.num_landmarks,
+        seq_len=MAX_SEQ_LEN,
+    )
 model.to(device).eval()  # 중요: dropout 비활성화로 결정성 보장
 
 # GELU swap (회로 lookup 정합성 — gelu_table.py가 σ(1.702x) 가정)

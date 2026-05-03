@@ -731,43 +731,7 @@ where
 }
 
 
-#[test]
-fn mlp_test() {
-    let outputs = Path::new("outputs");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path.file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("norm_ff_combined.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!("Running MLP circuit test on {} norm_ff_combined witness file(s)", targets.len());
-    let res = run_paths::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("proof generate failed: {}", e);
-    }
-}
 
-
-// ── Phase 5-B B5-2: HF LayerNorm 측 단일 layer prove + verify 흐름 ───────────
-//
-// 자체학습 측 `run_paths` (위) 와 평행. RMSNorm 부분만 LayerNorm 으로 치환:
-//   - load_nystrom_circuit          → load_nystrom_layernorm_circuit
-//   - run_lasso_for_rmsnorm × 2     → run_lasso_for_layernorm × 2
-//   - run_mlp_remainders            → run_mlp_remainders_layernorm
-//
-// GELU / Linear / CP-Link / Groth16 코드 패턴 동일.
-//
-// 1 layer 전용 — 사용자 노트북 메모리 한계로 12 layer 전체 prove 금지.
-// 호출 측 (`mlp_layernorm_test`) 이 npz 파일 1 개로 제한.
 pub fn run_paths_layernorm<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
 where
     E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
@@ -956,10 +920,7 @@ where
 }
 
 
-// ── Phase 5-B B5-2: 단일 layer LayerNorm prove + verify 테스트 ───────────────
-//
-// 사용자 노트북 메모리 한계 (12 layer 전체 prove 금지) 준수.
-//
+
 // 환경 변수 (모두 optional):
 //   LAYERNORM_WITNESS_DIR : witness npz 디렉터리 (예: outputs_m64)
 //                           기본값: "outputs_m64"
@@ -969,12 +930,12 @@ where
 //
 // 실행:
 //   LAYERNORM_WITNESS_DIR=/path/to/outputs_m64 \
-//     cargo test --release mlp_layernorm_single_layer_test -- --nocapture
+//     cargo test --release nystrom_mlp_hf_single_layer_test -- --nocapture
 //
 // peak memory 측정: macOS `/usr/bin/time -l ./target/release/...` 또는
 // linux `/usr/bin/time -v ...` (회로 측 측정 안 함, 사용자 시스템 측 측정 권장).
 #[test]
-fn mlp_layernorm_single_layer_test() {
+fn nystrom_mlp_hf_single_layer_test() {
     use std::env;
 
     // ── 환경 변수 ───────────────────────────────────────────────────────────
@@ -1034,7 +995,7 @@ fn mlp_layernorm_single_layer_test() {
         );
     }
 
-    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    // 우선 단일 layer 만
     let single = vec![all_targets[layer_idx].clone()];
     println!(
         "\n=== [LayerNorm 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",

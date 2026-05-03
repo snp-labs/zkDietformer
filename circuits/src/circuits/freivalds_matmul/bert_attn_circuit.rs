@@ -650,61 +650,7 @@ where
     Ok(())
 }
 
-#[test]
-fn attention_baseline_test() {
-    let outputs = Path::new("outputs_bert");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_bert_small dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("attention.self.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!(
-        "Running BERT attention small circuit test on {} witness file(s)",
-        targets.len()
-    );
-    let res = run_bert_attention_paths::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("BERT attention proof (small) failed: {}", e);
-    }
-}
 
-
-// ── Phase 5-B B6-3: HF BERT Attention 단일 layer prove + verify (Freivalds) ──
-//
-// 자체학습 측 `attention_baseline_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
-// 회로 (`BERTAttentionCircuit`), loader (`load_bert_attention_circuit`),
-// runner (`run_bert_attention_paths`) 모두 자체학습과 동일 — 변경 없이 재사용
-// (B6-3 키 정합성 분석에서 Type A/B/C/E 0 mismatch 확인).
-//
-// 차이점 (자체학습 BERT vs 본 마이그레이션 BERT):
-//   - 디렉터리 default: outputs_bert → outputs_bert (실제 데이터 위치)
-//   - 파일 필터: 동일 (*attention.self.witness.npz)
-//
-// 회로 파일명 `bert_*` 는 legacy 명 (BERT→BERT 마이그레이션 잔여).
-// 실제 사용자 환경 데이터: outputs_bert/ 12 layer × witness.
-//
-// 환경 변수 (모두 optional):
-//   BERT_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_bert")
-//   BERT_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
-//   SOFTMAX_TABLE_PATH       : B6-A1 setter — 미설정 시 witness_dir 자동 사용
-//
-// 메모리 추정: ~40-80 GB (full O(S²=448²) attention).
-//              사용자 노트북 32 GB 부족 가능성 → 클라우드 r5.4xlarge 권장.
-//
-// 실행:
-//   BERT_ATTN_WITNESS_DIR=/path/to/outputs_bert \
-//     cargo test --release bert_attn_hf_single_layer_test -- --nocapture
 #[test]
 fn bert_attn_hf_single_layer_test() {
     use std::env;
@@ -767,7 +713,7 @@ fn bert_attn_hf_single_layer_test() {
         );
     }
 
-    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    // 우선 단일 layer 만 
     let single = vec![all_targets[layer_idx].clone()];
     println!(
         "\n=== [BERT Attention 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",

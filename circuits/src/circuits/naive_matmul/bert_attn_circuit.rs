@@ -371,57 +371,7 @@ where
     Ok(())
 }
 
-#[test]
-fn bert_attention_not_test() {
-    let outputs = Path::new("outputs_bert");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs_bert dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("attention.self.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!(
-        "Running BERT attention NOT circuit test on {} witness file(s)",
-        targets.len()
-    );
-    let res = run_bert_attention_not_paths::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("BERT attention NOT proof failed: {}", e);
-    }
-}
 
-
-// ── Phase 5-B B6-6: HF BERT Attention 단일 layer prove + verify (Naive matmul) ──
-//
-// 자체학습 측 `bert_attention_not_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
-// B6-3 (Freivalds 측 `bert_attn_hf_single_layer_test`) 와 거의 동일 — 단지
-// runner 호출이 `run_bert_attention_paths` → `run_bert_attention_not_paths`
-// (naive O(n³) matmul).
-//
-// 회로 (`BERTAttentionCircuitNot` newtype wrapper) + loader (`load_bert_attention_circuit`
-// 재사용) 모두 자체학습과 동일.
-//
-// 환경 변수 (모두 optional):
-//   NAIVE_ROBERTA_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_bert")
-//   NAIVE_ROBERTA_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
-//   SOFTMAX_TABLE_PATH             : B6-A1 setter — 미설정 시 witness_dir 사용
-//
-// 메모리 추정: ~120-200 GB (Freivalds 대비 2-3× — full O(S²) attention × naive matmul).
-//              사용자 노트북 32 GB 매우 부족 → 클라우드 큰 메모리 instance 필수.
-//
-// 실행:
-//   NAIVE_ROBERTA_ATTN_WITNESS_DIR=/path/to/outputs_bert \
-//     cargo test --release bert_attn_naive_single_layer_test -- --nocapture
 #[test]
 fn bert_attn_naive_single_layer_test() {
     use std::env;
@@ -477,7 +427,7 @@ fn bert_attn_naive_single_layer_test() {
         );
     }
 
-    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    // 우선 단일 layer 만
     let single = vec![all_targets[layer_idx].clone()];
     println!(
         "\n=== [BERT Attention NAIVE 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
@@ -487,7 +437,6 @@ fn bert_attn_naive_single_layer_test() {
         single[0].file_name().unwrap_or_default().to_string_lossy()
     );
 
-    // run_bert_attention_not_paths: B6-6 차이점 (B6-3 의 freivalds runner → naive runner)
     let res = run_bert_attention_not_paths::<Bn254>(&single);
     if let Err(e) = res {
         panic!("[BERT Attention NAIVE] proof generate/verify failed: {}", e);

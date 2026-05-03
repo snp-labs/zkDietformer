@@ -12,19 +12,6 @@ pub enum SoftmaxSubtableStrategy {}
 
 /// 필드 독립적인 u64 데이터를 캐싱하기 위한 정적 변수
 static SOFTMAX_CACHE: OnceLock<Array2<u64>> = OnceLock::new();
-
-// ── Phase 5-B B6-A1: Softmax 표 path 동적화 (LayerNorm B1 평행 패턴) ─────────
-//
-// LayerNorm B1 (`subtables/layernorm.rs`) 와 정확히 동일 디자인 — 자체학습
-// 호환을 위해 default fallback `"outputs/softmax_tables.npz"` 보존.
-//
-// 우선순위 (3-tier):
-//   1. `set_softmax_table_dir(dir)` 로 설정된 경로 (OnceLock first-write-wins)
-//   2. 환경 변수 `SOFTMAX_TABLE_PATH`
-//   3. default `"outputs/softmax_tables.npz"` (자체학습 호환)
-//
-// Python `softmax_table.py:generate_softmax_tables(out_dir, ...)` 로 만든 파일을
-// witness 와 같은 dir 에 두고 setter 로 지정. 또는 env var 로 직접 path 명시.
 static SOFTMAX_TABLE_PATH: OnceLock<String> = OnceLock::new();
 
 /// 프로그램 측 setter — Python pipeline 이 작성한 `softmax_tables.npz` 가

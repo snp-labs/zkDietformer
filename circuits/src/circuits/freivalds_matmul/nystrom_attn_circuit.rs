@@ -822,56 +822,6 @@ where
 }
 
 #[test]
-fn attention_test() {
-    let outputs = Path::new("outputs");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path.file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("mha.attn.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!("Running attention circuit test on {} mha.attn witness file(s)", targets.len());
-    let res = run_paths::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("proof generate failed: {}", e);
-    }
-}
-
-
-// ── Phase 5-B B6-2: HF Nyström Attention 단일 layer prove + verify (Freivalds) ──
-//
-// 자체학습 측 `attention_test` (위) 와 평행. 사용자 노트북 메모리 한계 (12 layer
-// 전체 prove 금지) 준수 — 단일 layer 만 처리.
-//
-// 차이점 (자체학습 vs 본 마이그레이션):
-//   - 디렉터리: outputs/ → outputs_m{N}/ (env var)
-//   - 파일 필터: *mha.attn.witness.npz → *attention.self.witness.npz
-//   - 단일 npz 추출
-//
-// 회로 (`NystromAttentionCircuit`) + lookup + `run_paths::<E>` 모두 자체학습과
-// 동일 — 변경 없이 재사용 (B6-1 키 정합성 분석에서 Type A/B/C/E 0 mismatch 확인).
-//
-// 환경 변수 (모두 optional):
-//   NYSTROM_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_m64")
-//   NYSTROM_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
-//   SOFTMAX_TABLE_PATH       : softmax 표 path 직접 지정 (subtables/softmax.rs B6-A1)
-//                              미설정 시 본 함수가 set_softmax_table_dir(witness_dir) 호출
-//
-// 실행:
-//   NYSTROM_ATTN_WITNESS_DIR=/path/to/outputs_m64 \
-//     cargo test --release nystrom_attn_hf_single_layer_test -- --nocapture
-//
-// peak memory: macOS `/usr/bin/time -l ...` 권장 (회로 측 측정 안 함, OS 측 위임).
-#[test]
 fn nystrom_attn_hf_single_layer_test() {
     use std::env;
 
@@ -933,7 +883,7 @@ fn nystrom_attn_hf_single_layer_test() {
         );
     }
 
-    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    // 우선 단일 layer 만
     let single = vec![all_targets[layer_idx].clone()];
     println!(
         "\n=== [Nyström Attention 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",

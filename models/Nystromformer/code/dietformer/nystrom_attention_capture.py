@@ -1,5 +1,5 @@
 """
-HF NystromformerSelfAttention monkey-patch — 작업 2A 결과물.
+HF NystromformerSelfAttention monkey-patch 
 
 본 모듈은 transformers 4.57.3 기준으로 NystromformerSelfAttention.forward 본문을
 fork 하여 중간값을 capture dict 에 push 한다. 회로 측 attention_pipeline.py 가
@@ -320,6 +320,46 @@ def load_nystromformer_with_landmarks_override(
     config.segment_means_seq_len = seq_len
 
     model = NystromformerForMaskedLM.from_pretrained(model_id, config=config)
+    return model
+
+
+def load_small_nystromformer(
+    hidden_size: int = 256,
+    num_hidden_layers: int = 12,
+    num_attention_heads: int = 8,
+    num_landmarks: int = 64,
+    seq_len: int = 448,
+    vocab_size: int = 50265,
+) -> NystromformerForMaskedLM:
+    """
+    Random init Nystromformer — 회로 비용 측정 전용.
+
+    pretrained 가중치 없이 config 만으로 모델 생성.
+    회로 constraint 수 / prove time 은 architecture 만 의존하므로
+    가중치가 random 이어도 측정 결과 동일.
+    """
+    if hidden_size % num_attention_heads != 0:
+        raise ValueError(
+            f"hidden_size ({hidden_size}) must be divisible by "
+            f"num_attention_heads ({num_attention_heads})."
+        )
+    if seq_len % num_landmarks != 0:
+        suggestions = valid_landmark_choices(seq_len)
+        raise ValueError(
+            f"seq_len ({seq_len}) must be divisible by num_landmarks ({num_landmarks}). "
+            f"Valid choices: {suggestions}"
+        )
+
+    config = AutoConfig.from_pretrained("uw-madison/nystromformer-512")
+    config.hidden_size = hidden_size
+    config.intermediate_size = hidden_size * 4
+    config.num_hidden_layers = num_hidden_layers
+    config.num_attention_heads = num_attention_heads
+    config.num_landmarks = num_landmarks
+    config.segment_means_seq_len = seq_len
+    config.vocab_size = vocab_size
+
+    model = NystromformerForMaskedLM(config)
     return model
 
 

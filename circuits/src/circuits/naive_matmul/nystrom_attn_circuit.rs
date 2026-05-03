@@ -635,52 +635,11 @@ where
     Ok(())
 }
 
-#[test]
-fn attention_not_test() {
-    let outputs = Path::new("outputs_server_nystrom");
-    if !outputs.is_dir() {
-        return;
-    }
-    let mut targets: Vec<std::path::PathBuf> = Vec::new();
-    for entry in fs::read_dir(outputs).expect("reading outputs dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_file()
-            && path.file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("mha.attn.witness.npz"))
-        {
-            targets.push(path);
-        }
-    }
-    targets.sort();
-    println!("Running Nystrom NOT circuit test on {} witness file(s)", targets.len());
-    let res = run_paths_not::<Bn254>(&targets);
-    if let Err(e) = res {
-        panic!("Nystrom NOT proof failed: {}", e);
-    }
-}
 
-
-// ── Phase 5-B B6-5: HF Nyström Attention 단일 layer prove + verify (Naive matmul) ──
-//
-// 자체학습 측 `attention_not_test` (위) 와 평행 — 단일 layer 추출 + skip-safe.
-// B6-2 (Freivalds 측 `nystrom_attn_hf_single_layer_test`) 와 거의 동일 — 단지
-// runner 호출이 `run_paths` → `run_paths_not` 로 변경 (naive O(n³) matmul).
-//
-// 회로 (`NystromAttentionCircuitNot` newtype wrapper) + loader (`load_nystrom_circuit`
-// 재사용) 모두 자체학습과 동일.
-//
 // 환경 변수 (모두 optional):
 //   NAIVE_NYSTROM_ATTN_WITNESS_DIR : witness npz 디렉터리 (기본 "outputs_m64")
 //   NAIVE_NYSTROM_ATTN_LAYER_IDX   : 처리할 layer index (기본 0)
 //   SOFTMAX_TABLE_PATH             : B6-A1 setter — 미설정 시 witness_dir 사용
-//
-// 메모리 추정: ~50-80 GB (Freivalds 대비 2-3× — naive O(n³) matmul 비용).
-//              사용자 노트북 32 GB 부족 → 클라우드 r5.4xlarge 권장.
-//
-// 실행:
-//   NAIVE_NYSTROM_ATTN_WITNESS_DIR=/path/to/outputs_m64 \
-//     cargo test --release nystrom_attn_naive_single_layer_test -- --nocapture
 #[test]
 fn nystrom_attn_naive_single_layer_test() {
     use std::env;
@@ -735,7 +694,7 @@ fn nystrom_attn_naive_single_layer_test() {
         );
     }
 
-    // 🚨 단일 layer 만 — 메모리 한계 준수 (12 layer 전체 prove 금지)
+    // 우선 단일 layer 만
     let single = vec![all_targets[layer_idx].clone()];
     println!(
         "\n=== [Nyström Attention NAIVE 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
@@ -745,7 +704,6 @@ fn nystrom_attn_naive_single_layer_test() {
         single[0].file_name().unwrap_or_default().to_string_lossy()
     );
 
-    // run_paths_not: B6-5 차이점 (B6-2 의 run_paths → run_paths_not)
     let res = run_paths_not::<Bn254>(&single);
     if let Err(e) = res {
         panic!("[Nyström Attention NAIVE] proof generate/verify failed: {}", e);

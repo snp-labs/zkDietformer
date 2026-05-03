@@ -1,11 +1,12 @@
 import hashlib
+import os
 import numpy as np
 from quantize import (
-    get_quantization_params, quantize_tensor, 
+    get_quantization_params, quantize_tensor,
     get_m_constant, sign_bit_grouping_matmul, get_softmax_index_multiplier, check_neg_torch
 )
 from softmax_table import (
-    generate_softmax_tables, 
+    generate_softmax_tables,
     extract_exp_from_segments, combine_exp_limbs,
     FRAC_BITS, LIMB_BITS, K_SEGMENTS
 )
@@ -72,9 +73,12 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         Q_landmarks_q, z_q, K_T, z_k, z_y3, M_k3, k_bits
     )
 
-    ### softmax tables 생성
-    table_path = generate_softmax_tables("outputs", k_bits, FRAC_BITS)
-    sm_tables = np.load(table_path)['tables'] 
+    ### softmax tables 생성 — 출력 디렉터리에 자동 생성 (caller 의 out_npz_path 기준)
+    # 예: out_npz_path="outputs_m64/...witness.npz" → table_dir="outputs_m64"
+    # num_landmarks sweep (m ∈ {32, 64, 112}) 시 각 디렉터리에 자동 생성됨.
+    table_dir = os.path.dirname(out_npz_path) or "."
+    table_path = generate_softmax_tables(table_dir, k_bits, FRAC_BITS)
+    sm_tables = np.load(table_path)['tables']
 
     ### softmax(kernel)
     M_sm = get_softmax_index_multiplier(s_q, s_k, k_bits) # k2,k3도 모두 동일
