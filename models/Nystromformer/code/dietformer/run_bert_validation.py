@@ -36,7 +36,7 @@ from evaluation_fixtures import (
     SAMPLE_TEXTS, NUM_SAMPLES, MAX_SEQ_LEN, assert_fixture_invariants,
 )
 from gelu_swap import replace_activation_with_sigmoid_gelu, SigmoidGELU
-from bert_attention_pipeline import process_standard_attn_debug_npz
+from bert_attention_pipeline import process_standard_attn_debug_npz, load_small_bert
 from bert_normalization_pipeline import process_standard_normalization_debug_npz
 from layernorm_table import EPS_BERT
 
@@ -57,7 +57,17 @@ parser.add_argument("--batch_size", type=int, default=1)
 parser.add_argument("--num_batch", type=int, default=1)
 parser.add_argument(
     "--save_attn_npz", type=str, default=None,
-    help="prefix string for npz files (저장 위치는 outputs_bert/). 예: 'run1' 또는 'outputs_bert'",
+    help="prefix string for npz files. 예: 'run1' 또는 'outputs_bert'",
+)
+parser.add_argument(
+    "--hidden_size", type=int, default=None,
+    help="Random init 모델 hidden_size. 지정 시 pretrained 대신 random init 사용. "
+         "dim sweep 예: 256, 384, 512.",
+)
+parser.add_argument(
+    "--num_attention_heads", type=int, default=None,
+    help="Random init 모델 head 수. hidden_size 를 나눌 수 있어야 함. "
+         "미지정 시 자동 결정 (hidden_size // 64, 최소 4).",
 )
 args = parser.parse_args()
 
@@ -72,14 +82,36 @@ if total_needed > NUM_SAMPLES:
         f"increase NUM_SAMPLES in evaluation_fixtures.py 또는 명령 인자를 줄이세요."
     )
 
+# ── 출력 디렉터리 자동 분기 ────────────────────────────────────────────────
+if args.save_attn_npz:
+    output_dir_name = args.save_attn_npz
+elif args.hidden_size is not None:
+    output_dir_name = f"outputs_bert_h{args.hidden_size}"
+else:
+    output_dir_name = "outputs_bert"
+save_prefix = output_dir_name
+
 # ── tokenizer + model ──────────────────────────────────────────────────────
 tokenizer = BertTokenizerFast.from_pretrained(
     "bert-base-uncased", model_max_length=MAX_SEQ_LEN,
 )
 
 device = torch.device("cpu")  # 실험을 위해 CPU. GPU는 "cuda"로 변경.
-model = BertForMaskedLM.from_pretrained("bert-base-uncased").to(device)
-model.eval()  # 중요: dropout 비활성화로 결정성 보장
+
+# ── 모델 로드: --hidden_size 지정 시 random init, 미지정 시 pretrained ───
+if args.hidden_size is not None:
+    n_heads = args.num_attention_heads
+    if n_heads is None:
+        n_heads = max(4, args.hidden_size // 64)
+    model = load_small_bert(
+        hidden_size=args.hidden_size,
+        num_attention_heads=n_heads,
+        seq_len=MAX_SEQ_LEN,
+    )
+    print(f"[BERT] RANDOM INIT — hidden_size={args.hidden_size}, heads={n_heads}")
+else:
+    model = BertForMaskedLM.from_pretrained("bert-base-uncased")
+model.to(device).eval()  # 중요: dropout 비활성화로 결정성 보장
 
 # GELU swap (회로 lookup 정합성 — gelu_table.py 가 σ(1.702x) 가정)
 n_swapped = replace_activation_with_sigmoid_gelu(model, "bert")
@@ -118,16 +150,15 @@ def _make_batches() -> list[dict]:
 
 # ── 출력 디렉터리 + 로그 ───────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "outputs_bert")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, output_dir_name)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 log_f_path = os.path.join(OUTPUT_DIR, "bert_validation_output.log")
 log_f = open(log_f_path, "a+")
 
 
 # ── capture 함수 (Step C 그대로, ln_* 키) ──────────────────────────────────
-def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, save_prefix):
-    output_dir = "outputs_bert"
-    os.makedirs(output_dir, exist_ok=True)
+def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, save_prefix, output_dir_abs):
+    os.makedirs(output_dir_abs, exist_ok=True)
 
     # 1. Attention Hook 타겟 모듈 설정
     target_modules = [(n, m) for n, m in model.named_modules() if isinstance(m, BertSelfAttention)]
@@ -263,7 +294,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
     # 3. 데이터 저장 및 파이프라인 실행
     for name, data in saved_inputs.items():
         file_base = f"{save_prefix}-batch{batch_idx}-{name}.npz"
-        debug_path = os.path.join(output_dir, file_base)
+        debug_path = os.path.join(output_dir_abs, file_base)
         np.savez_compressed(debug_path, **data)
 
         if os.path.exists(debug_path):
@@ -284,39 +315,45 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
                     norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
                     process_standard_normalization_debug_npz(
                         norm_debug_path, norm_witness_path,
-                        k_bits=22, eps=EPS_BERT, table_dir="outputs_bert",
+                        k_bits=22, eps=EPS_BERT, table_dir=output_dir_abs,
                     )
                     print(f"[BERT Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
 
 
 # ── Main loop ──────────────────────────────────────────────────────────────
-print(f"Starting BERT Baseline Validation: {args.num_batch} batches × "
-      f"{args.batch_size} samples (max_seq_len={MAX_SEQ_LEN})")
+print(
+    f"Starting BERT Baseline Validation: {args.num_batch} batches × "
+    f"{args.batch_size} samples (max_seq_len={MAX_SEQ_LEN}, "
+    f"output_dir={output_dir_name})"
+)
 
 batches = _make_batches()
 
-for epoch in range(1):  # Baseline 은 학습된 모델 1회 평가
-    for batch_idx, batch in enumerate(batches):
-        # 1. Capture (witness 생성)
-        if args.save_attn_npz is not None:
-            _capture_and_process_bert_intermediates(model, batch, batch_idx, args.save_attn_npz)
+for batch_idx, batch in enumerate(batches):
+    # 1. Capture (witness 생성)
+    _capture_and_process_bert_intermediates(
+        model, batch, batch_idx, save_prefix, OUTPUT_DIR,
+    )
 
-        # 2. 성능 측정
-        t0 = time.time()
-        summary = {}
-        with torch.no_grad():
-            outputs = model(**batch)
-            # labels 없이 호출하므로 outputs.loss 는 None
-            summary["loss"] = outputs.loss.item() if outputs.loss is not None else 0.0
-        t1 = time.time()
+    # 2. 성능 측정
+    t0 = time.time()
+    summary = {}
+    with torch.no_grad():
+        outputs = model(**batch)
+        summary["loss"] = (
+            outputs.loss.item()
+            if hasattr(outputs, "loss") and outputs.loss is not None
+            else 0.0
+        )
+    t1 = time.time()
 
-        summary["batch_idx"] = batch_idx
-        summary["time"] = round(t1 - t0, 4)
+    summary["batch_idx"] = batch_idx
+    summary["time"] = round(t1 - t0, 4)
 
-        log_f.write(json.dumps(summary, sort_keys=True) + "\n")
-        if batch_idx % 10 == 0:
-            print(f"Batch {batch_idx}: Time {summary['time']}s, Loss {summary['loss']:.4f}")
-            log_f.flush()
+    log_f.write(json.dumps(summary, sort_keys=True) + "\n")
+    if batch_idx % 10 == 0:
+        print(f"Batch {batch_idx}: Time {summary['time']}s, Loss {summary['loss']:.4f}")
+        log_f.flush()
 
 log_f.close()
-print("BERT Baseline Validation Completed.")
+print(f"BERT Baseline Validation Completed. Output: {OUTPUT_DIR}/")

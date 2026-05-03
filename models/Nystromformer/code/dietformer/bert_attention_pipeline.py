@@ -1,14 +1,48 @@
 import numpy as np
 import os
 from quantize import (
-    get_quantization_params, quantize_tensor, 
+    get_quantization_params, quantize_tensor,
     get_m_constant, sign_bit_grouping_matmul, get_softmax_index_multiplier, check_neg_torch
 )
 from softmax_table import (
-    generate_softmax_tables, 
+    generate_softmax_tables,
     extract_exp_from_segments, combine_exp_limbs,
     FRAC_BITS, LIMB_BITS, K_SEGMENTS
 )
+from transformers import BertForMaskedLM, BertConfig
+
+
+def load_small_bert(
+    hidden_size: int = 256,
+    num_hidden_layers: int = 12,
+    num_attention_heads: int = 8,
+    intermediate_size: int = None,
+    seq_len: int = 448,
+    vocab_size: int = 30522,
+) -> BertForMaskedLM:
+    """
+    Random init BERT — 회로 비용 측정 전용.
+
+    pretrained 가중치 없이 config 만으로 모델 생성.
+    회로 constraint 수 / prove time 은 architecture 만 의존하므로
+    가중치가 random 이어도 측정 결과 동일.
+    """
+    if hidden_size % num_attention_heads != 0:
+        raise ValueError(
+            f"hidden_size ({hidden_size}) must be divisible by "
+            f"num_attention_heads ({num_attention_heads})."
+        )
+
+    config = BertConfig.from_pretrained("bert-base-uncased")
+    config.hidden_size = hidden_size
+    config.intermediate_size = intermediate_size or (hidden_size * 4)
+    config.num_hidden_layers = num_hidden_layers
+    config.num_attention_heads = num_attention_heads
+    config.vocab_size = vocab_size
+    config.max_position_embeddings = max(seq_len, 512)
+
+    model = BertForMaskedLM(config)
+    return model
 
 def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     debug = np.load(debug_npz_path, allow_pickle=True)
