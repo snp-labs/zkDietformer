@@ -99,9 +99,9 @@ if total_needed > NUM_SAMPLES:
 if args.save_attn_npz:
     output_dir_name = args.save_attn_npz
 elif args.hidden_size is not None:
-    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_h{args.hidden_size}"
+    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_h{args.hidden_size}_nystrom"
 else:
-    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}"
+    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_nystrom"
 save_prefix = output_dir_name
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -86,9 +86,9 @@ if total_needed > NUM_SAMPLES:
 if args.save_attn_npz:
     output_dir_name = args.save_attn_npz
 elif args.hidden_size is not None:
-    output_dir_name = f"outputs_bert_n{MAX_SEQ_LEN}_h{args.hidden_size}"
+    output_dir_name = f"outputs_bert_n{MAX_SEQ_LEN}_h{args.hidden_size}_bert"
 else:
-    output_dir_name = f"outputs_bert_n{MAX_SEQ_LEN}"
+    output_dir_name = f"outputs_bert_n{MAX_SEQ_LEN}_bert"
 save_prefix = output_dir_name
 
 # ── tokenizer + model ──────────────────────────────────────────────────────
