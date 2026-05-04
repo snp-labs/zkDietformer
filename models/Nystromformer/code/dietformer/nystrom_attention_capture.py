@@ -358,6 +358,7 @@ def load_small_nystromformer(
     config.num_landmarks = num_landmarks
     config.segment_means_seq_len = seq_len
     config.vocab_size = vocab_size
+    config.max_position_embeddings = max(seq_len, 510)
 
     model = NystromformerForMaskedLM(config)
     return model
