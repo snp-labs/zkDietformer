@@ -83,6 +83,10 @@ parser.add_argument(
     help="Random init 모델 head 수. hidden_size 를 나눌 수 있어야 함. "
          "미지정 시 자동 결정 (hidden_size // 64, 최소 4).",
 )
+parser.add_argument(
+    "--num_hidden_layers", type=int, default=None,
+    help="Random init 모델 layer 수. 미지정 시 함수 default (4) 사용.",
+)
 args = parser.parse_args()
 
 # fixture 무결성 self-check
@@ -99,7 +103,8 @@ if total_needed > NUM_SAMPLES:
 if args.save_attn_npz:
     output_dir_name = args.save_attn_npz
 elif args.hidden_size is not None:
-    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_h{args.hidden_size}_nystrom"
+    n_layers = args.num_hidden_layers or 4
+    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_L{n_layers}_h{args.hidden_size}_nystrom"
 else:
     output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_nystrom"
 save_prefix = output_dir_name
@@ -121,6 +126,7 @@ if args.hidden_size is not None:
     model = load_small_nystromformer(
         hidden_size=args.hidden_size,
         num_attention_heads=n_heads,
+        num_hidden_layers=args.num_hidden_layers or 4,
         num_landmarks=args.num_landmarks,
         seq_len=MAX_SEQ_LEN,
     )

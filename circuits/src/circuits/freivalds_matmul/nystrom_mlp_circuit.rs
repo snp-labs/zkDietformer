@@ -941,10 +941,9 @@ fn nystrom_mlp_hf_single_layer_test() {
     // ── 환경 변수 ───────────────────────────────────────────────────────────
     let witness_dir = env::var("LAYERNORM_WITNESS_DIR")
         .unwrap_or_else(|_| "outputs_m64".to_string());
-    let layer_idx: usize = env::var("LAYERNORM_LAYER_IDX")
+    let layer_idx: Option<usize> = env::var("LAYERNORM_LAYER_IDX")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+        .and_then(|s| s.parse().ok());
 
     let dir = Path::new(&witness_dir);
     if !dir.is_dir() {
@@ -981,33 +980,45 @@ fn nystrom_mlp_hf_single_layer_test() {
 
     if all_targets.is_empty() {
         eprintln!(
-            "[skip] no '*norm_ff_combined.witness.npz' files in {}. \
+            "[skip] no '*norm.witness.npz' files in {}. \
              Run Phase 4 export pipeline first.",
             witness_dir
         );
         return;
     }
-    if layer_idx >= all_targets.len() {
-        panic!(
-            "LAYERNORM_LAYER_IDX={} out of range (have {} layers).",
-            layer_idx,
-            all_targets.len()
-        );
-    }
 
-    // 우선 단일 layer 만
-    let single = vec![all_targets[layer_idx].clone()];
+    let targets = if let Some(idx) = layer_idx {
+        if idx >= all_targets.len() {
+            panic!(
+                "LAYERNORM_LAYER_IDX={} out of range (have {} layers).",
+                idx,
+                all_targets.len()
+            );
+        }
+        vec![all_targets[idx].clone()]
+    } else {
+        all_targets
+    };
+
     println!(
-        "\n=== [LayerNorm 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
+        "\n=== [LayerNorm prove+verify] dir={} | files={} | mode={} ===",
         witness_dir,
-        layer_idx,
-        all_targets.len() - 1,
-        single[0].file_name().unwrap_or_default().to_string_lossy()
+        targets.len(),
+        if layer_idx.is_some() { "single-layer" } else { "all-layers" },
     );
 
-    let res = run_paths_layernorm::<Bn254>(&single);
-    if let Err(e) = res {
-        panic!("[LayerNorm] proof generate/verify failed: {}", e);
+    let total_start = std::time::Instant::now();
+    let res = run_paths_layernorm::<Bn254>(&targets);
+    let total_ms = total_start.elapsed().as_millis();
+
+    match res {
+        Ok(()) => println!(
+            "\n=== [LayerNorm] ALL {} files PASS | total_wall_ms={} ===",
+            targets.len(), total_ms,
+        ),
+        Err(e) => panic!(
+            "[LayerNorm] proof generate/verify failed after {}ms: {}",
+            total_ms, e,
+        ),
     }
-    println!("\n=== [LayerNorm 1-layer prove+verify] PASS ===");
 }

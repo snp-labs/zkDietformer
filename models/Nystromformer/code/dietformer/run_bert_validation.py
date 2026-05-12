@@ -69,6 +69,10 @@ parser.add_argument(
     help="Random init 모델 head 수. hidden_size 를 나눌 수 있어야 함. "
          "미지정 시 자동 결정 (hidden_size // 64, 최소 4).",
 )
+parser.add_argument(
+    "--num_hidden_layers", type=int, default=None,
+    help="Random init 모델 layer 수. 미지정 시 함수 default (4) 사용.",
+)
 args = parser.parse_args()
 
 # fixture 무결성 self-check
@@ -86,9 +90,10 @@ if total_needed > NUM_SAMPLES:
 if args.save_attn_npz:
     output_dir_name = args.save_attn_npz
 elif args.hidden_size is not None:
-    output_dir_name = f"outputs_bert_n{MAX_SEQ_LEN}_h{args.hidden_size}_bert"
+    n_layers = args.num_hidden_layers or 4
+    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_L{n_layers}_h{args.hidden_size}_bert"
 else:
-    output_dir_name = f"outputs_bert_n{MAX_SEQ_LEN}_bert"
+    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_bert"
 save_prefix = output_dir_name
 
 # ── tokenizer + model ──────────────────────────────────────────────────────
@@ -106,6 +111,7 @@ if args.hidden_size is not None:
     model = load_small_bert(
         hidden_size=args.hidden_size,
         num_attention_heads=n_heads,
+        num_hidden_layers=args.num_hidden_layers or 4,
         seq_len=MAX_SEQ_LEN,
     )
     print(f"[BERT] RANDOM INIT — hidden_size={args.hidden_size}, heads={n_heads}")

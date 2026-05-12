@@ -646,8 +646,8 @@ fn nystrom_attn_naive_single_layer_test() {
 
     let witness_dir = env::var("NAIVE_NYSTROM_ATTN_WITNESS_DIR")
         .unwrap_or_else(|_| "outputs_m64".to_string());
-    let layer_idx: usize = env::var("NAIVE_NYSTROM_ATTN_LAYER_IDX")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let layer_idx: Option<usize> = env::var("NAIVE_NYSTROM_ATTN_LAYER_IDX")
+        .ok().and_then(|s| s.parse().ok());
 
     let dir = Path::new(&witness_dir);
     if !dir.is_dir() {
@@ -686,27 +686,39 @@ fn nystrom_attn_naive_single_layer_test() {
         );
         return;
     }
-    if layer_idx >= all_targets.len() {
-        panic!(
-            "NAIVE_NYSTROM_ATTN_LAYER_IDX={} out of range (have {} layers).",
-            layer_idx,
-            all_targets.len()
-        );
-    }
 
-    // 우선 단일 layer 만
-    let single = vec![all_targets[layer_idx].clone()];
+    let targets = if let Some(idx) = layer_idx {
+        if idx >= all_targets.len() {
+            panic!(
+                "NAIVE_NYSTROM_ATTN_LAYER_IDX={} out of range (have {} layers).",
+                idx,
+                all_targets.len()
+            );
+        }
+        vec![all_targets[idx].clone()]
+    } else {
+        all_targets
+    };
+
     println!(
-        "\n=== [Nyström Attention NAIVE 1-layer prove+verify] dir={} | layer_idx={}/{} | file={} ===",
+        "\n=== [Nystrom Attention NAIVE prove+verify] dir={} | files={} | mode={} ===",
         witness_dir,
-        layer_idx,
-        all_targets.len() - 1,
-        single[0].file_name().unwrap_or_default().to_string_lossy()
+        targets.len(),
+        if layer_idx.is_some() { "single-layer" } else { "all-layers" },
     );
 
-    let res = run_paths_not::<Bn254>(&single);
-    if let Err(e) = res {
-        panic!("[Nyström Attention NAIVE] proof generate/verify failed: {}", e);
+    let total_start = std::time::Instant::now();
+    let res = run_paths_not::<Bn254>(&targets);
+    let total_ms = total_start.elapsed().as_millis();
+
+    match res {
+        Ok(()) => println!(
+            "\n=== [Nystrom Attention NAIVE] ALL {} files PASS | total_wall_ms={} ===",
+            targets.len(), total_ms,
+        ),
+        Err(e) => panic!(
+            "[Nystrom Attention NAIVE] proof generate/verify failed after {}ms: {}",
+            total_ms, e,
+        ),
     }
-    println!("\n=== [Nyström Attention NAIVE 1-layer prove+verify] PASS ===");
 }

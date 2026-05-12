@@ -324,11 +324,11 @@ def load_nystromformer_with_landmarks_override(
 
 
 def load_small_nystromformer(
-    hidden_size: int = 256,
-    num_hidden_layers: int = 12,
+    hidden_size: int = 512,
+    num_hidden_layers: int = 4,
     num_attention_heads: int = 8,
     num_landmarks: int = 64,
-    seq_len: int = 448,
+    seq_len: int = 512,
     vocab_size: int = 50265,
 ) -> NystromformerForMaskedLM:
     """

@@ -13,11 +13,11 @@ from transformers import BertForMaskedLM, BertConfig
 
 
 def load_small_bert(
-    hidden_size: int = 256,
-    num_hidden_layers: int = 12,
+    hidden_size: int = 512,
+    num_hidden_layers: int = 4,
     num_attention_heads: int = 8,
     intermediate_size: int = None,
-    seq_len: int = 448,
+    seq_len: int = 512,
     vocab_size: int = 30522,
 ) -> BertForMaskedLM:
     """
