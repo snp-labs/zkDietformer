@@ -46,6 +46,7 @@ use crate::{
     },
 };
 use crate::lasso::subtables::layernorm::set_layernorm_table_dir;
+use crate::lasso::subtables::gelu::set_gelu_table_dir;
 
 type G1 = G1Projective;
 #[derive(Clone)]
@@ -955,11 +956,18 @@ fn nystrom_mlp_hf_single_layer_test() {
         return;
     }
 
-    // ── 표 경로 결정: env var 미설정 시 witness_dir 안의 layernorm_tables.npz ─
+    // ── 표 경로 결정: env var 미설정 시 witness_dir 안의 tables.npz ─
     if env::var("LAYERNORM_TABLE_PATH").is_err() {
         set_layernorm_table_dir(dir);
         println!(
             "[info] LAYERNORM_TABLE_PATH not set; using {}/layernorm_tables.npz",
+            witness_dir
+        );
+    }
+    if env::var("GELU_TABLE_PATH").is_err() {
+        set_gelu_table_dir(dir);
+        println!(
+            "[info] GELU_TABLE_PATH not set; using {}/gelu_tables.npz",
             witness_dir
         );
     }

@@ -254,6 +254,7 @@ fn bert_mlp_hf_single_layer_test() {
     use ark_std::fs;
     use crate::circuits::freivalds_matmul::nystrom_mlp_circuit::run_paths_layernorm;
     use crate::lasso::subtables::layernorm::set_layernorm_table_dir;
+    use crate::lasso::subtables::gelu::set_gelu_table_dir;
 
     // ── 환경 변수 ───────────────────────────────────────────────────────────
     let witness_dir = env::var("BERT_MLP_WITNESS_DIR")
@@ -272,11 +273,18 @@ fn bert_mlp_hf_single_layer_test() {
         return;
     }
 
-    // ── LayerNorm 표 경로 결정: env var 미설정 시 witness_dir 안의 layernorm_tables.npz ─
+    // ── 표 경로 결정: env var 미설정 시 witness_dir 안의 tables.npz ─
     if env::var("LAYERNORM_TABLE_PATH").is_err() {
         set_layernorm_table_dir(dir);
         println!(
             "[info] LAYERNORM_TABLE_PATH not set; using {}/layernorm_tables.npz",
+            witness_dir
+        );
+    }
+    if env::var("GELU_TABLE_PATH").is_err() {
+        set_gelu_table_dir(dir);
+        println!(
+            "[info] GELU_TABLE_PATH not set; using {}/gelu_tables.npz",
             witness_dir
         );
     }
