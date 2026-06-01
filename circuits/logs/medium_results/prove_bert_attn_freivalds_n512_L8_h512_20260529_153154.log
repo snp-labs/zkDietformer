@@ -1,0 +1,468 @@
+
+running 1 test
+[info] SOFTMAX_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/softmax_tables.npz
+
+=== [BERT Attention prove+verify] dir=/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert | files=8 | mode=all-layers ===
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+test circuits::freivalds_matmul::bert_attn_circuit::bert_attn_hf_single_layer_test has been running for over 60 seconds
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 775.487292ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.686781875s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 84.350375ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.07834625s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [56512, 60446, 15800, 17196, 56590, 32746, 17288, 26912, 26736, 63010]
+  - Dim[0] Tail (10): [63010, 63010, 63010, 63010, 63010, 63010, 63010, 63010, 63010, 63010]
+  - Dim[1] Head (10): [53, 23, 23, 13, 40, 1, 16, 7, 16, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.683655292s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.211815375s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [41170, 59602, 18130, 29138, 23250, 65490, 42962, 19922, 21458, 23250]
+  - Dim[0] Tail (10): [17106, 45266, 49362, 22738, 59346, 46546, 722, 38866, 3026, 16338]
+  - Dim[1] Head (10): [17, 24, 35, 21, 27, 56, 14, 19, 61, 28]
+  - Dim[1] Tail (10): [3, 26, 4, 11, 14, 48, 45, 31, 57, 16]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 732.325209ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.603079s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.126356583s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1184422,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":2930,"prove_ms":274393,"verify_ms":3},"lasso":{"total_ms":26277},"cp_link":{"setup_ms":281535,"prove_ms":1713,"verify_ms":1127},"end_to_end_ms":1850348}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.1.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 850.338375ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.836081375s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 86.894917ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.406173625s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [58658, 56918, 1142, 17926, 5490, 39954, 5640, 23180, 34382, 58198]
+  - Dim[0] Tail (10): [58198, 58198, 58198, 58198, 58198, 58198, 58198, 58198, 58198, 58198]
+  - Dim[1] Head (10): [39, 16, 7, 41, 8, 17, 40, 28, 52, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.614426375s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.231875292s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [10364, 1148, 41468, 61308, 60924, 56700, 23548, 60540, 54268, 30460]
+  - Dim[0] Tail (10): [57212, 46460, 23804, 46332, 50940, 52220, 62204, 39804, 63996, 25340]
+  - Dim[1] Head (10): [9, 35, 9, 61, 60, 34, 4, 13, 57, 27]
+  - Dim[1] Tail (10): [1, 62, 27, 7, 33, 44, 3, 6, 60, 31]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 731.287834ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.660491667s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.071316458s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.1.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1200624,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3194,"prove_ms":355659,"verify_ms":4},"lasso":{"total_ms":26534},"cp_link":{"setup_ms":296117,"prove_ms":2318,"verify_ms":1132},"end_to_end_ms":1994929}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.2.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 847.767ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.752811834s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 73.406417ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.357028416s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [13160, 63128, 45416, 25092, 31996, 35024, 48116, 26956, 20644, 47380]
+  - Dim[0] Tail (10): [47380, 47380, 47380, 47380, 47380, 47380, 47380, 47380, 47380, 47380]
+  - Dim[1] Head (10): [49, 58, 37, 34, 53, 45, 56, 58, 17, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.781369834s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.246858583s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [48677, 25253, 26405, 27301, 42021, 42917, 18981, 1445, 56101, 16805]
+  - Dim[0] Tail (10): [59301, 48549, 7717, 10789, 27813, 6053, 44581, 10277, 21029, 57765]
+  - Dim[1] Head (10): [25, 19, 37, 34, 35, 56, 33, 47, 52, 48]
+  - Dim[1] Tail (10): [19, 28, 12, 14, 19, 48, 54, 0, 20, 8]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 725.031209ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.385550167s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.099113s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.2.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1240651,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3195,"prove_ms":384987,"verify_ms":5},"lasso":{"total_ms":26442},"cp_link":{"setup_ms":307258,"prove_ms":2514,"verify_ms":1128},"end_to_end_ms":2085025}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.3.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 766.073833ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.8591915s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 77.670917ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.192830625s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [17110, 21050, 30811, 37366, 40520, 60851, 38970, 7853, 49109, 49387]
+  - Dim[0] Tail (10): [49387, 49387, 49387, 49387, 49387, 49387, 49387, 49387, 49387, 49387]
+  - Dim[1] Head (10): [2, 52, 13, 56, 19, 62, 59, 18, 1, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.65722925s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.2021375s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [36326, 62054, 5222, 35558, 15206, 33894, 23910, 34534, 7270, 20710]
+  - Dim[0] Tail (10): [46182, 46438, 37990, 23142, 50022, 16998, 4582, 33254, 358, 61670]
+  - Dim[1] Head (10): [59, 44, 2, 10, 58, 8, 35, 41, 2, 0]
+  - Dim[1] Tail (10): [63, 24, 49, 61, 58, 30, 41, 46, 58, 34]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 704.144209ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.6246725s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.107795041s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.3.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1243260,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3287,"prove_ms":379057,"verify_ms":5},"lasso":{"total_ms":26331},"cp_link":{"setup_ms":354747,"prove_ms":2694,"verify_ms":1128},"end_to_end_ms":2130142}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.4.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 892.406959ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.947422459s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 73.121375ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.474246375s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [22796, 62468, 43243, 53839, 43215, 30275, 40471, 37530, 49663, 53155]
+  - Dim[0] Tail (10): [53155, 53155, 53155, 53155, 53155, 53155, 53155, 53155, 53155, 53155]
+  - Dim[1] Head (10): [9, 45, 29, 15, 50, 22, 51, 13, 60, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.801966708s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.230044375s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [37852, 476, 36316, 476, 49628, 45020, 8668, 29660, 2524, 43484]
+  - Dim[0] Tail (10): [41948, 23004, 60892, 47068, 54748, 27612, 20444, 56796, 33244, 476]
+  - Dim[1] Head (10): [5, 0, 24, 63, 51, 42, 30, 52, 9, 5]
+  - Dim[1] Tail (10): [22, 37, 34, 9, 55, 31, 63, 47, 41, 31]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 724.201125ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.557500833s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.109537042s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.4.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1241787,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3287,"prove_ms":402149,"verify_ms":5},"lasso":{"total_ms":26836},"cp_link":{"setup_ms":290070,"prove_ms":2647,"verify_ms":1128},"end_to_end_ms":2086627}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.5.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 729.99375ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.768402291s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 85.547542ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.209720958s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [20998, 40146, 46908, 46576, 27142, 53308, 54013, 27036, 16820, 53952]
+  - Dim[0] Tail (10): [53952, 53952, 53952, 53952, 53952, 53952, 53952, 53952, 53952, 53952]
+  - Dim[1] Head (10): [39, 62, 7, 19, 42, 6, 44, 28, 41, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.70815125s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.223966s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [8484, 13476, 21028, 42916, 8996, 37796, 30884, 60324, 48804, 53156]
+  - Dim[0] Tail (10): [30756, 13860, 44452, 58404, 58788, 58020, 25508, 39716, 3620, 61092]
+  - Dim[1] Head (10): [43, 1, 61, 6, 16, 18, 26, 55, 61, 26]
+  - Dim[1] Tail (10): [14, 50, 61, 37, 59, 54, 7, 44, 55, 52]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 744.610709ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.512731625s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.143599083s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.5.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1244853,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3345,"prove_ms":397335,"verify_ms":4},"lasso":{"total_ms":26369},"cp_link":{"setup_ms":282778,"prove_ms":1687,"verify_ms":1130},"end_to_end_ms":2077450}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.6.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 720.219875ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.808625041s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 70.650292ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.183034334s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [14026, 9996, 50058, 33342, 51402, 22790, 43154, 5932, 60168, 62128]
+  - Dim[0] Tail (10): [62128, 62128, 62128, 62128, 62128, 62128, 62128, 62128, 62128, 62128]
+  - Dim[1] Head (10): [10, 60, 1, 32, 12, 19, 14, 15, 40, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.672225292s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.232668541s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [61383, 9031, 62791, 57031, 31687, 4807, 36807, 11079, 40519, 5703]
+  - Dim[0] Tail (10): [9159, 22983, 17223, 32967, 48839, 50887, 29383, 6471, 45639, 18631]
+  - Dim[1] Head (10): [63, 58, 63, 11, 37, 45, 3, 12, 54, 62]
+  - Dim[1] Tail (10): [41, 31, 58, 26, 9, 58, 25, 21, 47, 39]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 724.233584ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.517003666s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.075059584s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.6.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1242482,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3438,"prove_ms":397119,"verify_ms":4},"lasso":{"total_ms":26231},"cp_link":{"setup_ms":292655,"prove_ms":2542,"verify_ms":1124},"end_to_end_ms":2084350}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L8_h512_bert/outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.7.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 750.720208ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.842629834s
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 72.61275ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.3023585s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [36044, 12353, 56801, 35961, 43135, 1378, 15863, 33618, 50760, 62198]
+  - Dim[0] Tail (10): [62198, 62198, 62198, 62198, 62198, 62198, 62198, 62198, 62198, 62198]
+  - Dim[1] Head (10): [15, 4, 18, 16, 40, 53, 33, 5, 8, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.710406625s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.206489958s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [11617, 44001, 65505, 64353, 24673, 38625, 2785, 9057, 41697, 39905]
+  - Dim[0] Tail (10): [49633, 1633, 1505, 21857, 2401, 48353, 15713, 45537, 5089, 45153]
+  - Dim[1] Head (10): [31, 5, 5, 59, 16, 22, 46, 6, 6, 54]
+  - Dim[1] Tail (10): [37, 41, 51, 10, 45, 0, 31, 4, 28, 43]
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 699.315958ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.545297625s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.097606792s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_L8_h512_bert-batch0-bert.encoder.layer.7.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"setup_ms":1269461,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":426088,"groth16":{"commit_ms":3388,"prove_ms":392361,"verify_ms":3},"lasso":{"total_ms":26372},"cp_link":{"setup_ms":353080,"prove_ms":2736,"verify_ms":1132},"end_to_end_ms":2168198}
+
+=== [BERT Attention] ALL 8 files PASS | total_wall_ms=16813028 ===
+test circuits::freivalds_matmul::bert_attn_circuit::bert_attn_hf_single_layer_test ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 16813.04s
+

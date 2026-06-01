@@ -1,0 +1,123 @@
+
+running 1 test
+[info] LAYERNORM_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n1024_m32_L2_h128_nystrom/layernorm_tables.npz
+[info] GELU_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n1024_m32_L2_h128_nystrom/gelu_tables.npz
+
+=== [LayerNorm prove+verify] dir=/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n1024_m32_L2_h128_nystrom | files=2 | mode=all-layers ===
+
+=== [LayerNorm] Processing witness NPZ: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n1024_m32_L2_h128_nystrom/outputs_n1024_m32_L2_h128_nystrom-batch0-nystromformer.encoder.layer.0.attention.self.norm.witness.npz" ===
+  - Dry-run commit count: 3414528 (45.365592791s)
+  - Witness load time: 153.862709ms
+=== [0] LegoGroth16 Setup (Num Commit: 3414528) ===
+test circuits::freivalds_matmul::nystrom_mlp_circuit::nystrom_mlp_hf_single_layer_test has been running for over 60 seconds
+  - Setup time: 762.760676541s
+  - Num constraints: 7836160
+
+[Debug] LegoGroth16 committed_group1 (Total: 3414528)
+  Head (10): [254, 255, 253, 254, 253, 252, 253, 253, 251, 253]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] LegoGroth16 GenProof ===
+  - Groth16 prove time: 483.998118542s
+  - LegoGroth16 SNARK Verification: Ok(()) (5.096167ms)
+=== [2] Lasso Lookup Proofs: MLP Sections (LayerNorm) ===
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln1", Total: 1024)
+  Head (10): [254, 255, 253, 254, 253, 252, 253, 253, 251, 253]
+  Tail (10): [253, 252, 251, 251, 250, 252, 252, 251, 252, 252]
+  - Lasso Total Time (LayerNorm): 164.623209ms
+
+[Debug] Lasso GeLU (Label: "lasso_gelu1", Total: 524288)
+  Head (10): [65535, 0, 0, 0, 0, 0, 65535, 65535, 65535, 65535]
+  Tail (10): [0, 0, 0, 65535, 0, 0, 65535, 0, 65535, 0]
+GeLU Lasso proof verified: "lasso_gelu1"
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln2", Total: 1024)
+  Head (10): [254, 250, 249, 248, 251, 250, 248, 249, 249, 247]
+  Tail (10): [253, 249, 246, 251, 246, 248, 250, 250, 247, 252]
+  - Lasso Total Time (LayerNorm): 128.997292ms
+
+=== [MLP-LayerNorm] Lasso Lookup Proofs: 22-bit Remainders (R) ===
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_shift", Total: 1024)
+  - Dim[0] Head (10): [12912, 8832, 31888, 22552, 58672, 59000, 58864, 8144, 28160, 10336]
+  - Dim[0] Tail (10): [26904, 42704, 15864, 40896, 54368, 4528, 20576, 12688, 13784, 29696]
+  - Dim[1] Head (10): [29, 30, 40, 55, 46, 36, 63, 19, 44, 7]
+  - Dim[1] Tail (10): [0, 53, 3, 35, 63, 47, 33, 45, 39, 52]
+    -> Lasso proof verified for: "R_mlp_ln1_shift"
+ - R_mlp_ln1_shift verified | Count: 1024 | Time: 165.260125ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_out", Total: 131072)
+  - Dim[0] Head (10): [37363, 32243, 20979, 63475, 20467, 16371, 8691, 64499, 38387, 14323]
+  - Dim[0] Tail (10): [37695, 65003, 2067, 33015, 35095, 51349, 1547, 17281, 11041, 65003]
+  - Dim[1] Head (10): [50, 1, 34, 5, 4, 16, 7, 2, 47, 22]
+  - Dim[1] Tail (10): [16, 4, 44, 61, 41, 42, 49, 55, 51, 4]
+    -> Lasso proof verified for: "R_mlp_ln1_out"
+ - R_mlp_ln1_out verified | Count: 131072 | Time: 540.515916ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_beta", Total: 128)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_mlp_ln1_beta"
+ - R_mlp_ln1_beta verified | Count: 128 | Time: 134.444167ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin1", Total: 524288)
+  - Dim[0] Head (10): [55328, 16960, 33856, 34112, 54080, 24192, 58400, 11072, 32128, 40512]
+  - Dim[0] Tail (10): [31072, 2528, 14848, 27584, 50208, 44992, 31360, 8128, 30016, 63424]
+  - Dim[1] Head (10): [15, 48, 16, 7, 41, 29, 11, 4, 15, 23]
+  - Dim[1] Tail (10): [27, 34, 52, 29, 34, 30, 3, 57, 25, 16]
+    -> Lasso proof verified for: "R_mlp_lin1"
+ - R_mlp_lin1 verified | Count: 524288 | Time: 1.160309291s
+
+[Debug] Lasso Range (Label: "R_mlp_gelu", Total: 524288)
+  - Dim[0] Head (10): [21200, 41680, 41680, 41680, 41680, 41680, 18128, 65232, 18128, 35536]
+  - Dim[0] Tail (10): [41680, 41680, 41680, 54992, 41680, 41680, 56016, 41680, 33488, 41680]
+  - Dim[1] Head (10): [62, 63, 63, 63, 63, 63, 0, 45, 0, 3]
+  - Dim[1] Tail (10): [63, 63, 63, 53, 63, 63, 4, 63, 37, 63]
+    -> Lasso proof verified for: "R_mlp_gelu"
+ - R_mlp_gelu verified | Count: 524288 | Time: 1.168231416s
+
+[Debug] Lasso Range (Label: "R_mlp_lin2", Total: 131072)
+  - Dim[0] Head (10): [45560, 1755, 43405, 61269, 42145, 42363, 38583, 51322, 38819, 32414]
+  - Dim[0] Tail (10): [20432, 22054, 26127, 36029, 60253, 14746, 25571, 58362, 54004, 17054]
+  - Dim[1] Head (10): [45, 30, 49, 46, 1, 32, 45, 8, 28, 51]
+  - Dim[1] Tail (10): [33, 31, 19, 11, 38, 55, 5, 6, 45, 13]
+    -> Lasso proof verified for: "R_mlp_lin2"
+ - R_mlp_lin2 verified | Count: 131072 | Time: 475.868542ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_shift", Total: 1024)
+  - Dim[0] Head (10): [57142, 32836, 13200, 58658, 54086, 27860, 51184, 2306, 63500, 57716]
+  - Dim[0] Tail (10): [17332, 37812, 43306, 8282, 44382, 19540, 60676, 59600, 59772, 35488]
+  - Dim[1] Head (10): [58, 61, 55, 21, 63, 14, 52, 44, 9, 40]
+  - Dim[1] Tail (10): [26, 44, 58, 63, 34, 57, 42, 2, 63, 31]
+    -> Lasso proof verified for: "R_mlp_ln2_shift"
+ - R_mlp_ln2_shift verified | Count: 1024 | Time: 168.083792ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_out", Total: 131072)
+  - Dim[0] Head (10): [1792, 0, 59904, 64512, 9984, 7168, 19968, 65280, 3072, 7424]
+  - Dim[0] Tail (10): [21120, 32512, 34560, 49536, 51072, 35072, 18560, 50048, 43904, 15488]
+  - Dim[1] Head (10): [57, 0, 21, 3, 25, 36, 50, 0, 52, 35]
+  - Dim[1] Tail (10): [36, 1, 53, 61, 52, 50, 51, 58, 30, 5]
+    -> Lasso proof verified for: "R_mlp_ln2_out"
+ - R_mlp_ln2_out verified | Count: 131072 | Time: 473.1685ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_beta", Total: 128)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_mlp_ln2_beta"
+ - R_mlp_ln2_beta verified | Count: 128 | Time: 136.977334ms
+All MLP-LayerNorm remainders verified sequentially.
+  - Lasso total time: 6.057912959s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+
+=== [LayerNorm] e2e total: 1383.467867375s ===
+BENCHMARK_RESULT {"file":"outputs_n1024_m32_L2_h128_nystrom-batch0-nystromformer.encoder.layer.0.attention.self.norm.witness.npz","circuit":"mlp-layernorm","constraints":7836160,"setup_ms":762760,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":138408,"groth16":{"commit_ms":1052,"prove_ms":483998,"verify_ms":5},"lasso":{"total_ms":6057},"cp_link":{"setup_ms":36790,"prove_ms":875,"verify_ms":377},"end_to_end_ms":1383467}
+
+=== [LayerNorm] Processing witness NPZ: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n1024_m32_L2_h128_nystrom/outputs_n1024_m32_L2_h128_nystrom-batch0-nystromformer.encoder.layer.1.attention.self.norm.witness.npz" ===
+  - Dry-run commit count: 3414528 (78.163189708s)
+  - Witness load time: 165.386417ms
+=== [0] LegoGroth16 Setup (Num Commit: 3414528) ===
+  - Setup time: 912.243136292s

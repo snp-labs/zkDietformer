@@ -1,0 +1,740 @@
+
+running 1 test
+[info] SOFTMAX_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_m32_L4_h512_nystrom/softmax_tables.npz
+
+=== [Nystrom Attention NAIVE prove+verify] dir=/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_m32_L4_h512_nystrom | files=4 | mode=all-layers ===
+
+=== [Nystrom NOT] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_m32_L4_h512_nystrom/outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.0.attention.self.witness.npz" ===
+Commit counts: d1=4669440, d2=786432
+=== [0] LegoGroth16 Setup (d1=4669440, d2=786432) ===
+test circuits::naive_matmul::nystrom_attn_circuit::nystrom_attn_naive_single_layer_test has been running for over 60 seconds
+
+[Debug] committed_group1 total=4669440
+  Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] Building final circuit with Fiat-Shamir challenge ===
+  - Nystrom NOT SNARK Verification: Ok(())
+=== [2] Nystrom NOT Lasso Lookup Proofs ===
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k1", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 80.972625ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 691.565125ms
+Lasso proof verified for: "lasso_k1"
+    * Lasso Verifier Time: 51.914209ms
+  - Lasso Total Time ("lasso_k1"): 954.021792ms
+    * Sparsity (m): 8192
+
+[Debug] Lasso Range (Label: "lasso_k2", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 15.604125ms
+    * Starting Lasso Prove (log_s: 13)...
+    * Lasso Prover Time: 277.324792ms
+Lasso proof verified for: "lasso_k2"
+    * Lasso Verifier Time: 44.515375ms
+  - Lasso Total Time ("lasso_k2"): 366.008375ms
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k3", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 68.634583ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 638.625708ms
+Lasso proof verified for: "lasso_k3"
+    * Lasso Verifier Time: 124.685917ms
+  - Lasso Total Time ("lasso_k3"): 949.112417ms
+
+=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===
+
+[Debug] Lasso Range (Label: "matmul_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [63770, 41870, 3945, 64393, 33639, 10792, 29835, 50862, 26206, 63358]
+  - Dim[0] Tail (10): [62184, 32864, 3956, 61872, 9506, 49700, 27514, 59715, 24272, 25893]
+  - Dim[1] Head (10): [9, 29, 16, 55, 29, 9, 52, 54, 53, 48]
+  - Dim[1] Tail (10): [42, 35, 53, 41, 50, 41, 22, 16, 42, 32]
+    -> Lasso proof verified for: "matmul_k1_remainder"
+  - matmul_k1_remainder verified | Count: 131072 | Time: 464.152875ms
+
+[Debug] Lasso Range (Label: "matmul_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [45144, 5792, 64752, 16336, 704, 55928, 31152, 30272, 42048, 43480]
+  - Dim[0] Tail (10): [11816, 60528, 62512, 38176, 43488, 14744, 15880, 29400, 15552, 47344]
+  - Dim[1] Head (10): [31, 8, 34, 21, 34, 4, 12, 38, 53, 50]
+  - Dim[1] Tail (10): [1, 40, 60, 23, 5, 37, 8, 19, 57, 41]
+    -> Lasso proof verified for: "matmul_k2_remainder"
+  - matmul_k2_remainder verified | Count: 8192 | Time: 198.848542ms
+
+[Debug] Lasso Range (Label: "matmul_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [60852, 31828, 45776, 36244, 19852, 51260, 54096, 20500, 28640, 10700]
+  - Dim[0] Tail (10): [46248, 23840, 32948, 6620, 17224, 1336, 24428, 64972, 64288, 14776]
+  - Dim[1] Head (10): [36, 24, 53, 53, 61, 55, 36, 37, 44, 6]
+  - Dim[1] Tail (10): [45, 45, 56, 37, 33, 4, 40, 55, 52, 14]
+    -> Lasso proof verified for: "matmul_k3_remainder"
+  - matmul_k3_remainder verified | Count: 131072 | Time: 475.9635ms
+
+[Debug] Lasso Range (Label: "softmax_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_remainder"
+  - softmax_k1_remainder verified | Count: 131072 | Time: 413.613083ms
+
+[Debug] Lasso Range (Label: "softmax_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_remainder"
+  - softmax_k2_remainder verified | Count: 8192 | Time: 196.640041ms
+
+[Debug] Lasso Range (Label: "softmax_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_remainder"
+  - softmax_k3_remainder verified | Count: 131072 | Time: 421.523084ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step0_remainder", Total: 8192)
+  - Dim[0] Head (10): [20480, 10240, 53248, 10240, 30720, 55296, 32768, 34816, 32768, 28672]
+  - Dim[0] Tail (10): [55296, 32768, 32768, 10240, 55296, 10240, 12288, 28672, 4096, 12288]
+  - Dim[1] Head (10): [35, 60, 24, 60, 53, 2, 31, 9, 31, 11]
+  - Dim[1] Tail (10): [2, 31, 31, 60, 2, 60, 38, 11, 62, 38]
+    -> Lasso proof verified for: "pseudoinverse_step0_remainder"
+  - pseudoinverse_step0_remainder verified | Count: 8192 | Time: 213.426334ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step1_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [12, 12, 12, 12, 12, 12, 12, 12, 12, 12]
+  - Dim[1] Tail (10): [32, 32, 32, 32, 32, 32, 32, 32, 32, 32]
+    -> Lasso proof verified for: "pseudoinverse_step1_remainder"
+  - pseudoinverse_step1_remainder verified | Count: 8192 | Time: 189.19475ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [32, 32, 32, 32, 32, 32, 32, 32, 32, 32]
+  - Dim[1] Tail (10): [34, 34, 34, 34, 34, 34, 34, 34, 34, 34]
+    -> Lasso proof verified for: "pseudoinverse_step2_remainder"
+  - pseudoinverse_step2_remainder verified | Count: 8192 | Time: 192.622958ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step3_remainder", Total: 8192)
+  - Dim[0] Head (10): [53074, 6765, 5634, 6765, 4503, 9027, 7896, 11289, 7896, 1110]
+  - Dim[0] Tail (10): [9027, 7896, 7896, 6765, 9027, 6765, 10158, 1110, 62122, 10158]
+  - Dim[1] Head (10): [0, 48, 49, 48, 50, 46, 47, 44, 47, 53]
+  - Dim[1] Tail (10): [46, 47, 47, 48, 46, 48, 45, 53, 56, 45]
+    -> Lasso proof verified for: "pseudoinverse_step3_remainder"
+  - pseudoinverse_step3_remainder verified | Count: 8192 | Time: 198.824792ms
+
+[Debug] Lasso Range (Label: "matmul_v_remainder", Total: 16384)
+  - Dim[0] Head (10): [42235, 12667, 39035, 38907, 1915, 54395, 58363, 11899, 25467, 58619]
+  - Dim[0] Tail (10): [891, 7163, 31355, 34171, 20731, 40315, 44155, 1659, 35451, 37883]
+  - Dim[1] Head (10): [56, 3, 61, 25, 32, 36, 43, 56, 3, 20]
+  - Dim[1] Tail (10): [27, 18, 43, 31, 28, 40, 46, 49, 14, 18]
+    -> Lasso proof verified for: "matmul_v_remainder"
+  - matmul_v_remainder verified | Count: 16384 | Time: 231.554375ms
+
+[Debug] Lasso Range (Label: "matmul_mid_remainder", Total: 131072)
+  - Dim[0] Head (10): [32768, 49152, 32768, 49152, 16384, 16384, 0, 49152, 0, 32768]
+  - Dim[0] Tail (10): [16384, 0, 0, 49152, 16384, 49152, 32768, 32768, 32768, 32768]
+  - Dim[1] Head (10): [53, 6, 9, 6, 12, 1, 4, 59, 4, 20]
+  - Dim[1] Tail (10): [1, 4, 4, 6, 1, 6, 62, 20, 31, 62]
+    -> Lasso proof verified for: "matmul_mid_remainder"
+  - matmul_mid_remainder verified | Count: 131072 | Time: 460.874542ms
+
+[Debug] Lasso Range (Label: "matmul_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [35456, 5248, 6656, 48256, 28160, 41600, 46848, 24448, 13952, 38784]
+  - Dim[0] Tail (10): [38208, 61120, 24736, 15680, 17280, 22080, 32352, 36992, 25728, 59296]
+  - Dim[1] Head (10): [36, 35, 26, 57, 5, 31, 2, 63, 57, 49]
+  - Dim[1] Tail (10): [24, 27, 42, 32, 5, 52, 24, 62, 2, 52]
+    -> Lasso proof verified for: "matmul_x_remainder"
+  - matmul_x_remainder verified | Count: 262144 | Time: 697.290542ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm1_exp"
+  - R_sm1_exp verified | Count: 524288 | Time: 685.526291ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm2_exp"
+  - R_sm2_exp verified | Count: 32768 | Time: 184.645166ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm3_exp"
+  - R_sm3_exp verified | Count: 524288 | Time: 668.683208ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_div_remainder"
+  - softmax_k1_div_remainder verified | Count: 131072 | Time: 308.458459ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_div_remainder"
+  - softmax_k2_div_remainder verified | Count: 8192 | Time: 148.212125ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_div_remainder"
+  - softmax_k3_div_remainder verified | Count: 131072 | Time: 301.631125ms
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.0.attention.self.witness.npz","circuit":"attention_not","constraints":44417024,"setup_ms":818120,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":295288,"groth16":{"commit_ms":894,"prove_ms":274097,"verify_ms":3},"lasso":{"total_ms":9501},"cp_link":{"setup_ms":54927,"prove_ms":493,"verify_ms":769},"end_to_end_ms":1222740}
+
+=== [Nystrom NOT] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_m32_L4_h512_nystrom/outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.1.attention.self.witness.npz" ===
+Commit counts: d1=4669440, d2=786432
+=== [0] LegoGroth16 Setup (d1=4669440, d2=786432) ===
+
+[Debug] committed_group1 total=4669440
+  Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] Building final circuit with Fiat-Shamir challenge ===
+  - Nystrom NOT SNARK Verification: Ok(())
+=== [2] Nystrom NOT Lasso Lookup Proofs ===
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k1", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 65.822083ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 732.245375ms
+Lasso proof verified for: "lasso_k1"
+    * Lasso Verifier Time: 52.223833ms
+  - Lasso Total Time ("lasso_k1"): 973.7785ms
+    * Sparsity (m): 8192
+
+[Debug] Lasso Range (Label: "lasso_k2", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 19.914042ms
+    * Starting Lasso Prove (log_s: 13)...
+    * Lasso Prover Time: 284.15425ms
+Lasso proof verified for: "lasso_k2"
+    * Lasso Verifier Time: 117.119875ms
+  - Lasso Total Time ("lasso_k2"): 445.912709ms
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k3", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 78.583416ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 655.761166ms
+Lasso proof verified for: "lasso_k3"
+    * Lasso Verifier Time: 50.782709ms
+  - Lasso Total Time ("lasso_k3"): 893.95975ms
+
+=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===
+
+[Debug] Lasso Range (Label: "matmul_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [17632, 50720, 5344, 28800, 3456, 44640, 55616, 26560, 37056, 36544]
+  - Dim[0] Tail (10): [61088, 49472, 26912, 14208, 23072, 51872, 56064, 16896, 6400, 31936]
+  - Dim[1] Head (10): [53, 41, 49, 40, 42, 37, 8, 53, 48, 3]
+  - Dim[1] Tail (10): [26, 41, 36, 59, 56, 39, 36, 44, 12, 26]
+    -> Lasso proof verified for: "matmul_k1_remainder"
+  - matmul_k1_remainder verified | Count: 131072 | Time: 478.670833ms
+
+[Debug] Lasso Range (Label: "matmul_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [9162, 2163, 18769, 31177, 59728, 42341, 49017, 53421, 55006, 58830]
+  - Dim[0] Tail (10): [2985, 29727, 29610, 7964, 5374, 23621, 22616, 23766, 31251, 35856]
+  - Dim[1] Head (10): [47, 27, 52, 9, 36, 1, 61, 60, 46, 61]
+  - Dim[1] Tail (10): [0, 49, 20, 14, 26, 35, 33, 63, 4, 29]
+    -> Lasso proof verified for: "matmul_k2_remainder"
+  - matmul_k2_remainder verified | Count: 8192 | Time: 201.804625ms
+
+[Debug] Lasso Range (Label: "matmul_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [13978, 256, 12896, 19504, 32982, 62778, 19740, 41520, 17430, 18100]
+  - Dim[0] Tail (10): [37604, 59648, 24624, 48414, 20464, 58948, 37416, 42236, 50474, 28182]
+  - Dim[1] Head (10): [21, 44, 33, 0, 12, 29, 19, 29, 57, 29]
+  - Dim[1] Tail (10): [29, 40, 61, 51, 32, 57, 17, 32, 3, 22]
+    -> Lasso proof verified for: "matmul_k3_remainder"
+  - matmul_k3_remainder verified | Count: 131072 | Time: 472.961958ms
+
+[Debug] Lasso Range (Label: "softmax_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_remainder"
+  - softmax_k1_remainder verified | Count: 131072 | Time: 423.576166ms
+
+[Debug] Lasso Range (Label: "softmax_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_remainder"
+  - softmax_k2_remainder verified | Count: 8192 | Time: 198.433625ms
+
+[Debug] Lasso Range (Label: "softmax_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_remainder"
+  - softmax_k3_remainder verified | Count: 131072 | Time: 423.0305ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step0_remainder", Total: 8192)
+  - Dim[0] Head (10): [32768, 49152, 24576, 16384, 32768, 57344, 16384, 49152, 16384, 40960]
+  - Dim[0] Tail (10): [57344, 0, 16384, 32768, 0, 32768, 40960, 24576, 8192, 8192]
+  - Dim[1] Head (10): [52, 43, 46, 47, 45, 42, 47, 43, 47, 44]
+  - Dim[1] Tail (10): [42, 49, 47, 45, 42, 45, 44, 39, 48, 48]
+    -> Lasso proof verified for: "pseudoinverse_step0_remainder"
+  - pseudoinverse_step0_remainder verified | Count: 8192 | Time: 195.187292ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step1_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
+  - Dim[1] Tail (10): [20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
+    -> Lasso proof verified for: "pseudoinverse_step1_remainder"
+  - pseudoinverse_step1_remainder verified | Count: 8192 | Time: 195.042042ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [32, 32, 32, 32, 32, 32, 32, 32, 32, 32]
+  - Dim[1] Tail (10): [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]
+    -> Lasso proof verified for: "pseudoinverse_step2_remainder"
+  - pseudoinverse_step2_remainder verified | Count: 8192 | Time: 191.020334ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step3_remainder", Total: 8192)
+  - Dim[0] Head (10): [59720, 34864, 22660, 18592, 26728, 38932, 18592, 34864, 18592, 30796]
+  - Dim[0] Tail (10): [38932, 10456, 18592, 26728, 43000, 26728, 30796, 55204, 14524, 14524]
+  - Dim[1] Head (10): [55, 46, 49, 50, 48, 45, 50, 46, 50, 47]
+  - Dim[1] Tail (10): [45, 52, 50, 48, 44, 48, 47, 41, 51, 51]
+    -> Lasso proof verified for: "pseudoinverse_step3_remainder"
+  - pseudoinverse_step3_remainder verified | Count: 8192 | Time: 194.634125ms
+
+[Debug] Lasso Range (Label: "matmul_v_remainder", Total: 16384)
+  - Dim[0] Head (10): [29114, 19514, 19130, 41786, 60090, 47034, 19130, 13242, 13754, 3130]
+  - Dim[0] Tail (10): [18618, 1594, 19386, 12602, 22842, 62522, 23482, 64698, 1850, 48442]
+  - Dim[1] Head (10): [4, 47, 43, 21, 35, 32, 28, 50, 19, 41]
+  - Dim[1] Tail (10): [39, 61, 55, 35, 6, 32, 10, 60, 27, 53]
+    -> Lasso proof verified for: "matmul_v_remainder"
+  - matmul_v_remainder verified | Count: 16384 | Time: 235.228792ms
+
+[Debug] Lasso Range (Label: "matmul_mid_remainder", Total: 131072)
+  - Dim[0] Head (10): [8192, 28672, 22528, 20480, 24576, 30720, 20480, 28672, 20480, 26624]
+  - Dim[0] Tail (10): [30720, 16384, 20480, 24576, 32768, 24576, 26624, 38912, 18432, 18432]
+  - Dim[1] Head (10): [10, 40, 63, 28, 34, 11, 28, 40, 28, 5]
+  - Dim[1] Tail (10): [11, 22, 28, 34, 46, 34, 5, 23, 57, 57]
+    -> Lasso proof verified for: "matmul_mid_remainder"
+  - matmul_mid_remainder verified | Count: 131072 | Time: 456.869417ms
+
+[Debug] Lasso Range (Label: "matmul_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [27945, 24805, 33437, 16565, 22449, 49529, 17349, 23629, 20881, 28337]
+  - Dim[0] Tail (10): [63801, 50275, 18013, 41939, 42981, 12813, 21149, 54423, 44033, 4507]
+  - Dim[1] Head (10): [1, 49, 39, 52, 19, 48, 38, 6, 47, 58]
+  - Dim[1] Tail (10): [6, 63, 22, 7, 38, 33, 25, 47, 43, 27]
+    -> Lasso proof verified for: "matmul_x_remainder"
+  - matmul_x_remainder verified | Count: 262144 | Time: 709.615959ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm1_exp"
+  - R_sm1_exp verified | Count: 524288 | Time: 677.378291ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm2_exp"
+  - R_sm2_exp verified | Count: 32768 | Time: 187.43075ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm3_exp"
+  - R_sm3_exp verified | Count: 524288 | Time: 685.8755ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_div_remainder"
+  - softmax_k1_div_remainder verified | Count: 131072 | Time: 318.883458ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_div_remainder"
+  - softmax_k2_div_remainder verified | Count: 8192 | Time: 146.408084ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_div_remainder"
+  - softmax_k3_div_remainder verified | Count: 131072 | Time: 318.909875ms
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.1.attention.self.witness.npz","circuit":"attention_not","constraints":44417024,"setup_ms":887906,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":295288,"groth16":{"commit_ms":962,"prove_ms":338117,"verify_ms":7},"lasso":{"total_ms":9604},"cp_link":{"setup_ms":44523,"prove_ms":485,"verify_ms":777},"end_to_end_ms":1373047}
+
+=== [Nystrom NOT] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_m32_L4_h512_nystrom/outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.2.attention.self.witness.npz" ===
+Commit counts: d1=4669440, d2=786432
+=== [0] LegoGroth16 Setup (d1=4669440, d2=786432) ===
+
+[Debug] committed_group1 total=4669440
+  Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] Building final circuit with Fiat-Shamir challenge ===
+  - Nystrom NOT SNARK Verification: Ok(())
+=== [2] Nystrom NOT Lasso Lookup Proofs ===
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k1", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 77.403083ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 688.400041ms
+Lasso proof verified for: "lasso_k1"
+    * Lasso Verifier Time: 51.562042ms
+  - Lasso Total Time ("lasso_k1"): 951.509417ms
+    * Sparsity (m): 8192
+
+[Debug] Lasso Range (Label: "lasso_k2", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 19.588125ms
+    * Starting Lasso Prove (log_s: 13)...
+    * Lasso Prover Time: 277.717417ms
+Lasso proof verified for: "lasso_k2"
+    * Lasso Verifier Time: 45.486625ms
+  - Lasso Total Time ("lasso_k2"): 367.605375ms
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k3", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 59.3965ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 653.740333ms
+Lasso proof verified for: "lasso_k3"
+    * Lasso Verifier Time: 51.438042ms
+  - Lasso Total Time ("lasso_k3"): 877.546875ms
+
+=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===
+
+[Debug] Lasso Range (Label: "matmul_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [28162, 2820, 32510, 16105, 53769, 18755, 55901, 54528, 24645, 56925]
+  - Dim[0] Tail (10): [25935, 8892, 20069, 57589, 38269, 15384, 55264, 11638, 48748, 64093]
+  - Dim[1] Head (10): [0, 26, 19, 32, 9, 62, 44, 17, 55, 23]
+  - Dim[1] Tail (10): [54, 26, 19, 56, 4, 27, 52, 16, 29, 4]
+    -> Lasso proof verified for: "matmul_k1_remainder"
+  - matmul_k1_remainder verified | Count: 131072 | Time: 543.355125ms
+
+[Debug] Lasso Range (Label: "matmul_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [12640, 21852, 16788, 45720, 22492, 53968, 29192, 19648, 25928, 13872]
+  - Dim[0] Tail (10): [36608, 20956, 28708, 2216, 37580, 64584, 43972, 38812, 29600, 18192]
+  - Dim[1] Head (10): [56, 57, 38, 33, 18, 43, 1, 63, 44, 24]
+  - Dim[1] Tail (10): [42, 0, 39, 3, 4, 17, 27, 36, 35, 11]
+    -> Lasso proof verified for: "matmul_k2_remainder"
+  - matmul_k2_remainder verified | Count: 8192 | Time: 205.321667ms
+
+[Debug] Lasso Range (Label: "matmul_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [51290, 9058, 21357, 54266, 28874, 6103, 54266, 43630, 33736, 50680]
+  - Dim[0] Tail (10): [14481, 37594, 47488, 8041, 61062, 46920, 16966, 31317, 27864, 32192]
+  - Dim[1] Head (10): [13, 3, 43, 47, 61, 38, 47, 23, 40, 50]
+  - Dim[1] Tail (10): [40, 63, 46, 40, 29, 29, 54, 1, 57, 31]
+    -> Lasso proof verified for: "matmul_k3_remainder"
+  - matmul_k3_remainder verified | Count: 131072 | Time: 486.662875ms
+
+[Debug] Lasso Range (Label: "softmax_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_remainder"
+  - softmax_k1_remainder verified | Count: 131072 | Time: 430.507375ms
+
+[Debug] Lasso Range (Label: "softmax_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_remainder"
+  - softmax_k2_remainder verified | Count: 8192 | Time: 196.886583ms
+
+[Debug] Lasso Range (Label: "softmax_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_remainder"
+  - softmax_k3_remainder verified | Count: 131072 | Time: 426.874166ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step0_remainder", Total: 8192)
+  - Dim[0] Head (10): [49152, 32768, 0, 0, 32768, 0, 49152, 32768, 0, 16384]
+  - Dim[0] Tail (10): [16384, 0, 16384, 16384, 0, 32768, 49152, 32768, 0, 0]
+  - Dim[1] Head (10): [29, 8, 11, 11, 3, 6, 63, 8, 6, 7]
+  - Dim[1] Tail (10): [2, 6, 7, 7, 11, 3, 9, 8, 6, 6]
+    -> Lasso proof verified for: "pseudoinverse_step0_remainder"
+  - pseudoinverse_step0_remainder verified | Count: 8192 | Time: 207.228292ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step1_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [38, 38, 38, 38, 38, 38, 38, 38, 38, 38]
+  - Dim[1] Tail (10): [30, 30, 30, 30, 30, 30, 30, 30, 30, 30]
+    -> Lasso proof verified for: "pseudoinverse_step1_remainder"
+  - pseudoinverse_step1_remainder verified | Count: 8192 | Time: 197.387042ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [44, 44, 44, 44, 44, 44, 44, 44, 44, 44]
+  - Dim[1] Tail (10): [48, 48, 48, 48, 48, 48, 48, 48, 48, 48]
+    -> Lasso proof verified for: "pseudoinverse_step2_remainder"
+  - pseudoinverse_step2_remainder verified | Count: 8192 | Time: 195.348125ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step3_remainder", Total: 8192)
+  - Dim[0] Head (10): [22672, 30184, 13880, 13880, 62792, 46488, 21712, 30184, 46488, 38336]
+  - Dim[0] Tail (10): [5408, 46488, 38336, 38336, 13880, 62792, 22032, 30184, 46488, 46488]
+  - Dim[1] Head (10): [1, 50, 52, 52, 46, 48, 44, 50, 48, 49]
+  - Dim[1] Tail (10): [46, 48, 49, 49, 52, 46, 51, 50, 48, 48]
+    -> Lasso proof verified for: "pseudoinverse_step3_remainder"
+  - pseudoinverse_step3_remainder verified | Count: 8192 | Time: 202.235375ms
+
+[Debug] Lasso Range (Label: "matmul_v_remainder", Total: 16384)
+  - Dim[0] Head (10): [3198, 45054, 40958, 6654, 35454, 18814, 17662, 47486, 16126, 32510]
+  - Dim[0] Tail (10): [64254, 50558, 41470, 17406, 10494, 42622, 61438, 4350, 18814, 7678]
+  - Dim[1] Head (10): [55, 48, 31, 58, 44, 39, 12, 35, 63, 22]
+  - Dim[1] Tail (10): [37, 27, 53, 52, 2, 27, 37, 45, 32, 9]
+    -> Lasso proof verified for: "matmul_v_remainder"
+  - matmul_v_remainder verified | Count: 16384 | Time: 227.788166ms
+
+[Debug] Lasso Range (Label: "matmul_mid_remainder", Total: 131072)
+  - Dim[0] Head (10): [26624, 45056, 8192, 8192, 53248, 16384, 10240, 45056, 16384, 30720]
+  - Dim[0] Tail (10): [38912, 16384, 30720, 30720, 8192, 53248, 59392, 45056, 16384, 16384]
+  - Dim[1] Head (10): [18, 40, 53, 53, 15, 28, 61, 40, 28, 34]
+  - Dim[1] Tail (10): [9, 28, 34, 34, 53, 15, 46, 40, 28, 28]
+    -> Lasso proof verified for: "matmul_mid_remainder"
+  - matmul_mid_remainder verified | Count: 131072 | Time: 462.790333ms
+
+[Debug] Lasso Range (Label: "matmul_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [52914, 54386, 39514, 56674, 26602, 29706, 2906, 49810, 34610, 55858]
+  - Dim[0] Tail (10): [59550, 31822, 50661, 16296, 54667, 64682, 58987, 35200, 37517, 28628]
+  - Dim[1] Head (10): [46, 61, 51, 33, 48, 41, 51, 53, 14, 12]
+  - Dim[1] Tail (10): [53, 18, 33, 54, 5, 63, 2, 4, 15, 59]
+    -> Lasso proof verified for: "matmul_x_remainder"
+  - matmul_x_remainder verified | Count: 262144 | Time: 698.663292ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm1_exp"
+  - R_sm1_exp verified | Count: 524288 | Time: 681.56975ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm2_exp"
+  - R_sm2_exp verified | Count: 32768 | Time: 193.434833ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm3_exp"
+  - R_sm3_exp verified | Count: 524288 | Time: 670.25675ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_div_remainder"
+  - softmax_k1_div_remainder verified | Count: 131072 | Time: 305.853042ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_div_remainder"
+  - softmax_k2_div_remainder verified | Count: 8192 | Time: 142.295542ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_div_remainder"
+  - softmax_k3_div_remainder verified | Count: 131072 | Time: 296.862958ms
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.2.attention.self.witness.npz","circuit":"attention_not","constraints":44417024,"setup_ms":909279,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":295288,"groth16":{"commit_ms":990,"prove_ms":382189,"verify_ms":2},"lasso":{"total_ms":9550},"cp_link":{"setup_ms":45172,"prove_ms":541,"verify_ms":774},"end_to_end_ms":1440509}
+
+=== [Nystrom NOT] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_m32_L4_h512_nystrom/outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.3.attention.self.witness.npz" ===
+Commit counts: d1=4669440, d2=786432
+=== [0] LegoGroth16 Setup (d1=4669440, d2=786432) ===
+
+[Debug] committed_group1 total=4669440
+  Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] Building final circuit with Fiat-Shamir challenge ===
+  - Nystrom NOT SNARK Verification: Ok(())
+=== [2] Nystrom NOT Lasso Lookup Proofs ===
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k1", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 64.214583ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 713.742708ms
+Lasso proof verified for: "lasso_k1"
+    * Lasso Verifier Time: 53.234584ms
+  - Lasso Total Time ("lasso_k1"): 952.858875ms
+    * Sparsity (m): 8192
+
+[Debug] Lasso Range (Label: "lasso_k2", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 19.116666ms
+    * Starting Lasso Prove (log_s: 13)...
+    * Lasso Prover Time: 288.7075ms
+Lasso proof verified for: "lasso_k2"
+    * Lasso Verifier Time: 45.066917ms
+  - Lasso Total Time ("lasso_k2"): 378.879792ms
+    * Sparsity (m): 131072
+
+[Debug] Lasso Range (Label: "lasso_k3", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 56.862416ms
+    * Starting Lasso Prove (log_s: 17)...
+    * Lasso Prover Time: 715.815417ms
+Lasso proof verified for: "lasso_k3"
+    * Lasso Verifier Time: 52.794708ms
+  - Lasso Total Time ("lasso_k3"): 942.945792ms
+
+=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===
+
+[Debug] Lasso Range (Label: "matmul_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [60089, 37824, 20123, 5999, 1601, 21652, 23565, 33563, 1055, 49872]
+  - Dim[0] Tail (10): [48231, 58722, 13264, 33343, 31376, 55744, 24929, 8757, 20012, 36676]
+  - Dim[1] Head (10): [31, 9, 38, 45, 26, 37, 50, 18, 40, 18]
+  - Dim[1] Tail (10): [63, 4, 22, 38, 13, 25, 16, 44, 17, 27]
+    -> Lasso proof verified for: "matmul_k1_remainder"
+  - matmul_k1_remainder verified | Count: 131072 | Time: 478.702458ms
+
+[Debug] Lasso Range (Label: "matmul_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [12924, 10248, 49668, 30888, 13960, 18048, 1680, 23184, 27128, 49484]
+  - Dim[0] Tail (10): [23868, 21532, 43352, 64444, 39580, 13256, 30720, 40384, 31584, 18976]
+  - Dim[1] Head (10): [50, 11, 29, 3, 2, 52, 41, 58, 60, 34]
+  - Dim[1] Tail (10): [23, 31, 23, 33, 12, 28, 11, 17, 36, 32]
+    -> Lasso proof verified for: "matmul_k2_remainder"
+  - matmul_k2_remainder verified | Count: 8192 | Time: 204.326542ms
+
+[Debug] Lasso Range (Label: "matmul_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [51057, 19172, 12722, 2205, 51738, 30409, 59536, 17261, 37036, 44583]
+  - Dim[0] Tail (10): [56702, 34910, 42348, 30642, 14483, 6585, 20405, 30763, 51768, 518]
+  - Dim[1] Head (10): [4, 23, 6, 56, 5, 33, 57, 3, 42, 59]
+  - Dim[1] Tail (10): [54, 7, 61, 26, 1, 39, 17, 17, 11, 40]
+    -> Lasso proof verified for: "matmul_k3_remainder"
+  - matmul_k3_remainder verified | Count: 131072 | Time: 459.334709ms
+
+[Debug] Lasso Range (Label: "softmax_k1_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_remainder"
+  - softmax_k1_remainder verified | Count: 131072 | Time: 412.885125ms
+
+[Debug] Lasso Range (Label: "softmax_k2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_remainder"
+  - softmax_k2_remainder verified | Count: 8192 | Time: 199.379583ms
+
+[Debug] Lasso Range (Label: "softmax_k3_remainder", Total: 131072)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_remainder"
+  - softmax_k3_remainder verified | Count: 131072 | Time: 428.668ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step0_remainder", Total: 8192)
+  - Dim[0] Head (10): [4096, 32768, 63488, 63488, 51200, 28672, 2048, 43008, 63488, 59392]
+  - Dim[0] Tail (10): [63488, 20480, 28672, 20480, 55296, 32768, 55296, 28672, 59392, 24576]
+  - Dim[1] Head (10): [11, 6, 47, 47, 40, 25, 29, 14, 47, 2]
+  - Dim[1] Tail (10): [47, 63, 25, 63, 21, 6, 21, 25, 2, 44]
+    -> Lasso proof verified for: "pseudoinverse_step0_remainder"
+  - pseudoinverse_step0_remainder verified | Count: 8192 | Time: 197.674459ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step1_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+  - Dim[1] Tail (10): [28, 28, 28, 28, 28, 28, 28, 28, 28, 28]
+    -> Lasso proof verified for: "pseudoinverse_step1_remainder"
+  - pseudoinverse_step1_remainder verified | Count: 8192 | Time: 195.768542ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step2_remainder", Total: 8192)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [44, 44, 44, 44, 44, 44, 44, 44, 44, 44]
+  - Dim[1] Tail (10): [36, 36, 36, 36, 36, 36, 36, 36, 36, 36]
+    -> Lasso proof verified for: "pseudoinverse_step2_remainder"
+  - pseudoinverse_step2_remainder verified | Count: 8192 | Time: 197.713583ms
+
+[Debug] Lasso Range (Label: "pseudoinverse_step3_remainder", Total: 8192)
+  - Dim[0] Head (10): [35905, 9135, 6366, 6366, 55288, 3597, 11904, 44212, 6366, 828]
+  - Dim[0] Tail (10): [6366, 58057, 3597, 58057, 60826, 9135, 60826, 3597, 828, 63595]
+  - Dim[1] Head (10): [58, 45, 46, 46, 51, 47, 44, 55, 46, 48]
+  - Dim[1] Tail (10): [46, 50, 47, 50, 49, 45, 49, 47, 48, 48]
+    -> Lasso proof verified for: "pseudoinverse_step3_remainder"
+  - pseudoinverse_step3_remainder verified | Count: 8192 | Time: 202.610333ms
+
+[Debug] Lasso Range (Label: "matmul_v_remainder", Total: 16384)
+  - Dim[0] Head (10): [28971, 44715, 46891, 3499, 63147, 52651, 14763, 57643, 19371, 58667]
+  - Dim[0] Tail (10): [41003, 31147, 52267, 36011, 19371, 31403, 57131, 57387, 39083, 36395]
+  - Dim[1] Head (10): [21, 35, 19, 26, 26, 47, 55, 32, 46, 8]
+  - Dim[1] Tail (10): [48, 19, 28, 62, 45, 43, 3, 36, 0, 18]
+    -> Lasso proof verified for: "matmul_v_remainder"
+  - matmul_v_remainder verified | Count: 16384 | Time: 226.556084ms
+
+[Debug] Lasso Range (Label: "matmul_mid_remainder", Total: 131072)
+  - Dim[0] Head (10): [16384, 0, 24576, 24576, 40960, 49152, 40960, 8192, 24576, 8192]
+  - Dim[0] Tail (10): [24576, 16384, 49152, 16384, 57344, 0, 57344, 49152, 8192, 32768]
+  - Dim[1] Head (10): [51, 50, 4, 4, 50, 22, 31, 60, 4, 41]
+  - Dim[1] Tail (10): [4, 32, 22, 32, 13, 50, 13, 22, 41, 59]
+    -> Lasso proof verified for: "matmul_mid_remainder"
+  - matmul_mid_remainder verified | Count: 131072 | Time: 458.637917ms
+
+[Debug] Lasso Range (Label: "matmul_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [51454, 14394, 40554, 63444, 22024, 19844, 14871, 38374, 19231, 22501]
+  - Dim[0] Tail (10): [50815, 55245, 25148, 6777, 36874, 4562, 3650, 59805, 2738, 57981]
+  - Dim[1] Head (10): [30, 0, 40, 51, 25, 27, 50, 42, 46, 11]
+  - Dim[1] Tail (10): [33, 3, 60, 15, 22, 30, 15, 14, 0, 48]
+    -> Lasso proof verified for: "matmul_x_remainder"
+  - matmul_x_remainder verified | Count: 262144 | Time: 704.080459ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm1_exp"
+  - R_sm1_exp verified | Count: 524288 | Time: 692.076625ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm2_exp"
+  - R_sm2_exp verified | Count: 32768 | Time: 193.15075ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "R_sm3_exp"
+  - R_sm3_exp verified | Count: 524288 | Time: 671.344583ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k1_div_remainder"
+  - softmax_k1_div_remainder verified | Count: 131072 | Time: 304.336708ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k2_div_remainder"
+  - softmax_k2_div_remainder verified | Count: 8192 | Time: 146.140625ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    -> Lasso proof verified for: "softmax_k3_div_remainder"
+  - softmax_k3_div_remainder verified | Count: 131072 | Time: 311.372958ms
+  -> [Success] Factored Multi-Lasso CP-Link verified
+BENCHMARK_RESULT {"file":"outputs_n512_m32_L4_h512_nystrom-batch0-nystromformer.encoder.layer.3.attention.self.witness.npz","circuit":"attention_not","constraints":44417024,"setup_ms":935935,"proof_size_bytes":384,"groth16_commitment_size_bytes":32,"lasso_commitment_size_bytes":295288,"groth16":{"commit_ms":1034,"prove_ms":382242,"verify_ms":2},"lasso":{"total_ms":9542},"cp_link":{"setup_ms":44107,"prove_ms":619,"verify_ms":783},"end_to_end_ms":1479275}
+
+=== [Nystrom Attention NAIVE] ALL 4 files PASS | total_wall_ms=5811206 ===
+test circuits::naive_matmul::nystrom_attn_circuit::nystrom_attn_naive_single_layer_test ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 5811.22s
+

@@ -1,0 +1,134 @@
+============================================
+ measure_all_resume.sh started: 2026-05-22 08:42:04
+ Circuit dir: /Users/zkrypto12/zkdietformer/Dietformer/circuits
+ Data base:   /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer
+============================================
+
+=== [BUILD] cargo test --release --no-run ===
+
+warning: `nystromformer` (lib) generated 15 warnings (run `cargo fix --lib -p nystromformer` to apply 2 suggestions)
+warning: `nystromformer` (lib test) generated 15 warnings (15 duplicates)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 59s
+  Executable unittests src/lib.rs (target/release/deps/nystromformer-98f557f4c92443a6)
+
+
+################################################################
+# 2. Nystrom Attention (Naive) - RESUME (n=4096)
+################################################################
+============================================
+[08:44:01] #1 nystrom_attn_naive_n4096_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n4096_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n4096_m32_L2_h128_20260522_084401.log
+  Time:  logs/prove_nystrom_attn_naive_n4096_m32_L2_h128_20260522_084401.time
+============================================
+  [FAIL] nystrom_attn_naive_n4096_m32_L2_h128 (exit code: 101)
+  ------------------------------------------
+  [TIME] Real: 2647.95s | User: 2647.95s | Sys: 2647.95s
+  [MEM]  Peak RSS: 110990589952 bytes (105848 MB)
+  ------------------------------------------
+  Layers proved: 0
+0
+
+
+################################################################
+# 5. Nystrom MLP (Freivalds) - ALL SEQ_LENS
+################################################################
+============================================
+[09:28:11] #2 nystrom_mlp_n128_m32_L2_h128
+  Test:  nystrom_mlp_hf_single_layer_test
+  Data:  outputs_n128_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_mlp_n128_m32_L2_h128_20260522_092811.log
+  Time:  logs/prove_nystrom_mlp_n128_m32_L2_h128_20260522_092811.time
+============================================
+  [PASS] nystrom_mlp_n128_m32_L2_h128
+  ------------------------------------------
+  [TIME] Real: 260.16s | User: 260.16s | Sys: 260.16s
+  [MEM]  Peak RSS: 28931702784 bytes (27591 MB)
+  ------------------------------------------
+  Layers proved: 2
+
+============================================
+[09:32:31] #3 nystrom_mlp_n256_m32_L2_h128
+  Test:  nystrom_mlp_hf_single_layer_test
+  Data:  outputs_n256_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_mlp_n256_m32_L2_h128_20260522_093231.log
+  Time:  logs/prove_nystrom_mlp_n256_m32_L2_h128_20260522_093231.time
+============================================
+  [PASS] nystrom_mlp_n256_m32_L2_h128
+  ------------------------------------------
+  [TIME] Real: 530.51s | User: 530.51s | Sys: 530.51s
+  [MEM]  Peak RSS: 56553799680 bytes (53933 MB)
+  ------------------------------------------
+  Layers proved: 2
+
+============================================
+[09:41:22] #4 nystrom_mlp_n512_m32_L2_h128
+  Test:  nystrom_mlp_hf_single_layer_test
+  Data:  outputs_n512_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_mlp_n512_m32_L2_h128_20260522_094122.log
+  Time:  logs/prove_nystrom_mlp_n512_m32_L2_h128_20260522_094122.time
+============================================
+  [PASS] nystrom_mlp_n512_m32_L2_h128
+  ------------------------------------------
+  [TIME] Real: 1114.92s | User: 1114.92s | Sys: 1114.92s
+  [MEM]  Peak RSS: 109822623744 bytes (104735 MB)
+  ------------------------------------------
+  Layers proved: 2
+
+============================================
+[09:59:57] #5 nystrom_mlp_n1024_m32_L2_h128
+  Test:  nystrom_mlp_hf_single_layer_test
+  Data:  outputs_n1024_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_mlp_n1024_m32_L2_h128_20260522_095957.log
+  Time:  logs/prove_nystrom_mlp_n1024_m32_L2_h128_20260522_095957.time
+============================================
+measure_re.sh: line 43: 37413 Terminated: 15          env "$WITNESS_VAR=$FULL_DATA_PATH" $TIME_CMD cargo test --release "$TEST_FN" -- --nocapture > "$LOG_FILE" 2> "$TIME_FILE"
+  [FAIL] nystrom_mlp_n1024_m32_L2_h128 (exit code: 143)
+  ------------------------------------------
+  [TIME] Real:  | User:  | Sys: 
+  [MEM]  Peak RSS: 0 bytes (N/A MB)
+  ------------------------------------------
+  Layers proved: 1
+
+============================================
+[10:39:07] #6 nystrom_mlp_n2048_m32_L2_h128
+  Test:  nystrom_mlp_hf_single_layer_test
+  Data:  outputs_n2048_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_mlp_n2048_m32_L2_h128_20260522_103907.log
+  Time:  logs/prove_nystrom_mlp_n2048_m32_L2_h128_20260522_103907.time
+============================================
+  [FAIL] nystrom_mlp_n2048_m32_L2_h128 (exit code: 1)
+  ------------------------------------------
+  [TIME] Real: 113.51s | User: 113.51s | Sys: 113.51s
+  [MEM]  Peak RSS: 66453504 bytes (63 MB)
+  ------------------------------------------
+  Layers proved: 0
+0
+
+============================================
+[10:41:01] #7 nystrom_mlp_n4096_m32_L2_h128
+  Test:  nystrom_mlp_hf_single_layer_test
+  Data:  outputs_n4096_m32_L2_h128_nystrom
+  Log:   logs/prove_nystrom_mlp_n4096_m32_L2_h128_20260522_104101.log
+  Time:  logs/prove_nystrom_mlp_n4096_m32_L2_h128_20260522_104101.time
+============================================
+measure_re.sh: line 43: 38870 Killed: 9               env "$WITNESS_VAR=$FULL_DATA_PATH" $TIME_CMD cargo test --release "$TEST_FN" -- --nocapture > "$LOG_FILE" 2> "$TIME_FILE"
+  [FAIL] nystrom_mlp_n4096_m32_L2_h128 (exit code: 137)
+  ------------------------------------------
+  [TIME] Real:  | User:  | Sys: 
+  [MEM]  Peak RSS: 0 bytes (N/A MB)
+  ------------------------------------------
+  Layers proved: 0
+0
+
+
+============================================
+ measure_re.sh 완료
+ 시작: 2026-05-22 08:42:04
+ 종료: 2026-05-22 10:41:56
+ 총 실행: 7
+ 성공:    3
+ 실패:    4
+ 스킵:    0
+============================================

@@ -100,7 +100,7 @@ NUM_SAMPLES: int = len(SAMPLES)
 #
 # 448 의 sweep 후보 (4:1 비율 이상): {14, 16, 28, 32, 56, 64, 112}.
 # fixture 의 max 토큰 길이는 21 (사용자 측정) — 448 padding 충분.
-MAX_SEQ_LEN: int = 256
+MAX_SEQ_LEN: int = 128
 """양 모델 공통 truncation 한계. 448 = 64 × 7 — num_landmarks ∈ {14, 16, 28, 32, 56, 64, 112} sweep 호환."""
 
 
