@@ -328,7 +328,7 @@ def load_small_nystromformer(
     num_hidden_layers: int = 12,
     num_attention_heads: int = 12,
     num_landmarks: int = 32,
-    seq_len: int = 128,
+    seq_len: int = 2048,
     vocab_size: int = 50265,
 ) -> NystromformerForMaskedLM:
     """

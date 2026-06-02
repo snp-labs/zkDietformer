@@ -17,7 +17,7 @@ def load_small_bert(
     num_hidden_layers: int = 12,
     num_attention_heads: int = 12,
     intermediate_size: int = None,
-    seq_len: int = 128,
+    seq_len: int = 2048,
     vocab_size: int = 30522,
 ) -> BertForMaskedLM:
     """
