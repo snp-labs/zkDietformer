@@ -1,0 +1,320 @@
+============================================
+ measure_base.sh started: 2026-06-02 09:24:18
+ Circuit dir: /Users/zkrypto12/zkdietformer/Dietformer/circuits
+ Data base:   /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer
+ Model:       BERT-Base (L=12, H=768, A=12)
+============================================
+
+=== [BUILD] cargo test --release --no-run ===
+
+warning: `nystromformer` (lib) generated 15 warnings (run `cargo fix --lib -p nystromformer` to apply 2 suggestions)
+warning: `nystromformer` (lib test) generated 15 warnings (15 duplicates)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.22s
+  Executable unittests src/lib.rs (target/release/deps/nystromformer-98f557f4c92443a6)
+
+
+################################################################
+# 1. Nystrom Attention (Freivalds)
+################################################################
+============================================
+[09:24:18] #1 nystrom_attn_freivalds_n128_m32_L12_h768
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n128_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n128_m32_L12_h768_20260602_092418.log
+  Time:  logs/prove_nystrom_attn_freivalds_n128_m32_L12_h768_20260602_092418.time
+============================================
+  [PASS] nystrom_attn_freivalds_n128_m32_L12_h768
+  Peak RSS: 22100131840 bytes (21076 MB)
+  Layers proved: 12
+
+============================================
+[09:50:05] #2 nystrom_attn_freivalds_n256_m32_L12_h768
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n256_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n256_m32_L12_h768_20260602_095005.log
+  Time:  logs/prove_nystrom_attn_freivalds_n256_m32_L12_h768_20260602_095005.time
+============================================
+  [PASS] nystrom_attn_freivalds_n256_m32_L12_h768
+  Peak RSS: 34992488448 bytes (33371 MB)
+  Layers proved: 12
+
+============================================
+[10:36:52] #3 nystrom_attn_freivalds_n512_m32_L12_h768
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n512_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n512_m32_L12_h768_20260602_103652.log
+  Time:  logs/prove_nystrom_attn_freivalds_n512_m32_L12_h768_20260602_103652.time
+============================================
+  [PASS] nystrom_attn_freivalds_n512_m32_L12_h768
+  Peak RSS: 64531202048 bytes (61541 MB)
+  Layers proved: 12
+
+============================================
+[12:05:12] #4 nystrom_attn_freivalds_n1024_m32_L12_h768
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n1024_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n1024_m32_L12_h768_20260602_120512.log
+  Time:  logs/prove_nystrom_attn_freivalds_n1024_m32_L12_h768_20260602_120512.time
+============================================
+  [PASS] nystrom_attn_freivalds_n1024_m32_L12_h768
+  Peak RSS: 120859820032 bytes (115260 MB)
+  Layers proved: 12
+
+============================================
+[14:59:19] #5 nystrom_attn_freivalds_n2048_m32_L12_h768
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n2048_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n2048_m32_L12_h768_20260602_145919.log
+  Time:  logs/prove_nystrom_attn_freivalds_n2048_m32_L12_h768_20260602_145919.time
+============================================
+  [PASS] nystrom_attn_freivalds_n2048_m32_L12_h768
+  Peak RSS: 120997560320 bytes (115392 MB)
+  Layers proved: 12
+
+============================================
+[22:35:08] #6 nystrom_attn_freivalds_n4096_m32_L12_h768
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n4096_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n4096_m32_L12_h768_20260602_223508.log
+  Time:  logs/prove_nystrom_attn_freivalds_n4096_m32_L12_h768_20260602_223508.time
+============================================
+  [SKIP] Data dir not found: /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n4096_m32_L12_h768_nystrom
+
+
+################################################################
+# 2. Nystrom Attention (Naive)
+################################################################
+============================================
+[22:35:08] #7 nystrom_attn_naive_n128_m32_L12_h768
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n128_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n128_m32_L12_h768_20260602_223508.log
+  Time:  logs/prove_nystrom_attn_naive_n128_m32_L12_h768_20260602_223508.time
+============================================
+  [PASS] nystrom_attn_naive_n128_m32_L12_h768
+  Peak RSS: 89404276736 bytes (85262 MB)
+  Layers proved: 12
+
+============================================
+[00:10:19] #8 nystrom_attn_naive_n256_m32_L12_h768
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n256_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n256_m32_L12_h768_20260603_001019.log
+  Time:  logs/prove_nystrom_attn_naive_n256_m32_L12_h768_20260603_001019.time
+============================================
+  [PASS] nystrom_attn_naive_n256_m32_L12_h768
+  Peak RSS: 121053757440 bytes (115445 MB)
+  Layers proved: 12
+
+============================================
+[03:33:46] #9 nystrom_attn_naive_n512_m32_L12_h768
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n512_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n512_m32_L12_h768_20260603_033346.log
+  Time:  logs/prove_nystrom_attn_naive_n512_m32_L12_h768_20260603_033346.time
+============================================
+  [FAIL] nystrom_attn_naive_n512_m32_L12_h768 (exit code: 101)
+  Peak RSS: 121693126656 bytes (116055 MB)
+  Layers proved: 0
+0
+
+============================================
+[04:10:25] #10 nystrom_attn_naive_n1024_m32_L12_h768
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n1024_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n1024_m32_L12_h768_20260603_041025.log
+  Time:  logs/prove_nystrom_attn_naive_n1024_m32_L12_h768_20260603_041025.time
+============================================
+  [FAIL] nystrom_attn_naive_n1024_m32_L12_h768 (exit code: 101)
+  Peak RSS: 121733840896 bytes (116094 MB)
+  Layers proved: 0
+0
+
+============================================
+[04:54:05] #11 nystrom_attn_naive_n2048_m32_L12_h768
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n2048_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n2048_m32_L12_h768_20260603_045405.log
+  Time:  logs/prove_nystrom_attn_naive_n2048_m32_L12_h768_20260603_045405.time
+============================================
+  [FAIL] nystrom_attn_naive_n2048_m32_L12_h768 (exit code: 101)
+  Peak RSS: 121287917568 bytes (115669 MB)
+  Layers proved: 0
+0
+
+============================================
+[05:29:22] #12 nystrom_attn_naive_n4096_m32_L12_h768
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n4096_m32_L12_h768_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n4096_m32_L12_h768_20260603_052922.log
+  Time:  logs/prove_nystrom_attn_naive_n4096_m32_L12_h768_20260603_052922.time
+============================================
+  [SKIP] Data dir not found: /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n4096_m32_L12_h768_nystrom
+
+
+################################################################
+# 3. BERT Attention (Freivalds)
+################################################################
+============================================
+[05:29:22] #13 bert_attn_freivalds_n128_L12_h768
+  Test:  bert_attn_hf_single_layer_test
+  Data:  outputs_n128_L12_h768_bert
+  Log:   logs/prove_bert_attn_freivalds_n128_L12_h768_20260603_052922.log
+  Time:  logs/prove_bert_attn_freivalds_n128_L12_h768_20260603_052922.time
+============================================
+  [PASS] bert_attn_freivalds_n128_L12_h768
+  Peak RSS: 26752450560 bytes (25513 MB)
+  Layers proved: 12
+
+============================================
+[06:06:52] #14 bert_attn_freivalds_n256_L12_h768
+  Test:  bert_attn_hf_single_layer_test
+  Data:  outputs_n256_L12_h768_bert
+  Log:   logs/prove_bert_attn_freivalds_n256_L12_h768_20260603_060652.log
+  Time:  logs/prove_bert_attn_freivalds_n256_L12_h768_20260603_060652.time
+============================================
+  [PASS] bert_attn_freivalds_n256_L12_h768
+  Peak RSS: 89724059648 bytes (85567 MB)
+  Layers proved: 12
+
+============================================
+[08:31:51] #15 bert_attn_freivalds_n512_L12_h768
+  Test:  bert_attn_hf_single_layer_test
+  Data:  outputs_n512_L12_h768_bert
+  Log:   logs/prove_bert_attn_freivalds_n512_L12_h768_20260603_083151.log
+  Time:  logs/prove_bert_attn_freivalds_n512_L12_h768_20260603_083151.time
+============================================
+  [FAIL] bert_attn_freivalds_n512_L12_h768 (exit code: 101)
+  Peak RSS: 120512823296 bytes (114929 MB)
+  Layers proved: 0
+0
+
+============================================
+[09:19:52] #16 bert_attn_freivalds_n1024_L12_h768
+  Test:  bert_attn_hf_single_layer_test
+  Data:  outputs_n1024_L12_h768_bert
+  Log:   logs/prove_bert_attn_freivalds_n1024_L12_h768_20260603_091952.log
+  Time:  logs/prove_bert_attn_freivalds_n1024_L12_h768_20260603_091952.time
+============================================
+  [FAIL] bert_attn_freivalds_n1024_L12_h768 (exit code: 101)
+  Peak RSS: 121788170240 bytes (116146 MB)
+  Layers proved: 0
+0
+
+============================================
+[10:02:03] #17 bert_attn_freivalds_n2048_L12_h768
+  Test:  bert_attn_hf_single_layer_test
+  Data:  outputs_n2048_L12_h768_bert
+  Log:   logs/prove_bert_attn_freivalds_n2048_L12_h768_20260603_100203.log
+  Time:  logs/prove_bert_attn_freivalds_n2048_L12_h768_20260603_100203.time
+============================================
+  [FAIL] bert_attn_freivalds_n2048_L12_h768 (exit code: 101)
+  Peak RSS: 121876594688 bytes (116230 MB)
+  Layers proved: 0
+0
+
+============================================
+[10:11:17] #18 bert_attn_freivalds_n4096_L12_h768
+  Test:  bert_attn_hf_single_layer_test
+  Data:  outputs_n4096_L12_h768_bert
+  Log:   logs/prove_bert_attn_freivalds_n4096_L12_h768_20260603_101117.log
+  Time:  logs/prove_bert_attn_freivalds_n4096_L12_h768_20260603_101117.time
+============================================
+  [SKIP] Data dir not found: /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n4096_L12_h768_bert
+
+
+################################################################
+# 4. BERT Attention (Naive)
+################################################################
+============================================
+[10:11:17] #19 bert_attn_naive_n128_L12_h768
+  Test:  bert_attn_naive_single_layer_test
+  Data:  outputs_n128_L12_h768_bert
+  Log:   logs/prove_bert_attn_naive_n128_L12_h768_20260603_101117.log
+  Time:  logs/prove_bert_attn_naive_n128_L12_h768_20260603_101117.time
+============================================
+  [PASS] bert_attn_naive_n128_L12_h768
+  Peak RSS: 121484738560 bytes (115856 MB)
+  Layers proved: 12
+
+============================================
+[13:01:36] #20 bert_attn_naive_n256_L12_h768
+  Test:  bert_attn_naive_single_layer_test
+  Data:  outputs_n256_L12_h768_bert
+  Log:   logs/prove_bert_attn_naive_n256_L12_h768_20260603_130136.log
+  Time:  logs/prove_bert_attn_naive_n256_L12_h768_20260603_130136.time
+============================================
+  [FAIL] bert_attn_naive_n256_L12_h768 (exit code: 101)
+  Peak RSS: 122426261504 bytes (116754 MB)
+  Layers proved: 0
+0
+
+============================================
+[13:43:30] #21 bert_attn_naive_n512_L12_h768
+  Test:  bert_attn_naive_single_layer_test
+  Data:  outputs_n512_L12_h768_bert
+  Log:   logs/prove_bert_attn_naive_n512_L12_h768_20260603_134330.log
+  Time:  logs/prove_bert_attn_naive_n512_L12_h768_20260603_134330.time
+============================================
+  [FAIL] bert_attn_naive_n512_L12_h768 (exit code: 101)
+  Peak RSS: 121451216896 bytes (115824 MB)
+  Layers proved: 0
+0
+
+============================================
+[14:09:37] #22 bert_attn_naive_n1024_L12_h768
+  Test:  bert_attn_naive_single_layer_test
+  Data:  outputs_n1024_L12_h768_bert
+  Log:   logs/prove_bert_attn_naive_n1024_L12_h768_20260603_140937.log
+  Time:  logs/prove_bert_attn_naive_n1024_L12_h768_20260603_140937.time
+============================================
+  [FAIL] bert_attn_naive_n1024_L12_h768 (exit code: 101)
+  Peak RSS: 121494552576 bytes (115866 MB)
+  Layers proved: 0
+0
+
+============================================
+[14:19:36] #23 bert_attn_naive_n2048_L12_h768
+  Test:  bert_attn_naive_single_layer_test
+  Data:  outputs_n2048_L12_h768_bert
+  Log:   logs/prove_bert_attn_naive_n2048_L12_h768_20260603_141936.log
+  Time:  logs/prove_bert_attn_naive_n2048_L12_h768_20260603_141936.time
+============================================
+  [FAIL] bert_attn_naive_n2048_L12_h768 (exit code: 101)
+  Peak RSS: 121359958016 bytes (115737 MB)
+  Layers proved: 0
+0
+
+============================================
+[14:28:51] #24 bert_attn_naive_n4096_L12_h768
+  Test:  bert_attn_naive_single_layer_test
+  Data:  outputs_n4096_L12_h768_bert
+  Log:   logs/prove_bert_attn_naive_n4096_L12_h768_20260603_142851.log
+  Time:  logs/prove_bert_attn_naive_n4096_L12_h768_20260603_142851.time
+============================================
+  [SKIP] Data dir not found: /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n4096_L12_h768_bert
+
+
+============================================
+ measure_base.sh 완료
+ 시작: 2026-06-02 09:24:18
+ 종료: 2026-06-03 14:28:51
+ 총 실행: 24
+ 성공:    10
+ 실패:    10
+ 스킵:    4
+============================================
+
+=== 결과 요약 명령 ===
+
+# per-layer 벤치마크 (JSON):
+  grep BENCHMARK_RESULT logs/prove_*.log
+
+# peak RSS (메모리, bytes):
+  grep 'maximum resident set size' logs/prove_*.time
+
+# 전체 wall time per run:
+  grep 'total_wall_ms' logs/prove_*.log
+
+# 실패한 run 확인:
+  grep '\[FAIL\]' logs/master_*.log
