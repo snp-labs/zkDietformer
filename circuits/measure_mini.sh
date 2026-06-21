@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # ============================================================================
-# measure_mini.sh — BERT-Mini (모든 n) + BERT-Medium (n=4096) Attention 측정
+# measure_mini.sh — BERT-Mini (모든 n) + BERT-Medium (n=4096) Attention + MLP 측정
 #
 # 모델:
 #   - BERT-Mini   (L=4, H=256, A=4): n ∈ {128, 256, 512, 1024, 2048, 4096}
 #   - BERT-Medium (L=8, H=512, A=8): n=4096만
 #
-# 회로 (Attention only, MLP 제외):
+# 회로 (Attention + MLP):
 #   1. Nystrom Attention (Freivalds)
 #   2. Nystrom Attention (Naive)
 #   3. BERT Attention (Freivalds)
 #   4. BERT Attention (Naive)
+#   5. Nystrom MLP (Freivalds)
+#   6. BERT MLP (Freivalds)
 #
 # 환경: macOS (Darwin, ARM64 Mac Studio, 128 GB)
 # 용도: SSH 접속 후 nohup 백그라운드 실행 → 퇴근 후 자동 완료
@@ -50,8 +52,8 @@ echo ""
 echo "측정 매트릭스:"
 echo "  - BERT-Mini   (L=4, H=256, A=4): n ∈ {128, 256, 512, 1024, 2048, 4096}"
 echo "  - BERT-Medium (L=8, H=512, A=8): n=4096만"
-echo "  - 회로: Nystrom Attn (F/N), BERT Attn (F/N) — MLP 제외"
-echo "  - 총 측정 점: Mini 24 + Medium 4 = 28"
+echo "  - 회로: Nystrom Attn (F/N), BERT Attn (F/N), Nystrom MLP, BERT MLP"
+echo "  - 총 측정 점: Mini 36 + Medium 6 = 42"
 echo ""
 
 # ── cargo 빌드 (release, 1회) ────────────────────────────────────────────────
@@ -198,58 +200,32 @@ for N in $SEQ_LENS_MINI; do
 done
 
 # ============================================================================
-# ============================================================================
-# BERT-Medium (L=8, H=512, A=8) — n=4096만
-# ============================================================================
-# ============================================================================
-
-# ============================================================================
-# === 5. Nystrom Attention Freivalds (BERT-Medium n=4096) ====================
+# === 5. Nystrom MLP (BERT-Mini) =============================================
 # ============================================================================
 echo ""
 echo "################################################################"
-echo "# 5. Nystrom Attention (Freivalds) — BERT-Medium (L=8, H=512, A=8) n=4096"
+echo "# 5. Nystrom MLP (Freivalds) — BERT-Mini (L=4, H=256, A=4)"
 echo "################################################################"
-run_prove "NYSTROM_ATTN_WITNESS_DIR" \
-    "outputs_n4096_m32_L8_h512_nystrom" \
-    "nystrom_attn_hf_single_layer_test" \
-    "nystrom_attn_freivalds_n4096_m32_L8_h512"
+for N in $SEQ_LENS_MINI; do
+    run_prove "LAYERNORM_WITNESS_DIR" \
+        "outputs_n${N}_m32_L4_h256_nystrom" \
+        "nystrom_mlp_hf_single_layer_test" \
+        "nystrom_mlp_n${N}_m32_L4_h256"
+done
 
 # ============================================================================
-# === 6. Nystrom Attention Naive (BERT-Medium n=4096) ========================
+# === 6. BERT MLP (BERT-Mini) ================================================
 # ============================================================================
 echo ""
 echo "################################################################"
-echo "# 6. Nystrom Attention (Naive) — BERT-Medium (L=8, H=512, A=8) n=4096"
+echo "# 6. BERT MLP (Freivalds) — BERT-Mini (L=4, H=256, A=4)"
 echo "################################################################"
-run_prove "NAIVE_NYSTROM_ATTN_WITNESS_DIR" \
-    "outputs_n4096_m32_L8_h512_nystrom" \
-    "nystrom_attn_naive_single_layer_test" \
-    "nystrom_attn_naive_n4096_m32_L8_h512"
-
-# ============================================================================
-# === 7. BERT Attention Freivalds (BERT-Medium n=4096) =======================
-# ============================================================================
-echo ""
-echo "################################################################"
-echo "# 7. BERT Attention (Freivalds) — BERT-Medium (L=8, H=512, A=8) n=4096"
-echo "################################################################"
-run_prove "BERT_ATTN_WITNESS_DIR" \
-    "outputs_n4096_L8_h512_bert" \
-    "bert_attn_hf_single_layer_test" \
-    "bert_attn_freivalds_n4096_L8_h512"
-
-# ============================================================================
-# === 8. BERT Attention Naive (BERT-Medium n=4096) ===========================
-# ============================================================================
-echo ""
-echo "################################################################"
-echo "# 8. BERT Attention (Naive) — BERT-Medium (L=8, H=512, A=8) n=4096"
-echo "################################################################"
-run_prove "NAIVE_ROBERTA_ATTN_WITNESS_DIR" \
-    "outputs_n4096_L8_h512_bert" \
-    "bert_attn_naive_single_layer_test" \
-    "bert_attn_naive_n4096_L8_h512"
+for N in $SEQ_LENS_MINI; do
+    run_prove "BERT_MLP_WITNESS_DIR" \
+        "outputs_n${N}_L4_h256_bert" \
+        "bert_mlp_hf_single_layer_test" \
+        "bert_mlp_n${N}_L4_h256"
+done
 
 # ============================================================================
 # === 종합 결과 ==============================================================
