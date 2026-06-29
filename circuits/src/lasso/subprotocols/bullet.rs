@@ -23,8 +23,8 @@ use super::super::msm::VariableBaseMSM;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BulletReductionProof<G: CurveGroup> {
-  L_vec: Vec<G>,
-  R_vec: Vec<G>,
+  pub(crate) L_vec: Vec<G>,
+  pub(crate) R_vec: Vec<G>,
 }
 
 impl<G: CurveGroup> BulletReductionProof<G> {

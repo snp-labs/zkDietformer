@@ -12,10 +12,13 @@ use ark_r1cs_std::{R1CSVar, alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, F
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
-    circuits::common::{
-        BenchmarkResult,
-        factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
-        pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
+    circuits::{
+        common::{
+            BenchmarkResult,
+            factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
+            pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
+        },
+        proof_size,
     },
     gadgets::{
         matmul::{
@@ -759,7 +762,13 @@ where
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
 
+        // ── Groth16 proof size report ──
+        let g16_report = proof_size::compute_groth16_report::<E>(&proof);
+        g16_report.print_log();
+
         // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
+        // Reset Lasso aggregator before individual Lasso proofs
+        proof_size::reset_lasso_aggregator();
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let lasso_start = Instant::now();
         let lasso_sm1 = run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
@@ -793,6 +802,15 @@ where
         println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
         let cp_verify_ms = cp_verify_start.elapsed().as_millis();
 
+        // ── CP-Link proof size report ──
+        let cplink_report = proof_size::compute_cplink_report::<E>(&proof_link, &instance);
+        cplink_report.print_log();
+
+        // ── Grand total proof size report ──
+        proof_size::print_full_report(&g16_report, &cplink_report);
+
+        let (_, lasso_agg_bytes) = proof_size::get_lasso_aggregate();
+
         let e2e_time = e2e_start.elapsed();
 
         // ── Benchmark output ─────────────────────────────────────────────────
@@ -815,6 +833,8 @@ where
             proof_size_bytes:  proof_size,
             groth16_commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
             lasso_commitment_size_bytes:   lasso_commitment_size::<E>(&lasso_results),
+            lasso_proof_size_bytes:  lasso_agg_bytes,
+            cplink_proof_size_bytes: cplink_report.proof_total,
         }
         .print_json();
     }

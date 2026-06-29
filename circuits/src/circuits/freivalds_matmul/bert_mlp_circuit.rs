@@ -240,6 +240,8 @@ where
             proof_size_bytes:  proof_size,
             groth16_commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
             lasso_commitment_size_bytes:   lasso_commitment_size::<E>(&lasso_results),
+            lasso_proof_size_bytes:  0,
+            cplink_proof_size_bytes: 0,
         }
         .print_json();
     }

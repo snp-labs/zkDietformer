@@ -13,8 +13,12 @@ use num_bigint::BigInt;
 use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
-    circuits::freivalds_matmul::nystrom_attn_circuit::NystromAttentionCircuit, config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
-        matmul::{constraints::{MatrixVar, new_matrix_witness}, 
+    circuits::{
+        freivalds_matmul::nystrom_attn_circuit::NystromAttentionCircuit,
+        proof_size,
+    },
+    config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M}, gadgets::{
+        matmul::{constraints::{MatrixVar, new_matrix_witness},
     quantized::{MatmulBundle, MatmulData, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix}}, softmax::constraints::{SoftmaxBundle, enforce_softmax}}, lasso::{
         lasso::{
             densified::DensifiedRepresentation,
@@ -123,13 +127,18 @@ pub fn prove_lasso_for_softmax(
     let prove_duration = prove_start.elapsed();
     println!("    * Lasso Prover Time: {:?}", prove_duration);
 
+    // ── Lasso proof size report ──
+    let lasso_label = std::str::from_utf8(label).unwrap_or("softmax");
+    let lasso_report = proof_size::compute_lasso_proof_report::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>(&proof_lasso, &commitment);
+    lasso_report.print_log(lasso_label);
+
     let mut verifier_transcript = Transcript::new(b"lasso_softmax");
     let verify_start = Instant::now();
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso verification failed for label: {:?}", std::str::from_utf8(label)))?;
     let verify_duration = verify_start.elapsed();
 
-    println!("Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
+    println!("Lasso proof verified for: {:?}", lasso_label);
     println!("    * Lasso Verifier Time: {:?}", verify_duration);
 
     let mut results = Vec::new();
@@ -184,24 +193,29 @@ pub fn prove_lasso_for_range_22(
     let mut transcript = Transcript::new(b"lasso_range");
     
     let proof_lasso = SparsePolynomialEvaluationProof::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<22>>::prove(
-        &mut densified, 
-        &r_point, 
-        gens, 
-        &mut transcript, 
+        &mut densified,
+        &r_point,
+        gens,
+        &mut transcript,
         &mut random_tape,
     );
+
+    // ── Lasso proof size report ──
+    let range_label = std::str::from_utf8(label).unwrap_or("range_22");
+    let lasso_report = proof_size::compute_lasso_proof_report::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<22>>(&proof_lasso, &commitment);
+    lasso_report.print_log(range_label);
 
     let mut verifier_transcript = Transcript::new(b"lasso_range");
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
 
-    println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
+    println!("    -> Lasso proof verified for: {:?}", range_label);
 
     let mut results = Vec::new();
     let ell = densified.dim[0].get_num_vars();
     let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
-    let l_size = 1 << left_vars;   // 행 개수
-    let r_size = 1 << right_vars;  // 열/베이스 개수
+    let l_size = 1 << left_vars;
+    let r_size = 1 << right_vars;
 
     for i in 0..KBITS_C {
         let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
@@ -248,19 +262,24 @@ pub fn prove_lasso_for_range_16(
     let mut transcript = Transcript::new(b"lasso_range");
     
     let proof_lasso = SparsePolynomialEvaluationProof::<G1, FRACBITS_C, FRACBITS_M, RangeCheckSubtableStrategy<22>>::prove(
-        &mut densified, 
-        &r_point, 
-        gens, 
-        &mut transcript, 
+        &mut densified,
+        &r_point,
+        gens,
+        &mut transcript,
         &mut random_tape,
     );
+
+    // ── Lasso proof size report ──
+    let range_label = std::str::from_utf8(label).unwrap_or("range_16");
+    let lasso_report = proof_size::compute_lasso_proof_report::<G1, FRACBITS_C, FRACBITS_M, RangeCheckSubtableStrategy<22>>(&proof_lasso, &commitment);
+    lasso_report.print_log(range_label);
 
     let mut verifier_transcript = Transcript::new(b"lasso_range");
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
 
-    println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    
+    println!("    -> Lasso proof verified for: {:?}", range_label);
+
     let ell = densified.dim[0].get_num_vars();
     let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
     let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(1 << right_vars);

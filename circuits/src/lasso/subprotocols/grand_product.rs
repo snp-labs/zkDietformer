@@ -93,7 +93,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedGrandProductArgument<F: PrimeField> {
-  proof: Vec<LayerProofBatched<F>>,
+  pub(crate) proof: Vec<LayerProofBatched<F>>,
 }
 
 impl<F: PrimeField> BatchedGrandProductArgument<F> {

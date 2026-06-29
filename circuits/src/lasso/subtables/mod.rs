@@ -196,12 +196,12 @@ where
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CombinedTableCommitment<G: CurveGroup> {
-  comm_ops_val: PolyCommitment<G>,
+  pub(crate) comm_ops_val: PolyCommitment<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CombinedTableEvalProof<G: CurveGroup, const C: usize> {
-  proof_table_eval: PolyEvalProof<G>,
+  pub(crate) proof_table_eval: PolyEvalProof<G>,
 }
 
 impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {

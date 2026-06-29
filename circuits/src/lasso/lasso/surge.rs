@@ -105,11 +105,11 @@ impl<const C: usize> SparseLookupMatrix<C> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
-  proof: SumcheckInstanceProof<G::ScalarField>,
-  claimed_evaluation: G::ScalarField,
-  eval_derefs: [G::ScalarField; ALPHA],
-  proof_derefs: CombinedTableEvalProof<G, ALPHA>,
+pub(crate) struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
+  pub(crate) proof: SumcheckInstanceProof<G::ScalarField>,
+  pub(crate) claimed_evaluation: G::ScalarField,
+  pub(crate) eval_derefs: [G::ScalarField; ALPHA],
+  pub(crate) proof_derefs: CombinedTableEvalProof<G, ALPHA>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -121,9 +121,9 @@ pub struct SparsePolynomialEvaluationProof<
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
-  comm_derefs: CombinedTableCommitment<G>,
-  primary_sumcheck: PrimarySumcheck<G, { S::NUM_MEMORIES }>,
-  memory_check: MemoryCheckingProof<G, C, M, S>,
+  pub(crate) comm_derefs: CombinedTableCommitment<G>,
+  pub(crate) primary_sumcheck: PrimarySumcheck<G, { S::NUM_MEMORIES }>,
+  pub(crate) memory_check: MemoryCheckingProof<G, C, M, S>,
 }
 
 impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>

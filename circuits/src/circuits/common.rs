@@ -79,6 +79,8 @@ pub struct BenchmarkResult {
     pub proof_size_bytes:  usize,
     pub groth16_commitment_size_bytes: usize,
     pub lasso_commitment_size_bytes:   usize,
+    pub lasso_proof_size_bytes:  usize,
+    pub cplink_proof_size_bytes: usize,
 }
 
 impl BenchmarkResult {
@@ -95,6 +97,8 @@ impl BenchmarkResult {
                 "\"proof_size_bytes\":{p},",
                 "\"groth16_commitment_size_bytes\":{g16_cm},",
                 "\"lasso_commitment_size_bytes\":{lasso_cm},",
+                "\"lasso_proof_size_bytes\":{lasso_pf},",
+                "\"cplink_proof_size_bytes\":{cplink_pf},",
                 "\"groth16\":{{",
                   "\"commit_ms\":{gc},",
                   "\"prove_ms\":{gp},",
@@ -116,6 +120,8 @@ impl BenchmarkResult {
             p        = self.proof_size_bytes,
             g16_cm   = self.groth16_commitment_size_bytes,
             lasso_cm = self.lasso_commitment_size_bytes,
+            lasso_pf = self.lasso_proof_size_bytes,
+            cplink_pf = self.cplink_proof_size_bytes,
             gc       = self.groth16_commit_ms,
             gp       = self.groth16_prove_ms,
             gv       = self.groth16_verify_ms,

@@ -147,11 +147,11 @@ impl<G: CurveGroup> DotProductProofGens<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DotProductProofLog<G: CurveGroup> {
-  bullet_reduction_proof: BulletReductionProof<G>,
-  delta: G,
-  beta: G,
-  z1: G::ScalarField,
-  z2: G::ScalarField,
+  pub(crate) bullet_reduction_proof: BulletReductionProof<G>,
+  pub(crate) delta: G,
+  pub(crate) beta: G,
+  pub(crate) z1: G::ScalarField,
+  pub(crate) z2: G::ScalarField,
 }
 
 impl<G: CurveGroup> DotProductProofLog<G> {

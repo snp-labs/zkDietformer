@@ -290,7 +290,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyEvalProof<G: CurveGroup> {
-  proof: DotProductProofLog<G>,
+  pub(crate) proof: DotProductProofLog<G>,
 }
 
 impl<G: CurveGroup> PolyEvalProof<G> {

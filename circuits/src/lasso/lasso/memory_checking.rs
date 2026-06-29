@@ -27,8 +27,8 @@ pub struct MemoryCheckingProof<
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
-  proof_prod_layer: ProductLayerProof<G::ScalarField, { S::NUM_MEMORIES }>,
-  proof_hash_layer: HashLayerProof<G, C, M, S>,
+  pub(crate) proof_prod_layer: ProductLayerProof<G::ScalarField, { S::NUM_MEMORIES }>,
+  pub(crate) proof_hash_layer: HashLayerProof<G, C, M, S>,
 }
 
 impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
@@ -311,7 +311,7 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<
+pub(crate) struct HashLayerProof<
   G: CurveGroup,
   const C: usize,
   const M: usize,
@@ -319,13 +319,13 @@ struct HashLayerProof<
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
-  eval_dim: [G::ScalarField; C],
-  eval_read: [G::ScalarField; C],
-  eval_final: [G::ScalarField; C],
-  eval_derefs: [G::ScalarField; S::NUM_MEMORIES],
-  proof_ops: PolyEvalProof<G>,
-  proof_mem: PolyEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G, C>,
+  pub(crate) eval_dim: [G::ScalarField; C],
+  pub(crate) eval_read: [G::ScalarField; C],
+  pub(crate) eval_final: [G::ScalarField; C],
+  pub(crate) eval_derefs: [G::ScalarField; S::NUM_MEMORIES],
+  pub(crate) proof_ops: PolyEvalProof<G>,
+  pub(crate) proof_mem: PolyEvalProof<G>,
+  pub(crate) proof_derefs: CombinedTableEvalProof<G, C>,
 }
 
 impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
@@ -653,10 +653,10 @@ where
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField, const NUM_MEMORIES: usize> {
-  grand_product_evals: [(F, F, F, F); NUM_MEMORIES],
-  proof_mem: BatchedGrandProductArgument<F>,
-  proof_ops: BatchedGrandProductArgument<F>,
+pub(crate) struct ProductLayerProof<F: PrimeField, const NUM_MEMORIES: usize> {
+  pub(crate) grand_product_evals: [(F, F, F, F); NUM_MEMORIES],
+  pub(crate) proof_mem: BatchedGrandProductArgument<F>,
+  pub(crate) proof_ops: BatchedGrandProductArgument<F>,
 }
 
 impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES> {

@@ -249,7 +249,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct SumcheckInstanceProof<F: PrimeField> {
-  compressed_polys: Vec<CompressedUniPoly<F>>,
+  pub(crate) compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
 impl<F: PrimeField> SumcheckInstanceProof<F> {
