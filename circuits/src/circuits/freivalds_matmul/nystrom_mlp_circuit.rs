@@ -12,10 +12,13 @@ use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, FieldVar},
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
-    circuits::common::{
-        BenchmarkResult,
-        factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
-        pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
+    circuits::{
+        common::{
+            BenchmarkResult, Groth16Metrics, LassoBenchmarkMetrics, CpLinkMetrics, LassoMetricsAggregate,
+            factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
+            pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
+        },
+        proof_size,
     },
     config::{GELU_C, GELU_M, KBITS_C, KBITS_M, RMSNORM_C, RMSNORM_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::{
@@ -655,10 +658,14 @@ where
         }
 
         // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
+        // Reset Lasso aggregator before individual Lasso proofs
+        proof_size::reset_lasso_aggregator();
         println!("=== [2] Lasso Lookup Proofs: MLP Sections ===");
         let lasso_start = Instant::now();
-        let (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, b"lasso_rms1", &mut rng)?;
-        let (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2) = run_lasso_for_gelu(
+        let mut lasso_agg = LassoMetricsAggregate::default();
+        let ((lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1), m1) = run_lasso_for_rmsnorm(&sample_circuit.norm1, b"lasso_rms1", &mut rng)?;
+        lasso_agg.add(&m1);
+        let ((lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2), m2) = run_lasso_for_gelu(
             &sample_circuit.gelu1,
             &sample_circuit.ff1.q_out_sim.iter().map(|batch| {
                 batch.iter().map(|seq| {
@@ -672,10 +679,14 @@ where
             b"lasso_gelu1",
             &mut rng
         )?;
-        let (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3) = run_lasso_for_rmsnorm(&sample_circuit.norm2, b"lasso_rms2", &mut rng)?;
-        let res_remainders = run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
+        lasso_agg.add(&m2);
+        let ((lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3), m3) = run_lasso_for_rmsnorm(&sample_circuit.norm2, b"lasso_rms2", &mut rng)?;
+        lasso_agg.add(&m3);
+        let (res_remainders, rem_agg) = run_mlp_remainders::<Fr, G1>(&sample_circuit, &mut rng)?;
+        lasso_agg.add_aggregate(&rem_agg);
         let u_values: Vec<Fr> = sample_circuit.committed_vars.borrow().iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
         let lasso_time = lasso_start.elapsed();
+        lasso_agg.total_ms = lasso_time.as_millis();
 
         let mut lasso_results = vec![
             (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1),
@@ -703,6 +714,17 @@ where
         println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
         let cp_verify_ms = cp_verify_start.elapsed().as_millis();
 
+        // ── Groth16 proof size report ──
+        let g16_report = proof_size::compute_groth16_report::<E>(&proof);
+        g16_report.print_log();
+
+        // ── CP-Link proof size report ──
+        let cplink_report = proof_size::compute_cplink_report::<E>(&proof_link, &instance);
+        cplink_report.print_log();
+
+        // ── Grand total proof size report ──
+        proof_size::print_full_report(&g16_report, &cplink_report);
+
         let e2e_time = e2e_start.elapsed();
 
         // ── Benchmark output ─────────────────────────────────────────────────
@@ -711,22 +733,24 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "mlp".to_string(),
-            constraints:       num_constraints,
-            setup_ms:          setup_time.as_millis(),
-            groth16_commit_ms,
-            groth16_prove_ms:  groth16_prove_time.as_millis(),
-            groth16_verify_ms: groth16_verify_time.as_millis(),
-            lasso_ms:          lasso_time.as_millis(),
-            cp_link_setup_ms:  cp_setup_ms,
-            cp_link_prove_ms:  cp_prove_ms,
-            cp_link_verify_ms: cp_verify_ms,
-            end_to_end_ms:     e2e_time.as_millis(),
-            proof_size_bytes:  proof_size,
-            groth16_commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
-            lasso_commitment_size_bytes:   lasso_commitment_size::<E>(&lasso_results),
-            lasso_proof_size_bytes:  0,
-            cplink_proof_size_bytes: 0,
+            circuit: "mlp".to_string(),
+            constraints: num_constraints,
+            groth16: Groth16Metrics {
+                setup_ms: setup_time.as_millis(),
+                commit_ms: groth16_commit_ms,
+                prove_ms: groth16_prove_time.as_millis(),
+                verify_ms: groth16_verify_time.as_millis(),
+                proof_size_bytes: proof_size,
+                commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
+            },
+            lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
+            cp_link: CpLinkMetrics {
+                setup_ms: cp_setup_ms,
+                prove_ms: cp_prove_ms,
+                verify_ms: cp_verify_ms,
+                proof_size_bytes: cplink_report.proof_total,
+            },
+            end_to_end_ms: e2e_time.as_millis(),
         }
         .print_json();
     }
@@ -842,11 +866,15 @@ where
         }
 
         // ── [2] Lasso (commit + prove + verify bundled in helpers) ───────────
+        // Reset Lasso aggregator before individual Lasso proofs
+        proof_size::reset_lasso_aggregator();
         println!("=== [2] Lasso Lookup Proofs: MLP Sections (LayerNorm) ===");
         let lasso_start = Instant::now();
-        let (lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1) =
+        let mut lasso_agg = LassoMetricsAggregate::default();
+        let ((lasso_cm1, lasso_blinds1, lasso_gens1, lasso_sp1), m1) =
             run_lasso_for_layernorm(&sample_circuit.norm1, b"lasso_ln1", &mut rng)?;
-        let (lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2) = run_lasso_for_gelu(
+        lasso_agg.add(&m1);
+        let ((lasso_cm2, lasso_blinds2, lasso_gens2, lasso_sp2), m2) = run_lasso_for_gelu(
             &sample_circuit.gelu1,
             &sample_circuit.ff1.q_out_sim.iter().map(|batch| {
                 batch.iter().map(|seq| {
@@ -860,11 +888,15 @@ where
             b"lasso_gelu1",
             &mut rng,
         )?;
-        let (lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3) =
+        lasso_agg.add(&m2);
+        let ((lasso_cm3, lasso_blinds3, lasso_gens3, lasso_sp3), m3) =
             run_lasso_for_layernorm(&sample_circuit.norm2, b"lasso_ln2", &mut rng)?;
-        let res_remainders = run_mlp_remainders_layernorm::<Fr, G1>(&sample_circuit, &mut rng)?;
+        lasso_agg.add(&m3);
+        let (res_remainders, rem_agg) = run_mlp_remainders_layernorm::<Fr, G1>(&sample_circuit, &mut rng)?;
+        lasso_agg.add_aggregate(&rem_agg);
         let u_values: Vec<Fr> = sample_circuit.committed_vars.borrow().iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
         let lasso_time = lasso_start.elapsed();
+        lasso_agg.total_ms = lasso_time.as_millis();
         println!("  - Lasso total time: {:?}", lasso_time);
 
         let mut lasso_results = vec![
@@ -893,6 +925,17 @@ where
         println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
         let cp_verify_ms = cp_verify_start.elapsed().as_millis();
 
+        // ── Groth16 proof size report ──
+        let g16_report = proof_size::compute_groth16_report::<E>(&proof);
+        g16_report.print_log();
+
+        // ── CP-Link proof size report ──
+        let cplink_report = proof_size::compute_cplink_report::<E>(&proof_link, &instance);
+        cplink_report.print_log();
+
+        // ── Grand total proof size report ──
+        proof_size::print_full_report(&g16_report, &cplink_report);
+
         let e2e_time = e2e_start.elapsed();
         println!("\n=== [LayerNorm] e2e total: {:?} ===", e2e_time);
 
@@ -902,22 +945,24 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "mlp-layernorm".to_string(),
-            constraints:       num_constraints,
-            setup_ms:          setup_time.as_millis(),
-            groth16_commit_ms,
-            groth16_prove_ms:  groth16_prove_time.as_millis(),
-            groth16_verify_ms: groth16_verify_time.as_millis(),
-            lasso_ms:          lasso_time.as_millis(),
-            cp_link_setup_ms:  cp_setup_ms,
-            cp_link_prove_ms:  cp_prove_ms,
-            cp_link_verify_ms: cp_verify_ms,
-            end_to_end_ms:     e2e_time.as_millis(),
-            proof_size_bytes:  proof_size,
-            groth16_commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
-            lasso_commitment_size_bytes:   lasso_commitment_size::<E>(&lasso_results),
-            lasso_proof_size_bytes:  0,
-            cplink_proof_size_bytes: 0,
+            circuit: "mlp-layernorm".to_string(),
+            constraints: num_constraints,
+            groth16: Groth16Metrics {
+                setup_ms: setup_time.as_millis(),
+                commit_ms: groth16_commit_ms,
+                prove_ms: groth16_prove_time.as_millis(),
+                verify_ms: groth16_verify_time.as_millis(),
+                proof_size_bytes: proof_size,
+                commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
+            },
+            lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
+            cp_link: CpLinkMetrics {
+                setup_ms: cp_setup_ms,
+                prove_ms: cp_prove_ms,
+                verify_ms: cp_verify_ms,
+                proof_size_bytes: cplink_report.proof_total,
+            },
+            end_to_end_ms: e2e_time.as_millis(),
         }
         .print_json();
     }

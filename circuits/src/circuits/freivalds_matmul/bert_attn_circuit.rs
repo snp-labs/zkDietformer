@@ -17,7 +17,7 @@ use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
     circuits::{
         common::{
-            BenchmarkResult,
+            BenchmarkResult, Groth16Metrics, LassoBenchmarkMetrics, CpLinkMetrics, LassoMetricsAggregate,
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
@@ -601,11 +601,15 @@ where
         proof_size::reset_lasso_aggregator();
         println!("=== [2] BERT Attention Lasso Lookup Proofs ===");
         let lasso_start = Instant::now();
-        let lasso_sm =
+        let mut lasso_agg = LassoMetricsAggregate::default();
+        let (lasso_sm, sm_agg) =
             run_bert_lasso_bundle(&final_circuit.sm, b"bert_lasso_sm", &mut rng)?;
-        let lasso_remainders =
+        lasso_agg.add_aggregate(&sm_agg);
+        let (lasso_remainders, rem_agg) =
             run_all_bert_remainders_with_link(&final_circuit, &mut rng)?;
+        lasso_agg.add_aggregate(&rem_agg);
         let lasso_time = lasso_start.elapsed();
+        lasso_agg.total_ms = lasso_time.as_millis();
 
         let mut lasso_results = Vec::new();
         lasso_results.extend(lasso_sm);
@@ -637,32 +641,31 @@ where
         // ── Grand total proof size report ──
         proof_size::print_full_report(&g16_report, &cplink_report);
 
-        let (_, lasso_agg_bytes) = proof_size::get_lasso_aggregate();
-
         let e2e_time = e2e_start.elapsed();
 
         BenchmarkResult {
-            file: file_path
-                .file_name()
+            file: file_path.file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "bert_attention".to_string(),
-            constraints:       num_constraints,
-            setup_ms:          setup_time.as_millis(),
-            groth16_commit_ms: g16_commit_ms,
-            groth16_prove_ms:  g16_prove_time.as_millis(),
-            groth16_verify_ms: g16_verify_time.as_millis(),
-            lasso_ms:          lasso_time.as_millis(),
-            cp_link_setup_ms:  cp_setup_ms,
-            cp_link_prove_ms:  cp_prove_ms,
-            cp_link_verify_ms: cp_verify_ms,
-            end_to_end_ms:     e2e_time.as_millis(),
-            proof_size_bytes:  proof_size,
-            groth16_commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
-            lasso_commitment_size_bytes:   lasso_commitment_size::<E>(&lasso_results),
-            lasso_proof_size_bytes:  lasso_agg_bytes,
-            cplink_proof_size_bytes: cplink_report.proof_total,
+            circuit: "bert_attention".to_string(),
+            constraints: num_constraints,
+            groth16: Groth16Metrics {
+                setup_ms: setup_time.as_millis(),
+                commit_ms: g16_commit_ms,
+                prove_ms: g16_prove_time.as_millis(),
+                verify_ms: g16_verify_time.as_millis(),
+                proof_size_bytes: proof_size,
+                commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
+            },
+            lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
+            cp_link: CpLinkMetrics {
+                setup_ms: cp_setup_ms,
+                prove_ms: cp_prove_ms,
+                verify_ms: cp_verify_ms,
+                proof_size_bytes: cplink_report.proof_total,
+            },
+            end_to_end_ms: e2e_time.as_millis(),
         }
         .print_json();
     }

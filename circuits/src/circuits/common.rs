@@ -42,45 +42,107 @@ pub fn lasso_commitment_size<E: Pairing>(lasso_results: &[LassoResult<E>]) -> us
         .sum()
 }
 
-// ── BenchmarkResult ─────────────────────────────────────────────────────────
+// ── Lasso Metrics (per-invocation) ──────────────────────────────────────────
 
-/// Holds all performance metrics for one witness file's proving pipeline.
-///
-/// # Timing notes
-/// * `setup_ms`         — LegoGroth16 `generate_random_parameters`
-/// * `groth16_commit_ms`— `cm1_from_vk` (Pedersen commitment from the VK)
-/// * `groth16_prove_ms` — `create_random_proof`
-/// * `groth16_verify_ms`— `verify_proof`
-/// * `lasso_ms`         — all Lasso `run_lasso_for_*` calls; commit + prove +
-///                        verify are bundled inside the helpers
-/// * `cp_link_setup_ms` — `factored_link_setup` + `factored_link_keygen`
-/// * `cp_link_prove_ms` — `factored_link_prove`
-/// * `cp_link_verify_ms`— `factored_link_verify`
-///
-/// Call `print_json()` to emit a single `BENCHMARK_RESULT` JSON line:
-/// ```text
-/// grep 'BENCHMARK_RESULT' test.log | jq .
-/// ```
+/// Fine-grained timing and size metrics for a single Lasso prove invocation.
+#[derive(Debug, Clone, Default)]
+pub struct LassoMetrics {
+    pub commit_cplink_link_ms: u128,
+    pub commit_proof_ms: u128,
+    pub prove_ms: u128,
+    pub verify_ms: u128,
+    pub commitment_cplink_link_bytes: usize,
+    pub commitment_proof_bytes: usize,
+    pub proof_size_bytes: usize,
+}
+
+/// Aggregated Lasso metrics across multiple invocations.
+#[derive(Debug, Clone, Default)]
+pub struct LassoMetricsAggregate {
+    pub commit_cplink_link_ms: u128,
+    pub commit_proof_ms: u128,
+    pub prove_ms: u128,
+    pub verify_ms: u128,
+    pub commitment_cplink_link_bytes: usize,
+    pub commitment_proof_bytes: usize,
+    pub proof_size_bytes: usize,
+    pub total_ms: u128,
+}
+
+impl LassoMetricsAggregate {
+    pub fn add(&mut self, m: &LassoMetrics) {
+        self.commit_cplink_link_ms += m.commit_cplink_link_ms;
+        self.commit_proof_ms += m.commit_proof_ms;
+        self.prove_ms += m.prove_ms;
+        self.verify_ms += m.verify_ms;
+        self.commitment_cplink_link_bytes += m.commitment_cplink_link_bytes;
+        self.commitment_proof_bytes += m.commitment_proof_bytes;
+        self.proof_size_bytes += m.proof_size_bytes;
+    }
+
+    pub fn add_aggregate(&mut self, other: &LassoMetricsAggregate) {
+        self.commit_cplink_link_ms += other.commit_cplink_link_ms;
+        self.commit_proof_ms += other.commit_proof_ms;
+        self.prove_ms += other.prove_ms;
+        self.verify_ms += other.verify_ms;
+        self.commitment_cplink_link_bytes += other.commitment_cplink_link_bytes;
+        self.commitment_proof_bytes += other.commitment_proof_bytes;
+        self.proof_size_bytes += other.proof_size_bytes;
+    }
+}
+
+// ── BenchmarkResult (nested structure) ─────────────────────────────────────
+
+pub struct Groth16Metrics {
+    pub setup_ms: u128,
+    pub commit_ms: u128,
+    pub prove_ms: u128,
+    pub verify_ms: u128,
+    pub proof_size_bytes: usize,
+    pub commitment_size_bytes: usize,
+}
+
+pub struct LassoBenchmarkMetrics {
+    pub total_ms: u128,
+    pub commit_cplink_link_ms: u128,
+    pub commit_proof_ms: u128,
+    pub prove_ms: u128,
+    pub verify_ms: u128,
+    pub commitment_cplink_link_bytes: usize,
+    pub commitment_proof_bytes: usize,
+    pub proof_size_bytes: usize,
+}
+
+impl LassoBenchmarkMetrics {
+    pub fn from_aggregate(agg: &LassoMetricsAggregate) -> Self {
+        LassoBenchmarkMetrics {
+            total_ms: agg.total_ms,
+            commit_cplink_link_ms: agg.commit_cplink_link_ms,
+            commit_proof_ms: agg.commit_proof_ms,
+            prove_ms: agg.prove_ms,
+            verify_ms: agg.verify_ms,
+            commitment_cplink_link_bytes: agg.commitment_cplink_link_bytes,
+            commitment_proof_bytes: agg.commitment_proof_bytes,
+            proof_size_bytes: agg.proof_size_bytes,
+        }
+    }
+}
+
+pub struct CpLinkMetrics {
+    pub setup_ms: u128,
+    pub prove_ms: u128,
+    pub verify_ms: u128,
+    pub proof_size_bytes: usize,
+}
+
 pub struct BenchmarkResult {
-    pub file:    String,
+    pub file: String,
     pub circuit: String,
     pub constraints: usize,
-    // ── timing (milliseconds) ─────────────────────────────────────────────
-    pub setup_ms:          u128,
-    pub groth16_commit_ms: u128,
-    pub groth16_prove_ms:  u128,
-    pub groth16_verify_ms: u128,
-    pub lasso_ms:          u128,
-    pub cp_link_setup_ms:  u128,
-    pub cp_link_prove_ms:  u128,
-    pub cp_link_verify_ms: u128,
-    pub end_to_end_ms:     u128,
-    // ── sizes (bytes) ────────────────────────────────────────────────────
-    pub proof_size_bytes:  usize,
-    pub groth16_commitment_size_bytes: usize,
-    pub lasso_commitment_size_bytes:   usize,
-    pub lasso_proof_size_bytes:  usize,
-    pub cplink_proof_size_bytes: usize,
+    pub groth16: Groth16Metrics,
+    pub lasso: LassoBenchmarkMetrics,
+    pub cp_link: CpLinkMetrics,
+    pub end_to_end_ms: u128,
 }
 
 impl BenchmarkResult {
@@ -93,43 +155,55 @@ impl BenchmarkResult {
                 "\"file\":{file:?},",
                 "\"circuit\":{circuit:?},",
                 "\"constraints\":{c},",
-                "\"setup_ms\":{s},",
-                "\"proof_size_bytes\":{p},",
-                "\"groth16_commitment_size_bytes\":{g16_cm},",
-                "\"lasso_commitment_size_bytes\":{lasso_cm},",
-                "\"lasso_proof_size_bytes\":{lasso_pf},",
-                "\"cplink_proof_size_bytes\":{cplink_pf},",
                 "\"groth16\":{{",
-                  "\"commit_ms\":{gc},",
-                  "\"prove_ms\":{gp},",
-                  "\"verify_ms\":{gv}",
+                  "\"setup_ms\":{g16_setup},",
+                  "\"commit_ms\":{g16_cm_ms},",
+                  "\"prove_ms\":{g16_p},",
+                  "\"verify_ms\":{g16_v},",
+                  "\"proof_size_bytes\":{g16_pf},",
+                  "\"commitment_size_bytes\":{g16_cm}",
                 "}},",
-                "\"lasso\":{{\"total_ms\":{lp}}},",
+                "\"lasso\":{{",
+                  "\"total_ms\":{l_total},",
+                  "\"commit_cplink_link_ms\":{l_ccl},",
+                  "\"commit_proof_ms\":{l_cp},",
+                  "\"prove_ms\":{l_p},",
+                  "\"verify_ms\":{l_v},",
+                  "\"commitment_cplink_link_bytes\":{l_ccl_b},",
+                  "\"commitment_proof_bytes\":{l_cp_b},",
+                  "\"proof_size_bytes\":{l_pf}",
+                "}},",
                 "\"cp_link\":{{",
-                  "\"setup_ms\":{cs},",
-                  "\"prove_ms\":{cp},",
-                  "\"verify_ms\":{cv}",
+                  "\"setup_ms\":{cp_s},",
+                  "\"prove_ms\":{cp_p},",
+                  "\"verify_ms\":{cp_v},",
+                  "\"proof_size_bytes\":{cp_pf}",
                 "}},",
                 "\"end_to_end_ms\":{e2e}",
                 "}}"
             ),
-            file     = self.file,
-            circuit  = self.circuit,
-            c        = self.constraints,
-            s        = self.setup_ms,
-            p        = self.proof_size_bytes,
-            g16_cm   = self.groth16_commitment_size_bytes,
-            lasso_cm = self.lasso_commitment_size_bytes,
-            lasso_pf = self.lasso_proof_size_bytes,
-            cplink_pf = self.cplink_proof_size_bytes,
-            gc       = self.groth16_commit_ms,
-            gp       = self.groth16_prove_ms,
-            gv       = self.groth16_verify_ms,
-            lp       = self.lasso_ms,
-            cs       = self.cp_link_setup_ms,
-            cp       = self.cp_link_prove_ms,
-            cv       = self.cp_link_verify_ms,
-            e2e      = self.end_to_end_ms,
+            file       = self.file,
+            circuit    = self.circuit,
+            c          = self.constraints,
+            g16_setup  = self.groth16.setup_ms,
+            g16_cm_ms  = self.groth16.commit_ms,
+            g16_p      = self.groth16.prove_ms,
+            g16_v      = self.groth16.verify_ms,
+            g16_pf     = self.groth16.proof_size_bytes,
+            g16_cm     = self.groth16.commitment_size_bytes,
+            l_total    = self.lasso.total_ms,
+            l_ccl      = self.lasso.commit_cplink_link_ms,
+            l_cp       = self.lasso.commit_proof_ms,
+            l_p        = self.lasso.prove_ms,
+            l_v        = self.lasso.verify_ms,
+            l_ccl_b    = self.lasso.commitment_cplink_link_bytes,
+            l_cp_b     = self.lasso.commitment_proof_bytes,
+            l_pf       = self.lasso.proof_size_bytes,
+            cp_s       = self.cp_link.setup_ms,
+            cp_p       = self.cp_link.prove_ms,
+            cp_v       = self.cp_link.verify_ms,
+            cp_pf      = self.cp_link.proof_size_bytes,
+            e2e        = self.end_to_end_ms,
         );
     }
 }

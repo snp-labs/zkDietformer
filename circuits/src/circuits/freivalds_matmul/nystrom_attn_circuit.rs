@@ -14,7 +14,7 @@ use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
     circuits::{
         common::{
-            BenchmarkResult,
+            BenchmarkResult, Groth16Metrics, LassoBenchmarkMetrics, CpLinkMetrics, LassoMetricsAggregate,
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
@@ -771,11 +771,17 @@ where
         proof_size::reset_lasso_aggregator();
         println!("=== [2] Lasso Lookup Proofs: Softmax Sections ===");
         let lasso_start = Instant::now();
-        let lasso_sm1 = run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
-        let lasso_sm2 = run_lasso_bundle(&final_circuit.sm2, b"lasso_k2", &mut rng)?;
-        let lasso_sm3 = run_lasso_bundle(&final_circuit.sm3, b"lasso_k3", &mut rng)?;
-        let lasso_remainders = run_all_remainders_with_link::<Fr, G1>(&final_circuit, &mut rng)?;
+        let mut lasso_agg = LassoMetricsAggregate::default();
+        let (lasso_sm1, sm1_agg) = run_lasso_bundle(&final_circuit.sm1, b"lasso_k1", &mut rng)?;
+        lasso_agg.add_aggregate(&sm1_agg);
+        let (lasso_sm2, sm2_agg) = run_lasso_bundle(&final_circuit.sm2, b"lasso_k2", &mut rng)?;
+        lasso_agg.add_aggregate(&sm2_agg);
+        let (lasso_sm3, sm3_agg) = run_lasso_bundle(&final_circuit.sm3, b"lasso_k3", &mut rng)?;
+        lasso_agg.add_aggregate(&sm3_agg);
+        let (lasso_remainders, rem_agg) = run_all_remainders_with_link::<Fr, G1>(&final_circuit, &mut rng)?;
+        lasso_agg.add_aggregate(&rem_agg);
         let lasso_time = lasso_start.elapsed();
+        lasso_agg.total_ms = lasso_time.as_millis();
 
         let mut lasso_results = vec![];
         lasso_results.extend(lasso_sm1);
@@ -809,8 +815,6 @@ where
         // ── Grand total proof size report ──
         proof_size::print_full_report(&g16_report, &cplink_report);
 
-        let (_, lasso_agg_bytes) = proof_size::get_lasso_aggregate();
-
         let e2e_time = e2e_start.elapsed();
 
         // ── Benchmark output ─────────────────────────────────────────────────
@@ -819,22 +823,24 @@ where
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string(),
-            circuit:           "attention".to_string(),
-            constraints:       num_constraints,
-            setup_ms:          setup_time.as_millis(),
-            groth16_commit_ms: g16_commit_ms,
-            groth16_prove_ms:  groth16_prove_time.as_millis(),
-            groth16_verify_ms: groth16_verify_time.as_millis(),
-            lasso_ms:          lasso_time.as_millis(),
-            cp_link_setup_ms:  cp_setup_ms,
-            cp_link_prove_ms:  cp_prove_ms,
-            cp_link_verify_ms: cp_verify_ms,
-            end_to_end_ms:     e2e_time.as_millis(),
-            proof_size_bytes:  proof_size,
-            groth16_commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
-            lasso_commitment_size_bytes:   lasso_commitment_size::<E>(&lasso_results),
-            lasso_proof_size_bytes:  lasso_agg_bytes,
-            cplink_proof_size_bytes: cplink_report.proof_total,
+            circuit: "attention".to_string(),
+            constraints: num_constraints,
+            groth16: Groth16Metrics {
+                setup_ms: setup_time.as_millis(),
+                commit_ms: g16_commit_ms,
+                prove_ms: groth16_prove_time.as_millis(),
+                verify_ms: groth16_verify_time.as_millis(),
+                proof_size_bytes: proof_size,
+                commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
+            },
+            lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
+            cp_link: CpLinkMetrics {
+                setup_ms: cp_setup_ms,
+                prove_ms: cp_prove_ms,
+                verify_ms: cp_verify_ms,
+                proof_size_bytes: cplink_report.proof_total,
+            },
+            end_to_end_ms: e2e_time.as_millis(),
         }
         .print_json();
     }

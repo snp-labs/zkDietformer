@@ -4,6 +4,7 @@ use ark_bn254::{Fr, G1Projective};
 use ark_ff::{BigInteger, PrimeField};
 use ark_std::rand::rngs::StdRng;
 use crate::{
+    circuits::common::{LassoMetrics, LassoMetricsAggregate},
     circuits::freivalds_matmul::bert_attn_circuit::BERTAttentionCircuit,
     config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::softmax::constraints::SoftmaxBundle,
@@ -25,7 +26,7 @@ pub fn run_bert_lasso_bundle(
     bundle: &SoftmaxBundle<Fr>,
     label: &'static [u8],
     rng: &mut StdRng,
-) -> Result<Vec<LassoResult>> {
+) -> Result<(Vec<LassoResult>, LassoMetricsAggregate)> {
     let b_dim = bundle.limbs[0].len();
     let h_dim = bundle.limbs[0][0].len();
     let dim1 = bundle.limbs[0][0][0].len();
@@ -40,15 +41,18 @@ pub fn run_bert_lasso_bundle(
         SOFTMAX_M.trailing_zeros() as usize,
     );
 
+    let mut metrics_agg = LassoMetricsAggregate::default();
+
     let start = Instant::now();
-    let results = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
+    let (results, metrics) = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
+    metrics_agg.add(&metrics);
     println!(
         "  - Lasso Total Time (BERT Softmax {:?}): {:?}",
         std::str::from_utf8(label).unwrap_or("?"),
         start.elapsed()
     );
 
-    Ok(results)
+    Ok((results, metrics_agg))
 }
 
 /// Run all range-check Lasso proofs for a BERT attention circuit.
@@ -60,10 +64,11 @@ pub fn run_bert_lasso_bundle(
 pub fn run_all_bert_remainders_with_link(
     circuit: &BERTAttentionCircuit<Fr>,
     rng: &mut StdRng,
-) -> Result<Vec<LassoResult>> {
+) -> Result<(Vec<LassoResult>, LassoMetricsAggregate)> {
     println!("\n=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===");
 
     let mut all_results = Vec::new();
+    let mut metrics_agg = LassoMetricsAggregate::default();
 
     // ── 22-bit range checks ──────────────────────────────────────────────────
     let target_22bit: &[(&Vec<Vec<Vec<Vec<Fr>>>>, &str)] = &[
@@ -102,8 +107,9 @@ pub fn run_all_bert_remainders_with_link(
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_22(nz, &gens, rng, label.as_bytes())?;
+        let (link_data, metrics) = prove_lasso_for_range_22(nz, &gens, rng, label.as_bytes())?;
         all_results.extend(link_data);
+        metrics_agg.add(&metrics);
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
@@ -146,12 +152,13 @@ pub fn run_all_bert_remainders_with_link(
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
+        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
         );
         all_results.push(link_data);
+        metrics_agg.add(&metrics);
     }
 
     // ── 16-bit 4D: sm.r_div ──────────────────────────────────────────────────
@@ -185,13 +192,14 @@ pub fn run_all_bert_remainders_with_link(
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
+        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
         );
         all_results.push(link_data);
+        metrics_agg.add(&metrics);
     }
 
-    Ok(all_results)
+    Ok((all_results, metrics_agg))
 }

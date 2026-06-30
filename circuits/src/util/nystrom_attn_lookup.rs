@@ -6,6 +6,7 @@ use ndarray_npy::{NpzReader, NpzWriter};
 use ark_std::{fs, UniformRand, log2, marker::PhantomData, rand::{Rng, SeedableRng, rngs::StdRng}};
 use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_ff::{PrimeField, One, Zero, BigInteger};
+use ark_serialize::{CanonicalSerialize, Compress};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{emulated_fp::params, fp::FpVar, FieldVar}};
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
@@ -14,6 +15,7 @@ use merlin::Transcript;
 use ark_r1cs_std::select::CondSelectGadget;
 use crate::{
     circuits::{
+        common::{LassoMetrics, LassoMetricsAggregate},
         freivalds_matmul::nystrom_attn_circuit::NystromAttentionCircuit,
         proof_size,
     },
@@ -35,7 +37,7 @@ pub fn run_lasso_bundle(
     bundle: &SoftmaxBundle<Fr>,
     label: &'static [u8],
     rng: &mut StdRng,
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
+) -> Result<(Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>, LassoMetricsAggregate)> {
     // 총 룩업 횟수(Sparsity) 계산: C, B, H, S, L 차원을 가짐
     let b_dim = bundle.limbs[0].len();
     let h_dim = bundle.limbs[0][0].len();
@@ -53,10 +55,12 @@ pub fn run_lasso_bundle(
     );
 
     let start = Instant::now();
-    let link_results = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
+    let (link_results, metrics) = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
     println!("  - Lasso Total Time ({:?}): {:?}", std::str::from_utf8(label).unwrap(), start.elapsed());
-    
-    Ok(link_results)
+
+    let mut agg = LassoMetricsAggregate::default();
+    agg.add(&metrics);
+    Ok((link_results, agg))
 }
 
 pub fn prove_lasso_for_softmax(
@@ -64,7 +68,7 @@ pub fn prove_lasso_for_softmax(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
+) -> Result<(Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>, LassoMetrics)> {
 
     use ark_ff::{BigInteger, PrimeField};
     let c_seg = limbs.len();          // SOFTMAX_C (5)
@@ -73,9 +77,11 @@ pub fn prove_lasso_for_softmax(
     let s_dim = limbs[0][0][0].len(); // Sequence
     let l_dim = limbs[0][0][0][0].len(); // Landmark (L)
 
+    let mut metrics = LassoMetrics::default();
+
     // Lasso 입력용 nz_indices (Sparsity m = B*H*S*L)
     let mut nz_indices: Vec<[usize; SOFTMAX_C]> = Vec::with_capacity(b_dim * h_dim * s_dim * l_dim);
-    
+
     for b in 0..b_dim {
         for h in 0..h_dim {
             for s in 0..s_dim {
@@ -106,10 +112,11 @@ pub fn prove_lasso_for_softmax(
             println!("  - Dim[{}] Tail (10): {:?}", i, data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
         }
     }
-    
+
     let commit_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
     let commit_duration = commit_start.elapsed();
+    metrics.commit_proof_ms = commit_duration.as_millis();
     println!("    * Commitment Time: {:?}", commit_duration);
 
     let log_s = (sparsity.next_power_of_two().trailing_zeros()) as usize;
@@ -117,7 +124,7 @@ pub fn prove_lasso_for_softmax(
 
     let mut random_tape = RandomTape::new(b"lasso_tape");
     let mut transcript = Transcript::new(b"lasso_softmax");
-    
+
     println!("    * Starting Lasso Prove (log_s: {})...", log_s);
     let prove_start = Instant::now();
     let proof_lasso = SparsePolynomialEvaluationProof::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>::prove(
@@ -125,18 +132,22 @@ pub fn prove_lasso_for_softmax(
     );
 
     let prove_duration = prove_start.elapsed();
+    metrics.prove_ms = prove_duration.as_millis();
     println!("    * Lasso Prover Time: {:?}", prove_duration);
 
     // ── Lasso proof size report ──
     let lasso_label = std::str::from_utf8(label).unwrap_or("softmax");
     let lasso_report = proof_size::compute_lasso_proof_report::<G1, SOFTMAX_C, SOFTMAX_M, SoftmaxSubtableStrategy>(&proof_lasso, &commitment);
     lasso_report.print_log(lasso_label);
+    metrics.proof_size_bytes = lasso_report.total;
+    metrics.commitment_proof_bytes = lasso_report.oracle_bytes + lasso_report.deref_bytes;
 
     let mut verifier_transcript = Transcript::new(b"lasso_softmax");
     let verify_start = Instant::now();
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso verification failed for label: {:?}", std::str::from_utf8(label)))?;
     let verify_duration = verify_start.elapsed();
+    metrics.verify_ms = verify_duration.as_millis();
 
     println!("Lasso proof verified for: {:?}", lasso_label);
     println!("    * Lasso Verifier Time: {:?}", verify_duration);
@@ -144,21 +155,24 @@ pub fn prove_lasso_for_softmax(
     let mut results = Vec::new();
     let ell = densified.dim[0].get_num_vars();
     let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
-    let l_size = 1 << left_vars;   
-    let r_size = 1 << right_vars;  
+    let l_size = 1 << left_vars;
+    let r_size = 1 << right_vars;
 
     for i in 0..SOFTMAX_C {
         let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
-        
+
         let blinds = PolyCommitmentBlinds {
             blinds: random_tape.random_vector(b"poly_blinds", l_size),
         };
+        let ccl_start = Instant::now();
         let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
-        
+        metrics.commit_cplink_link_ms += ccl_start.elapsed().as_millis();
+        metrics.commitment_cplink_link_bytes += pure_cm.serialized_size(Compress::Yes);
+
         results.push((pure_cm, blinds, factored_gens, sparsity));
     }
 
-    Ok(results)
+    Ok((results, metrics))
 }
 
 
@@ -167,8 +181,9 @@ pub fn prove_lasso_for_range_22(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
+) -> Result<(Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>, LassoMetrics)> {
     let sparsity = nz_indices.len();
+    let mut metrics = LassoMetrics::default();
 
     let log_m = KBITS_M.trailing_zeros() as usize;
     let lookup_matrix = SparseLookupMatrix::<KBITS_C>::new(nz_indices, log_m);
@@ -184,14 +199,17 @@ pub fn prove_lasso_for_range_22(
         }
     }
 
+    let commit_proof_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
+    metrics.commit_proof_ms = commit_proof_start.elapsed().as_millis();
 
     let log_s = sparsity.next_power_of_two().trailing_zeros() as usize;
     let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
 
     let mut random_tape = RandomTape::new(b"lasso_tape");
     let mut transcript = Transcript::new(b"lasso_range");
-    
+
+    let prove_start = Instant::now();
     let proof_lasso = SparsePolynomialEvaluationProof::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<22>>::prove(
         &mut densified,
         &r_point,
@@ -199,15 +217,20 @@ pub fn prove_lasso_for_range_22(
         &mut transcript,
         &mut random_tape,
     );
+    metrics.prove_ms = prove_start.elapsed().as_millis();
 
     // ── Lasso proof size report ──
     let range_label = std::str::from_utf8(label).unwrap_or("range_22");
     let lasso_report = proof_size::compute_lasso_proof_report::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<22>>(&proof_lasso, &commitment);
     lasso_report.print_log(range_label);
+    metrics.proof_size_bytes = lasso_report.total;
+    metrics.commitment_proof_bytes = lasso_report.oracle_bytes + lasso_report.deref_bytes;
 
+    let verify_start = Instant::now();
     let mut verifier_transcript = Transcript::new(b"lasso_range");
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
+    metrics.verify_ms = verify_start.elapsed().as_millis();
 
     println!("    -> Lasso proof verified for: {:?}", range_label);
 
@@ -219,17 +242,20 @@ pub fn prove_lasso_for_range_22(
 
     for i in 0..KBITS_C {
         let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
-        
+
         let blinds = PolyCommitmentBlinds {
             blinds: random_tape.random_vector(b"poly_blinds", l_size),
         };
 
+        let ccl_start = Instant::now();
         let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
-        
+        metrics.commit_cplink_link_ms += ccl_start.elapsed().as_millis();
+        metrics.commitment_cplink_link_bytes += pure_cm.serialized_size(Compress::Yes);
+
         results.push((pure_cm, blinds, factored_gens, sparsity));
     }
 
-    Ok(results)
+    Ok((results, metrics))
 }
 
 pub fn prove_lasso_for_range_16(
@@ -237,8 +263,9 @@ pub fn prove_lasso_for_range_16(
     gens: &SparsePolyCommitmentGens<G1>,
     rng: &mut StdRng,
     label: &[u8],
-) -> Result<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)> {
+) -> Result<((PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize), LassoMetrics)> {
     let sparsity = nz_indices.len();
+    let mut metrics = LassoMetrics::default();
 
     let log_m = FRACBITS_M.trailing_zeros() as usize;
     let lookup_matrix = SparseLookupMatrix::<FRACBITS_C>::new(nz_indices, log_m);
@@ -252,15 +279,18 @@ pub fn prove_lasso_for_range_16(
             println!("  - Dim[{}] Tail (10): {:?}", i, data[data.len()-print_count..].iter().map(|f| f.into_bigint()).collect::<Vec<_>>());
         }
     }
-    
+
+    let commit_proof_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
+    metrics.commit_proof_ms = commit_proof_start.elapsed().as_millis();
 
     let log_s = sparsity.next_power_of_two().trailing_zeros() as usize;
     let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
 
     let mut random_tape = RandomTape::new(b"lasso_tape");
     let mut transcript = Transcript::new(b"lasso_range");
-    
+
+    let prove_start = Instant::now();
     let proof_lasso = SparsePolynomialEvaluationProof::<G1, FRACBITS_C, FRACBITS_M, RangeCheckSubtableStrategy<22>>::prove(
         &mut densified,
         &r_point,
@@ -268,15 +298,20 @@ pub fn prove_lasso_for_range_16(
         &mut transcript,
         &mut random_tape,
     );
+    metrics.prove_ms = prove_start.elapsed().as_millis();
 
     // ── Lasso proof size report ──
     let range_label = std::str::from_utf8(label).unwrap_or("range_16");
     let lasso_report = proof_size::compute_lasso_proof_report::<G1, FRACBITS_C, FRACBITS_M, RangeCheckSubtableStrategy<22>>(&proof_lasso, &commitment);
     lasso_report.print_log(range_label);
+    metrics.proof_size_bytes = lasso_report.total;
+    metrics.commitment_proof_bytes = lasso_report.oracle_bytes + lasso_report.deref_bytes;
 
+    let verify_start = Instant::now();
     let mut verifier_transcript = Transcript::new(b"lasso_range");
     proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
         .map_err(|_| anyhow::anyhow!("Lasso Range verification failed for label: {:?}", std::str::from_utf8(label)))?;
+    metrics.verify_ms = verify_start.elapsed().as_millis();
 
     println!("    -> Lasso proof verified for: {:?}", range_label);
 
@@ -284,18 +319,22 @@ pub fn prove_lasso_for_range_16(
     let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
     let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(1 << right_vars);
     let blinds = PolyCommitmentBlinds { blinds: random_tape.random_vector(b"poly_blinds", 1 << left_vars) };
+    let ccl_start = Instant::now();
     let pure_cm = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
+    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
+    metrics.commitment_cplink_link_bytes = pure_cm.serialized_size(Compress::Yes);
 
-    Ok((pure_cm, blinds, factored_gens, sparsity))
+    Ok(((pure_cm, blinds, factored_gens, sparsity), metrics))
 }
 
 pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     circuit: &NystromAttentionCircuit<F>,
     rng: &mut StdRng,
-) -> Result<Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>> {
+) -> Result<(Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>, LassoMetricsAggregate)> {
     println!("\n=== [Lasso Lookup] Verifying All 22-bit Remainders (R_*) ===");
 
     let mut all_results = Vec::new();
+    let mut agg = LassoMetricsAggregate::default();
 
     // 22비트 범위 체크를 위한 전략 설정 (M=2^16, C=2)
     type Range22Lasso = RangeCheckSubtableStrategy<22>;
@@ -351,14 +390,15 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_22(
+        let (link_data, metrics) = prove_lasso_for_range_22(
             nz,
             &gens,
             rng,
             label.as_bytes(),
         )?;
         all_results.extend(link_data);
-        
+        agg.add(&metrics);
+
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
     }
 
@@ -395,7 +435,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
                 }
             }
         }
-        
+
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
             FRACBITS_C,
@@ -405,7 +445,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_16(
+        let (link_data, metrics) = prove_lasso_for_range_16(
             nz,
             &gens,
             rng,
@@ -414,6 +454,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
 
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
         all_results.push(link_data);
+        agg.add(&metrics);
     }
 
     for (matrix_4d, label) in target_16bit_4d {
@@ -433,7 +474,7 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
                 }
             }
         }
-        
+
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
             FRACBITS_C,
@@ -443,16 +484,17 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
         );
 
         let start = Instant::now();
-        let link_data = prove_lasso_for_range_16(
+        let (link_data, metrics) = prove_lasso_for_range_16(
             nz,
             &gens,
             rng,
             label.as_bytes(),
         )?;
-        
+
         println!("  - {} verified | Count: {} | Time: {:?}", label, total_sparsity, start.elapsed());
         all_results.push(link_data);
+        agg.add(&metrics);
     }
 
-    Ok(all_results)
+    Ok((all_results, agg))
 }
