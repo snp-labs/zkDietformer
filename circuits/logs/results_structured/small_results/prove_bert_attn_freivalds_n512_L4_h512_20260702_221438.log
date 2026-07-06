@@ -1,0 +1,572 @@
+
+running 1 test
+[info] SOFTMAX_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L4_h512_bert/softmax_tables.npz
+
+=== [BERT Attention prove+verify] dir=/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L4_h512_bert | files=4 | mode=all-layers ===
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L4_h512_bert/outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+test circuits::freivalds_matmul::bert_attn_circuit::bert_attn_hf_single_layer_test has been running for over 60 seconds
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 723.718959ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 6.035036583s
+PROOF_SIZE_DETAIL [Lasso: bert_lasso_sm]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 512 log_m-variate G = 147456 bytes
+    (a)-2 Lookup Vector (comm_derefs): 4096 G = 131072 bytes
+    (a)-3 Hyrax Opening Proofs: 102 G + 8 F = 3520 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 126 F = 4032 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1730 F = 55360 bytes
+    (b)-3 Claimed Evaluations: 46 F = 1472 bytes
+  Total: 342912 bytes
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 73.245625ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.628746875s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [16306, 43478, 21598, 26168, 16408, 41048, 44240, 65148, 47698, 64634]
+  - Dim[0] Tail (10): [64634, 64634, 64634, 64634, 64634, 64634, 64634, 64634, 64634, 64634]
+  - Dim[1] Head (10): [62, 50, 0, 60, 54, 50, 19, 1, 23, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+PROOF_SIZE_DETAIL [Lasso: bert_attn_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.74839225s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.261698208s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [22651, 27771, 57723, 5883, 22907, 38907, 7675, 18683, 26235, 251]
+  - Dim[0] Tail (10): [14971, 48507, 45051, 54395, 28667, 51963, 47867, 43387, 10747, 32123]
+  - Dim[1] Head (10): [11, 57, 34, 10, 50, 30, 31, 16, 2, 26]
+  - Dim[1] Tail (10): [44, 34, 14, 62, 63, 6, 43, 51, 34, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_x_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 729.20975ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_exp]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 256 log_m-variate G = 139264 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 96 G + 8 F = 3328 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 46 F = 1472 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1275 F = 40800 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 250720 bytes
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.461408875s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_div]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 1024 G = 32768 bytes
+    (a)-3 Hyrax Opening Proofs: 90 G + 8 F = 3136 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1138 F = 36416 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 147712 bytes
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.112585833s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 13313 (426016 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 13313 G1 (426016 B) — not counted]
+  Lasso (all 6 proofs): 1209632 bytes
+  ──────────────────────────────────────
+  Grand Total: 1209856 bytes (1181.50 KB)
+════════════════════════════════════════════════════════════
+
+BENCHMARK_RESULT {"file":"outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"groth16":{"setup_ms":1204973,"commit_ms":2405,"prove_ms":273443,"verify_ms":4,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":26769,"commit_cplink_link_ms":2361,"commit_proof_ms":2434,"prove_ms":19178,"verify_ms":217,"commitment_cplink_link_bytes":426088,"commitment_proof_bytes":925696,"proof_size_bytes":1209632},"cp_link":{"setup_ms":281762,"prove_ms":2385,"verify_ms":1127,"proof_size_bytes":32},"end_to_end_ms":1871465}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L4_h512_bert/outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.1.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 887.079083ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.887858042s
+PROOF_SIZE_DETAIL [Lasso: bert_lasso_sm]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 512 log_m-variate G = 147456 bytes
+    (a)-2 Lookup Vector (comm_derefs): 4096 G = 131072 bytes
+    (a)-3 Hyrax Opening Proofs: 102 G + 8 F = 3520 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 126 F = 4032 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1730 F = 55360 bytes
+    (b)-3 Claimed Evaluations: 46 F = 1472 bytes
+  Total: 342912 bytes
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 69.793041ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.457235542s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [43359, 57875, 58745, 20462, 58248, 29097, 23081, 11386, 35263, 56046]
+  - Dim[0] Tail (10): [56046, 56046, 56046, 56046, 56046, 56046, 56046, 56046, 56046, 56046]
+  - Dim[1] Head (10): [7, 57, 16, 15, 24, 26, 35, 51, 40, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+PROOF_SIZE_DETAIL [Lasso: bert_attn_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.766470625s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.248167917s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [57264, 55216, 61360, 51120, 49072, 57264, 24496, 47024, 59312, 47024]
+  - Dim[0] Tail (10): [49072, 61360, 4016, 24496, 18352, 65456, 32688, 61360, 42928, 1968]
+  - Dim[1] Head (10): [62, 22, 53, 57, 15, 34, 42, 30, 61, 35]
+  - Dim[1] Tail (10): [15, 45, 13, 2, 12, 22, 53, 4, 62, 55]
+PROOF_SIZE_DETAIL [Lasso: bert_x_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 726.149166ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_exp]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 256 log_m-variate G = 139264 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 96 G + 8 F = 3328 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 46 F = 1472 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1275 F = 40800 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 250720 bytes
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.446961208s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_div]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 1024 G = 32768 bytes
+    (a)-3 Hyrax Opening Proofs: 90 G + 8 F = 3136 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1138 F = 36416 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 147712 bytes
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.125230125s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 13313 (426016 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 13313 G1 (426016 B) — not counted]
+  Lasso (all 6 proofs): 1209632 bytes
+  ──────────────────────────────────────
+  Grand Total: 1209856 bytes (1181.50 KB)
+════════════════════════════════════════════════════════════
+
+BENCHMARK_RESULT {"file":"outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.1.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"groth16":{"setup_ms":1193673,"commit_ms":3372,"prove_ms":329177,"verify_ms":5,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":26582,"commit_cplink_link_ms":2355,"commit_proof_ms":2523,"prove_ms":19190,"verify_ms":209,"commitment_cplink_link_bytes":426088,"commitment_proof_bytes":925696,"proof_size_bytes":1209632},"cp_link":{"setup_ms":361460,"prove_ms":1835,"verify_ms":1127,"proof_size_bytes":32},"end_to_end_ms":2026197}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L4_h512_bert/outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.2.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 869.379833ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.861146625s
+PROOF_SIZE_DETAIL [Lasso: bert_lasso_sm]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 512 log_m-variate G = 147456 bytes
+    (a)-2 Lookup Vector (comm_derefs): 4096 G = 131072 bytes
+    (a)-3 Hyrax Opening Proofs: 102 G + 8 F = 3520 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 126 F = 4032 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1730 F = 55360 bytes
+    (b)-3 Claimed Evaluations: 46 F = 1472 bytes
+  Total: 342912 bytes
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 81.620916ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.426148584s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [1744, 18904, 30960, 58808, 8824, 52768, 26096, 60536, 64104, 53672]
+  - Dim[0] Tail (10): [53672, 53672, 53672, 53672, 53672, 53672, 53672, 53672, 53672, 53672]
+  - Dim[1] Head (10): [42, 61, 41, 8, 6, 58, 38, 45, 10, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+PROOF_SIZE_DETAIL [Lasso: bert_attn_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.678704875s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.223396625s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [5012, 63380, 61844, 34452, 27540, 4756, 29332, 33940, 7316, 7828]
+  - Dim[0] Tail (10): [26004, 44692, 47252, 55188, 52116, 3732, 27540, 22164, 36244, 20884]
+  - Dim[1] Head (10): [39, 21, 37, 58, 54, 25, 36, 17, 56, 23]
+  - Dim[1] Tail (10): [29, 40, 47, 52, 35, 59, 54, 42, 38, 36]
+PROOF_SIZE_DETAIL [Lasso: bert_x_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 725.96825ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_exp]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 256 log_m-variate G = 139264 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 96 G + 8 F = 3328 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 46 F = 1472 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1275 F = 40800 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 250720 bytes
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.329368667s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_div]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 1024 G = 32768 bytes
+    (a)-3 Hyrax Opening Proofs: 90 G + 8 F = 3136 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1138 F = 36416 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 147712 bytes
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.063383583s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 13313 (426016 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 13313 G1 (426016 B) — not counted]
+  Lasso (all 6 proofs): 1209632 bytes
+  ──────────────────────────────────────
+  Grand Total: 1209856 bytes (1181.50 KB)
+════════════════════════════════════════════════════════════
+
+BENCHMARK_RESULT {"file":"outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.2.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"groth16":{"setup_ms":1221460,"commit_ms":3236,"prove_ms":372262,"verify_ms":6,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":26282,"commit_cplink_link_ms":2364,"commit_proof_ms":2452,"prove_ms":18937,"verify_ms":224,"commitment_cplink_link_bytes":426088,"commitment_proof_bytes":925696,"proof_size_bytes":1209632},"cp_link":{"setup_ms":288869,"prove_ms":2100,"verify_ms":1127,"proof_size_bytes":32},"end_to_end_ms":2035158}
+
+=== [BERT Attention] Processing: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n512_L4_h512_bert/outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.3.attention.self.witness.npz" ===
+Commit counts: d1=29884416, d2=786432
+=== [0] LegoGroth16 Setup (d1=29884416, d2=786432) ===
+[Debug] committed_group1 total=29884416
+=== [1] Rebuilding circuit with Fiat-Shamir challenge ===
+  - BERT Attention SNARK Verification: Ok(())
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+=== [2] BERT Attention Lasso Lookup Proofs ===
+    * Sparsity (m): 2097152
+
+[Debug] Lasso Range (Label: "bert_lasso_sm", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    * Commitment Time: 705.510917ms
+    * Starting Lasso Prove (log_s: 21)...
+    * Lasso Prover Time: 5.742816416s
+PROOF_SIZE_DETAIL [Lasso: bert_lasso_sm]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 512 log_m-variate G = 147456 bytes
+    (a)-2 Lookup Vector (comm_derefs): 4096 G = 131072 bytes
+    (a)-3 Hyrax Opening Proofs: 102 G + 8 F = 3520 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 126 F = 4032 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1730 F = 55360 bytes
+    (b)-3 Claimed Evaluations: 46 F = 1472 bytes
+  Total: 342912 bytes
+Lasso proof verified for: "bert_lasso_sm"
+    * Lasso Verifier Time: 119.727333ms
+  - Lasso Total Time (BERT Softmax "bert_lasso_sm"): 8.235823s
+
+=== [Lasso Lookup] BERT Attention: Verifying All Remainders ===
+
+[Debug] Lasso Range (Label: "bert_attn_remainder", Total: 2097152)
+  - Dim[0] Head (10): [13864, 17933, 37657, 65363, 24566, 12912, 12284, 15177, 48133, 50968]
+  - Dim[0] Tail (10): [50968, 50968, 50968, 50968, 50968, 50968, 50968, 50968, 50968, 50968]
+  - Dim[1] Head (10): [0, 56, 62, 3, 5, 53, 53, 55, 51, 63]
+  - Dim[1] Tail (10): [63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+PROOF_SIZE_DETAIL [Lasso: bert_attn_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_attn_remainder"
+  - bert_attn_remainder verified | Count: 2097152 | Time: 3.705987709s
+
+[Debug] Lasso Range (Label: "bert_sm_remainder", Total: 2097152)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 94 G + 8 F = 3264 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1286 F = 41152 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 185632 bytes
+    -> Lasso proof verified for: "bert_sm_remainder"
+  - bert_sm_remainder verified | Count: 2097152 | Time: 3.214105667s
+
+[Debug] Lasso Range (Label: "bert_x_remainder", Total: 262144)
+  - Dim[0] Head (10): [14988, 28300, 58252, 47756, 3980, 19084, 6028, 27532, 63116, 2188]
+  - Dim[0] Tail (10): [61068, 59532, 47756, 53644, 30348, 6796, 23436, 25740, 46988, 18572]
+  - Dim[1] Head (10): [35, 40, 42, 59, 26, 19, 30, 21, 60, 46]
+  - Dim[1] Tail (10): [21, 4, 29, 23, 62, 20, 18, 22, 51, 61]
+PROOF_SIZE_DETAIL [Lasso: bert_x_remainder]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "bert_x_remainder"
+  - bert_x_remainder verified | Count: 262144 | Time: 708.500292ms
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_exp]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 4096 l-variate + 256 log_m-variate G = 139264 bytes
+    (a)-2 Lookup Vector (comm_derefs): 2048 G = 65536 bytes
+    (a)-3 Hyrax Opening Proofs: 96 G + 8 F = 3328 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 46 F = 1472 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1275 F = 40800 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 250720 bytes
+    -> Lasso proof verified for: "bert_sm_r_exp"
+  - bert_sm_r_exp verified | Count: 8388608 | Time: 7.750562041s
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: bert_sm_r_div]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 2048 l-variate + 256 log_m-variate G = 73728 bytes
+    (a)-2 Lookup Vector (comm_derefs): 1024 G = 32768 bytes
+    (a)-3 Hyrax Opening Proofs: 90 G + 8 F = 3136 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 42 F = 1344 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1138 F = 36416 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 147712 bytes
+    -> Lasso proof verified for: "bert_sm_r_div"
+  - bert_sm_r_div verified | Count: 2097152 | Time: 2.055369584s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 13313 (426016 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 13313 G1 (426016 B) — not counted]
+  Lasso (all 6 proofs): 1209632 bytes
+  ──────────────────────────────────────
+  Grand Total: 1209856 bytes (1181.50 KB)
+════════════════════════════════════════════════════════════
+
+BENCHMARK_RESULT {"file":"outputs_n512_L4_h512_bert-batch0-bert.encoder.layer.3.attention.self.witness.npz","circuit":"bert_attention","constraints":41439744,"groth16":{"setup_ms":1247792,"commit_ms":3205,"prove_ms":371565,"verify_ms":12,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":26506,"commit_cplink_link_ms":2396,"commit_proof_ms":2378,"prove_ms":19055,"verify_ms":260,"commitment_cplink_link_bytes":426088,"commitment_proof_bytes":925696,"proof_size_bytes":1209632},"cp_link":{"setup_ms":355543,"prove_ms":2180,"verify_ms":1126,"proof_size_bytes":32},"end_to_end_ms":2131474}
+
+=== [BERT Attention] ALL 4 files PASS | total_wall_ms=8212696 ===
+test circuits::freivalds_matmul::bert_attn_circuit::bert_attn_hf_single_layer_test ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 8212.71s
+
