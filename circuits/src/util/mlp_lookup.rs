@@ -17,7 +17,7 @@ use crate::{
         lasso::{
             densified::DensifiedRepresentation,
             surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment, SparsePolynomialEvaluationProof},
-        }, poly::{commitments::{Commitments, MultiCommitGens}, dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentBlinds}, eq_poly::EqPolynomial}, subtables::{
+        }, poly::{commitments::{Commitments, MultiCommitGens}, dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentBlinds}}, subtables::{
             SubtableStrategy, and::AndSubtableStrategy, gelu::GeLUSubtableStrategy, layernorm::RMSNormSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy, softmax::SoftmaxSubtableStrategy
         }, utils::{math::Math, random::RandomTape}
     } 
@@ -358,29 +358,28 @@ pub fn prove_lasso_for_range(
     metrics.commitment_proof_bytes = report.oracle_bytes + report.deref_bytes;
 
     println!("    -> Lasso proof verified for: {:?}", std::str::from_utf8(label).unwrap());
-    // C=2이므로 dim[0]과 dim[1]을 각각 독립적인 CP-Link 블록으로 추출
+    // CP-Link: extract dim[i] slices from combined commitment (no commit_inner recomputation)
+    let r_size_combined = gens.gens_combined_l_variate.gens.gens_n.n;
+    let chunks_per_poly = densified.dim[0].len() / r_size_combined;
+    assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
+    let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
+
     let mut results = Vec::new();
-    let ell = densified.dim[0].get_num_vars();
-    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
-    let l_size = 1 << left_vars;   // 행 개수
-    let r_size = 1 << right_vars;  // 열/베이스 개수 (보통 32)
-
     for i in 0..KBITS_C {
-        // Lasso의 1024개용 베이스에서 현재 차원의 Factored 베이스(32개) 추출
-        let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
+        let start = i * chunks_per_poly;
+        let end = start + chunks_per_poly;
 
-        // 해당 차원(dim[i])에 대한 blinds 생성 (random_tape 활용)
-        let blinds = PolyCommitmentBlinds {
-            blinds: random_tape.random_vector(b"poly_blinds", l_size),
-        };
-
-        // dim[i]에 대해 행렬 구조 커밋 생성
         let ccl_start = Instant::now();
-        let pure_cm = densified.dim[i].commit_inner(&blinds.blinds, &factored_gens);
+        let pure_cm = PolyCommitment {
+            C: commitment.l_variate_polys_commitment.C[start..end].to_vec(),
+        };
+        let blinds = PolyCommitmentBlinds {
+            blinds: vec![Fr::zero(); chunks_per_poly],
+        };
         metrics.commit_cplink_link_ms += ccl_start.elapsed().as_millis();
         metrics.commitment_cplink_link_bytes += pure_cm.serialized_size(Compress::Yes);
 
-        results.push((pure_cm, blinds, factored_gens, sparsity));
+        results.push((pure_cm, blinds, full_gens.clone(), sparsity));
     }
 
     Ok((results, metrics))
@@ -424,22 +423,6 @@ pub fn prove_lasso_for_rmsnorm(
     let mut random_tape = RandomTape::new(b"lasso_tape_rms");
     let mut transcript = Transcript::new(b"lasso_rmsnorm");
 
-    let ell = densified.dim[0].get_num_vars();
-    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
-    let l_size = 1 << left_vars;
-    let r_size = 1 << right_vars;
-
-    let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
-
-    let blinds = PolyCommitmentBlinds {
-        blinds: random_tape.random_vector(b"poly_blinds", l_size),
-    };
-
-    let ccl_start = Instant::now();
-    let pure_data_commitment = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
-    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
-    metrics.commitment_cplink_link_bytes = pure_data_commitment.serialized_size(Compress::Yes);
-
     let commit_proof_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
     metrics.commit_proof_ms = commit_proof_start.elapsed().as_millis();
@@ -465,7 +448,23 @@ pub fn prove_lasso_for_rmsnorm(
     metrics.proof_size_bytes = report.total;
     metrics.commitment_proof_bytes = report.oracle_bytes + report.deref_bytes;
 
-    Ok(((pure_data_commitment, blinds, factored_gens, sparsity), metrics))
+    // CP-Link: extract dim[0] slice from combined commitment (no commit_inner recomputation)
+    let r_size_combined = gens.gens_combined_l_variate.gens.gens_n.n;
+    let chunks_per_poly = densified.dim[0].len() / r_size_combined;
+    assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
+    let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
+
+    let ccl_start = Instant::now();
+    let pure_data_commitment = PolyCommitment {
+        C: commitment.l_variate_polys_commitment.C[..chunks_per_poly].to_vec(),
+    };
+    let blinds = PolyCommitmentBlinds {
+        blinds: vec![Fr::zero(); chunks_per_poly],
+    };
+    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
+    metrics.commitment_cplink_link_bytes = pure_data_commitment.serialized_size(Compress::Yes);
+
+    Ok(((pure_data_commitment, blinds, full_gens, sparsity), metrics))
 }
 
 pub fn prove_lasso_for_gelu(
@@ -491,22 +490,6 @@ pub fn prove_lasso_for_gelu(
 
     let mut random_tape = RandomTape::new(b"lasso_tape_gelu");
     let mut transcript = Transcript::new(b"lasso_gelu");
-
-    let ell = densified.dim[0].get_num_vars();
-    let (left_vars, right_vars) = EqPolynomial::<Fr>::compute_factored_lens(ell);
-    let l_size = 1 << left_vars;
-    let r_size = 1 << right_vars;
-
-    let (factored_gens, _) = gens.gens_combined_l_variate.gens.gens_n.split_at(r_size);
-
-    let blinds = PolyCommitmentBlinds {
-        blinds: random_tape.random_vector(b"poly_blinds", l_size),
-    };
-
-    let ccl_start = Instant::now();
-    let pure_data_commitment = densified.dim[0].commit_inner(&blinds.blinds, &factored_gens);
-    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
-    metrics.commitment_cplink_link_bytes = pure_data_commitment.serialized_size(Compress::Yes);
 
     let commit_proof_start = Instant::now();
     let commitment = densified.commit::<G1>(gens);
@@ -535,5 +518,21 @@ pub fn prove_lasso_for_gelu(
 
     println!("GeLU Lasso proof verified: {:?}", std::str::from_utf8(label).unwrap());
 
-    Ok(((pure_data_commitment, blinds, factored_gens, sparsity), metrics))
+    // CP-Link: extract dim[0] slice from combined commitment (no commit_inner recomputation)
+    let r_size_combined = gens.gens_combined_l_variate.gens.gens_n.n;
+    let chunks_per_poly = densified.dim[0].len() / r_size_combined;
+    assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
+    let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
+
+    let ccl_start = Instant::now();
+    let pure_data_commitment = PolyCommitment {
+        C: commitment.l_variate_polys_commitment.C[..chunks_per_poly].to_vec(),
+    };
+    let blinds = PolyCommitmentBlinds {
+        blinds: vec![Fr::zero(); chunks_per_poly],
+    };
+    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
+    metrics.commitment_cplink_link_bytes = pure_data_commitment.serialized_size(Compress::Yes);
+
+    Ok(((pure_data_commitment, blinds, full_gens, sparsity), metrics))
 }
