@@ -180,6 +180,17 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
     saved_norm = {}  # key: "layer_{i}" → dict of normalization intermediates
 
     # ── Attention Hook ──────────────────────────────────────────────────────
+    # Build a map from BertSelfAttention module name to its parent's output.dense
+    output_dense_map = {}
+    for mod_name, mod in target_modules:
+        # mod_name example: "bert.encoder.layer.0.attention.self"
+        # parent output dense: "bert.encoder.layer.0.attention.output.dense"
+        parent_prefix = mod_name.rsplit('.self', 1)[0]  # "bert.encoder.layer.0.attention"
+        for n, m in model.named_modules():
+            if n == parent_prefix + '.output.dense':
+                output_dense_map[mod_name] = m
+                break
+
     def make_hook(mod_name):
         def hook_fn(module, hook_inputs, hook_output):
             hidden_states = hook_inputs[0]
@@ -208,13 +219,36 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
             b, s, _ = x_merged.shape
             x_per_head = x_merged.view(b, s, num_heads, head_dim).permute(0, 2, 1, 3)
 
-            saved_inputs[mod_name] = {
+            # Projection weights and biases for circuit witness
+            capture = {
                 "Q_proc": q_proc.detach().cpu().numpy(),
                 "K_proc": k_proc.detach().cpu().numpy(),
                 "V":      v_heads.detach().cpu().numpy(),
                 "mask":   batch_mask_np,
                 "X":      x_per_head.detach().cpu().numpy(),
+                # Projection inputs
+                "hidden_states": hidden_states.detach().cpu().numpy(),
+                "W_q": module.query.weight.data.cpu().numpy(),
+                "W_k": module.key.weight.data.cpu().numpy(),
+                "W_v": module.value.weight.data.cpu().numpy(),
+                # Attention output for O projection (pre-projection, [B, S, HD])
+                "attn_output_for_proj": x_merged.detach().cpu().numpy(),
             }
+            # Optional biases
+            if module.query.bias is not None:
+                capture["b_q"] = module.query.bias.data.cpu().numpy()
+            if module.key.bias is not None:
+                capture["b_k"] = module.key.bias.data.cpu().numpy()
+            if module.value.bias is not None:
+                capture["b_v"] = module.value.bias.data.cpu().numpy()
+            # Output projection weights
+            output_dense = output_dense_map.get(mod_name)
+            if output_dense is not None:
+                capture["W_o"] = output_dense.weight.data.cpu().numpy()
+                if output_dense.bias is not None:
+                    capture["b_o"] = output_dense.bias.data.cpu().numpy()
+
+            saved_inputs[mod_name] = capture
         return hook_fn
 
     # ── Normalization / FFN Hooks (Step C 결과 — ln_* 키) ────────────────────
