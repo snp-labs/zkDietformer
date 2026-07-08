@@ -116,6 +116,14 @@ fn run_nystrom_attn_lasso(
     full_22bit.push((&w.matmul_temp.r_matmul, "attn_temp_rem"));
     full_22bit.push((&w.matmul_mid.r_matmul, "attn_mid_rem"));
     full_22bit.push((&w.matmul_x.r_matmul, "attn_x_rem"));
+    // Projection remainders
+    full_22bit.push((&w.proj_q.r_out_proj, "proj_q_rem"));
+    full_22bit.push((&w.proj_k.r_out_proj, "proj_k_rem"));
+    full_22bit.push((&w.proj_v.r_out_proj, "proj_v_rem"));
+    full_22bit.push((&w.proj_o.r_out_proj, "proj_o_rem"));
+    // Scaling remainders
+    full_22bit.push((&w.scale_q.r_scale, "scale_q_rem"));
+    full_22bit.push((&w.scale_k.r_scale, "scale_k_rem"));
 
     for (r_matrix, name) in &full_22bit {
         let label = make_lasso_label(layer_idx, name);
@@ -249,6 +257,14 @@ fn run_bert_attn_lasso(
         (&w.matmul_attn.r_matmul, "attn_rem"),
         (&w.sm.r_sm, "attn_sm_rsm"),
         (&w.matmul_x.r_matmul, "attn_x_rem"),
+        // Projection remainders
+        (&w.proj_q.r_out_proj, "proj_q_rem"),
+        (&w.proj_k.r_out_proj, "proj_k_rem"),
+        (&w.proj_v.r_out_proj, "proj_v_rem"),
+        (&w.proj_o.r_out_proj, "proj_o_rem"),
+        // Scaling remainders
+        (&w.scale_q.r_scale, "scale_q_rem"),
+        (&w.scale_k.r_scale, "scale_k_rem"),
     ];
 
     for (r_matrix, name) in target_22bit {

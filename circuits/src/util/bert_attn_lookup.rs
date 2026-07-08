@@ -75,6 +75,14 @@ pub fn run_all_bert_remainders_with_link(
         (&circuit.matmul_attn.r_matmul, "bert_attn_remainder"),
         (&circuit.sm.r_sm,              "bert_sm_remainder"),
         (&circuit.matmul_x.r_matmul,   "bert_x_remainder"),
+        // Projection remainders
+        (&circuit.proj_q.r_out_proj,    "bert_proj_q_remainder"),
+        (&circuit.proj_k.r_out_proj,    "bert_proj_k_remainder"),
+        (&circuit.proj_v.r_out_proj,    "bert_proj_v_remainder"),
+        (&circuit.proj_o.r_out_proj,    "bert_proj_o_remainder"),
+        // Scaling remainders
+        (&circuit.scale_q.r_scale,      "bert_scale_q_remainder"),
+        (&circuit.scale_k.r_scale,      "bert_scale_k_remainder"),
     ];
 
     for (r_matrix, label) in target_22bit {

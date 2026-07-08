@@ -153,6 +153,19 @@ def _patched_forward(self, hidden_states, attention_mask=None, output_attentions
 
     batch_size, seq_length, _ = hidden_states.shape
 
+    # ── Projection 입력/가중치 캡처 (Phase 0 witness 생성용) ─────────────────
+    capture["hidden_states"] = hidden_states.detach().cpu().numpy()  # [B, S, H*D]
+
+    capture["W_q"] = self.query.weight.data.cpu().numpy()     # [H*D, H*D]
+    capture["W_k"] = self.key.weight.data.cpu().numpy()
+    capture["W_v"] = self.value.weight.data.cpu().numpy()
+    capture["b_q"] = self.query.bias.data.cpu().numpy() if self.query.bias is not None else None
+    capture["b_k"] = self.key.bias.data.cpu().numpy() if self.key.bias is not None else None
+    capture["b_v"] = self.value.bias.data.cpu().numpy() if self.value.bias is not None else None
+
+    capture["W_o"] = self._output_dense.weight.data.cpu().numpy()  # [H*D, H*D]
+    capture["b_o"] = self._output_dense.bias.data.cpu().numpy() if self._output_dense.bias is not None else None
+
     # Q/K/V projection + view + transpose (HF 원본 그대로)
     query_layer = (
         self.query(hidden_states)
@@ -268,6 +281,9 @@ def _patched_forward(self, hidden_states, attention_mask=None, output_attentions
     context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
     new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
     context_layer = context_layer.view(*new_context_layer_shape)
+
+    # ── Output projection 입력 캡처 (reshape 후 [B, S, H*D]) ────────────
+    capture["attn_output_for_proj"] = context_layer.detach().cpu().numpy()
 
     # ── capture 등록 ─────────────────────────────────────────────────────
     self._capture_registry._captures[self._capture_layer_name] = capture
@@ -401,6 +417,11 @@ def apply_monkey_patch(
 
             module._capture_registry = registry
             module._capture_layer_name = name
+
+            # Output projection 가중치 참조 (parent.output.dense)
+            layer_idx = int(name.split('.')[3])
+            parent_attn = layers[layer_idx].attention
+            module._output_dense = parent_attn.output.dense
 
             module.forward = types.MethodType(_patched_forward, module)
             n_patched += 1

@@ -44,6 +44,7 @@ pub fn enforce_naive_matmul<F: PrimeField>(
     params: &ZenParams<F>,
     h_r1_low_vars: &mut Vec<FpVar<F>>,
     h_r1_high_vars: &mut Vec<FpVar<F>>,
+    bias: Option<&[F]>,
 ) -> Result<(), SynthesisError> {
     let rows = w_matrix.len();
     assert!(rows > 0);
@@ -100,8 +101,11 @@ pub fn enforce_naive_matmul<F: PrimeField>(
             // G1[i][j] via dot product
             let g1_ij = dot_product(&w_matrix[i], &xt_cols[j]);
 
-            // ZEN value = G1[i][j] - z_w * col_sum_xt[j] + const_offset_i
-            let zen_val = &g1_ij - &params.z_w * &col_sums_xt[j] + &const_offset_i;
+            // ZEN value = G1[i][j] - z_w * col_sum_xt[j] + const_offset_i [+ bias[j]]
+            let mut zen_val = &g1_ij - &params.z_w * &col_sums_xt[j] + &const_offset_i;
+            if let Some(b) = bias {
+                zen_val += FpVar::Constant(b[j]);
+            }
 
             // RHS = M * zen_val
             let rhs = &params.m * &zen_val;

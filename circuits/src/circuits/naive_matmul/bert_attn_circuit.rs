@@ -24,7 +24,7 @@ use crate::{
     gadgets::{
         matmul::{
             constraints::new_matrix_witness,
-            quantized::{new_matrix_witness_4d, transpose_matrix},
+            quantized::{ZenParams, new_matrix_witness_4d, transpose_matrix, enforce_scaling},
             naive_quantized::enforce_naive_matmul,  // ← CHANGED: naive O(n^3) matmul
         },
         softmax::constraints::enforce_softmax,
@@ -58,9 +58,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
         let mut r3_pool = Vec::new();
 
         // Q/K/V: [B][H][S][D]
-        let q_proc = new_matrix_witness_4d(cs.clone(), &inner.q_q);
-        let k_proc = new_matrix_witness_4d(cs.clone(), &inner.q_k);
-        let v_proc = new_matrix_witness_4d(cs.clone(), &inner.q_v);
+        let q_proc = new_matrix_witness_4d(cs.clone(), &inner.scale_q.q_scaled);
+        let k_proc = new_matrix_witness_4d(cs.clone(), &inner.scale_k.q_scaled);
+        let v_proc = new_matrix_witness_4d(cs.clone(), &inner.proj_v.q_out_proj);
 
         // d2: commit Q, K, V
         {
@@ -88,6 +88,43 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
             }
         }
 
+        // === Projection input allocation (public input) ===
+        let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = inner.q_x_input.iter().map(|batch| {
+            batch.iter().map(|seq| {
+                seq.iter().map(|v| FpVar::new_input(cs.clone(), || Ok(*v)).unwrap()).collect()
+            }).collect()
+        }).collect();
+        {
+            let mut vars_2 = inner.committed_vars_2.borrow_mut();
+            for batch in &x_input_vars {
+                for seq in batch {
+                    vars_2.extend(seq.iter().cloned());
+                }
+            }
+        }
+
+        let proj_q_out = new_matrix_witness_4d(cs.clone(), &inner.proj_q.q_out_proj);
+        let proj_q_r = new_matrix_witness_4d(cs.clone(), &inner.proj_q.r_out_proj);
+        let proj_k_out = new_matrix_witness_4d(cs.clone(), &inner.proj_k.q_out_proj);
+        let proj_k_r = new_matrix_witness_4d(cs.clone(), &inner.proj_k.r_out_proj);
+        let proj_v_out = new_matrix_witness_4d(cs.clone(), &inner.proj_v.q_out_proj);
+        let proj_v_r = new_matrix_witness_4d(cs.clone(), &inner.proj_v.r_out_proj);
+
+        let scale_q_out = new_matrix_witness_4d(cs.clone(), &inner.scale_q.q_scaled);
+        let scale_q_r = new_matrix_witness_4d(cs.clone(), &inner.scale_q.r_scale);
+        let scale_k_out = new_matrix_witness_4d(cs.clone(), &inner.scale_k.q_scaled);
+        let scale_k_r = new_matrix_witness_4d(cs.clone(), &inner.scale_k.r_scale);
+
+        let proj_o_out = new_matrix_witness_4d(cs.clone(), &inner.proj_o.q_out_proj);
+        let proj_o_r = new_matrix_witness_4d(cs.clone(), &inner.proj_o.r_out_proj);
+
+        let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
+        let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
+        let mut global_proj_v_lows = Vec::new(); let mut global_proj_v_highs = Vec::new();
+        let mut global_proj_o_lows = Vec::new(); let mut global_proj_o_highs = Vec::new();
+        let mut global_scale_q_lows = Vec::new(); let mut global_scale_q_highs = Vec::new();
+        let mut global_scale_k_lows = Vec::new(); let mut global_scale_k_highs = Vec::new();
+
         let (attn_data, params_attn) =
             inner.matmul_attn.alloc_and_setup(cs.clone(), inner.z_q, inner.z_k, &two_k_var);
         let (x_data, params_x) =
@@ -107,6 +144,103 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
 
         for b in 0..q_proc.len() {
             for h in 0..q_proc[b].len() {
+                // === Q/K/V Projection + Q/K Scaling (naive) ===
+                // Q Projection
+                {
+                    let d_dim = inner.proj_q.q_w_diff[h].len();
+                    let hd_dim = inner.proj_q.q_w_diff[h][0].len();
+                    let w_q_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_q.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_q_params = ZenParams {
+                        m: FpVar::Constant(inner.proj_q.m_proj),
+                        m_prime: FpVar::Constant(inner.proj_q.m_prime_proj),
+                        z_w: FpVar::Constant(inner.z_x_input),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    enforce_naive_matmul(
+                        cs.clone(), &x_input_vars[b], &w_q_h_t,
+                        &proj_q_out[b][h], &proj_q_r[b][h],
+                        &inner.proj_q.r_out_proj[b][h],
+                        &proj_q_params,
+                        &mut global_proj_q_lows, &mut global_proj_q_highs,
+                        Some(&inner.proj_q.q_b_diff[h]),
+                    )?;
+                }
+                // K Projection
+                {
+                    let d_dim = inner.proj_k.q_w_diff[h].len();
+                    let hd_dim = inner.proj_k.q_w_diff[h][0].len();
+                    let w_k_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_k.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_k_params = ZenParams {
+                        m: FpVar::Constant(inner.proj_k.m_proj),
+                        m_prime: FpVar::Constant(inner.proj_k.m_prime_proj),
+                        z_w: FpVar::Constant(inner.z_x_input),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    enforce_naive_matmul(
+                        cs.clone(), &x_input_vars[b], &w_k_h_t,
+                        &proj_k_out[b][h], &proj_k_r[b][h],
+                        &inner.proj_k.r_out_proj[b][h],
+                        &proj_k_params,
+                        &mut global_proj_k_lows, &mut global_proj_k_highs,
+                        Some(&inner.proj_k.q_b_diff[h]),
+                    )?;
+                }
+                // V Projection
+                {
+                    let d_dim = inner.proj_v.q_w_diff[h].len();
+                    let hd_dim = inner.proj_v.q_w_diff[h][0].len();
+                    let w_v_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_v.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_v_params = ZenParams {
+                        m: FpVar::Constant(inner.proj_v.m_proj),
+                        m_prime: FpVar::Constant(inner.proj_v.m_prime_proj),
+                        z_w: FpVar::Constant(inner.z_x_input),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    enforce_naive_matmul(
+                        cs.clone(), &x_input_vars[b], &w_v_h_t,
+                        &proj_v_out[b][h], &proj_v_r[b][h],
+                        &inner.proj_v.r_out_proj[b][h],
+                        &proj_v_params,
+                        &mut global_proj_v_lows, &mut global_proj_v_highs,
+                        Some(&inner.proj_v.q_b_diff[h]),
+                    )?;
+                }
+                // Q Scaling
+                {
+                    let z_raw_q = FpVar::Constant(inner.proj_q.z_raw);
+                    let m_scale_q = FpVar::Constant(inner.scale_q.m_scale);
+                    let m_prime_q = FpVar::Constant(inner.scale_q.m_prime_scale);
+                    enforce_scaling(
+                        cs.clone(),
+                        &proj_q_out[b][h], &scale_q_out[b][h], &scale_q_r[b][h],
+                        &inner.scale_q.r_scale[b][h],
+                        &z_raw_q, &m_scale_q, &m_prime_q, &two_k_var,
+                        &mut global_scale_q_lows, &mut global_scale_q_highs,
+                    )?;
+                }
+                // K Scaling
+                {
+                    let z_raw_k = FpVar::Constant(inner.proj_k.z_raw);
+                    let m_scale_k = FpVar::Constant(inner.scale_k.m_scale);
+                    let m_prime_k = FpVar::Constant(inner.scale_k.m_prime_scale);
+                    enforce_scaling(
+                        cs.clone(),
+                        &proj_k_out[b][h], &scale_k_out[b][h], &scale_k_r[b][h],
+                        &inner.scale_k.r_scale[b][h],
+                        &z_raw_k, &m_scale_k, &m_prime_k, &two_k_var,
+                        &mut global_scale_k_lows, &mut global_scale_k_highs,
+                    )?;
+                }
+
                 // [1] QK^T: CHANGED: enforce_freivald → enforce_naive_matmul
                 let k_t = transpose_matrix(&k_proc[b][h]);
                 let mut h_attn_lows  = Vec::new();
@@ -121,6 +255,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
                     &params_attn,
                     &mut h_attn_lows,
                     &mut h_attn_highs,
+                    None,
                 )?;
                 global_attn_lows.extend(h_attn_lows);
                 global_attn_highs.extend(h_attn_highs);
@@ -178,13 +313,45 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
                     &params_x,
                     &mut h_x_lows,
                     &mut h_x_highs,
+                    None,
                 )?;
                 global_x_lows.extend(h_x_lows);
                 global_x_highs.extend(h_x_highs);
+
+                // === O Projection ===
+                // Construct [S][H*D] input directly from x_data.q_sim
+                {
+                    let num_heads = x_data.q_sim[b].len();
+                    let s_dim = x_data.q_sim[b][0].len();
+                    let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
+                        (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
+                    }).collect();
+
+                    let d_dim = inner.proj_o.q_w_diff[h].len();
+                    let hd_dim = inner.proj_o.q_w_diff[h][0].len();
+                    let w_o_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_o.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_o_params = ZenParams {
+                        m: FpVar::Constant(inner.proj_o.m_proj),
+                        m_prime: FpVar::Constant(inner.proj_o.m_prime_proj),
+                        z_w: FpVar::Constant(inner.z_attn_output),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    enforce_naive_matmul(
+                        cs.clone(), &o_input, &w_o_h_t,
+                        &proj_o_out[b][h], &proj_o_r[b][h],
+                        &inner.proj_o.r_out_proj[b][h],
+                        &proj_o_params,
+                        &mut global_proj_o_lows, &mut global_proj_o_highs,
+                        Some(&inner.proj_o.q_b_diff[h]),
+                    )?;
+                }
             }
         }
 
-        // Populate d1 committed_vars (unchanged)
+        // Populate d1 committed_vars
         {
             let mut final_vars = inner.committed_vars.borrow_mut();
             for seg in 0..5 {
@@ -197,6 +364,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
             }
             final_vars.extend(global_x_lows);
             final_vars.extend(global_x_highs);
+            // Projection remainders
+            final_vars.extend(global_proj_q_lows); final_vars.extend(global_proj_q_highs);
+            final_vars.extend(global_proj_k_lows); final_vars.extend(global_proj_k_highs);
+            final_vars.extend(global_proj_v_lows); final_vars.extend(global_proj_v_highs);
+            final_vars.extend(global_proj_o_lows); final_vars.extend(global_proj_o_highs);
+            // Scaling remainders
+            final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
+            final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
             final_vars.extend(r2_pool);
             final_vars.extend(r3_pool);
         }
@@ -302,7 +477,12 @@ where
         let proof_size = proof_bytes.len();
 
         // ── [1] Groth16 Verify ───────────────────────────────────────────────
-        let public_inputs = vec![final_inner.r_challenge];
+        let mut public_inputs = vec![final_inner.r_challenge];
+        for batch in &final_inner.q_x_input {
+            for seq in batch {
+                public_inputs.extend(seq.iter().cloned());
+            }
+        }
         let g16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let g16_verify_time = g16_verify_start.elapsed();

@@ -163,14 +163,12 @@ pub fn prove_lasso_for_softmax(
         let start = i * chunks_per_poly;
         let end = start + chunks_per_poly;
 
-        let ccl_start = Instant::now();
         let pure_cm = PolyCommitment {
             C: commitment.l_variate_polys_commitment.C[start..end].to_vec(),
         };
         let blinds = PolyCommitmentBlinds {
             blinds: vec![Fr::zero(); chunks_per_poly],
         };
-        metrics.commit_cplink_link_ms += ccl_start.elapsed().as_millis();
         metrics.commitment_cplink_link_bytes += pure_cm.serialized_size(Compress::Yes);
 
         results.push((pure_cm, blinds, full_gens.clone(), sparsity));
@@ -249,14 +247,12 @@ pub fn prove_lasso_for_range_22(
         let start = i * chunks_per_poly;
         let end = start + chunks_per_poly;
 
-        let ccl_start = Instant::now();
         let pure_cm = PolyCommitment {
             C: commitment.l_variate_polys_commitment.C[start..end].to_vec(),
         };
         let blinds = PolyCommitmentBlinds {
             blinds: vec![Fr::zero(); chunks_per_poly],
         };
-        metrics.commit_cplink_link_ms += ccl_start.elapsed().as_millis();
         metrics.commitment_cplink_link_bytes += pure_cm.serialized_size(Compress::Yes);
 
         results.push((pure_cm, blinds, full_gens.clone(), sparsity));
@@ -328,14 +324,12 @@ pub fn prove_lasso_for_range_16(
     assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
     let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
 
-    let ccl_start = Instant::now();
     let pure_cm = PolyCommitment {
         C: commitment.l_variate_polys_commitment.C[..chunks_per_poly].to_vec(),
     };
     let blinds = PolyCommitmentBlinds {
         blinds: vec![Fr::zero(); chunks_per_poly],
     };
-    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
     metrics.commitment_cplink_link_bytes = pure_cm.serialized_size(Compress::Yes);
 
     Ok(((pure_cm, blinds, full_gens, sparsity), metrics))
@@ -373,6 +367,16 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
     target_22bit.push((&circuit.matmul_temp.r_matmul, "matmul_v_remainder"));
     target_22bit.push((&circuit.matmul_mid.r_matmul, "matmul_mid_remainder"));
     target_22bit.push((&circuit.matmul_x.r_matmul, "matmul_x_remainder"));
+
+    // Projection remainders
+    target_22bit.push((&circuit.proj_q.r_out_proj, "proj_q_remainder"));
+    target_22bit.push((&circuit.proj_k.r_out_proj, "proj_k_remainder"));
+    target_22bit.push((&circuit.proj_v.r_out_proj, "proj_v_remainder"));
+    target_22bit.push((&circuit.proj_o.r_out_proj, "proj_o_remainder"));
+
+    // Scaling remainders
+    target_22bit.push((&circuit.scale_q.r_scale, "scale_q_remainder"));
+    target_22bit.push((&circuit.scale_k.r_scale, "scale_k_remainder"));
 
     for (r_matrix, label) in target_22bit {
         let b_dim = r_matrix.len();

@@ -1,7 +1,7 @@
 use std::{fs::File, path::Path, str::FromStr, time::Instant};
 use anyhow::{Context, Result};
 use ark_ec::pairing::Pairing;
-use ndarray::{IxDyn, Ix0, Ix2, Ix4};
+use ndarray::{IxDyn, Ix0, Ix2, Ix3, Ix4};
 use ndarray_npy::NpzReader;
 use ark_std::{
     rc::Rc, fs, UniformRand,
@@ -12,7 +12,7 @@ use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_ff::{PrimeField, Zero};
 use ark_serialize::CanonicalSerialize;
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
-use ark_r1cs_std::{alloc::AllocVar, fields::{fp::FpVar, FieldVar}, R1CSVar, select::CondSelectGadget};
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, FieldVar}, R1CSVar, select::CondSelectGadget};
 use crate::{
     cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
     circuits::{
@@ -27,7 +27,8 @@ use crate::{
         matmul::{
             constraints::new_matrix_witness,
             quantized::{
-                MatmulBundle, enforce_freivalds, gen_challenge_vector,
+                MatmulBundle, ProjectionBundle, ScalingBundle, ZenParams,
+                enforce_freivalds, enforce_scaling, gen_challenge_vector,
                 new_matrix_witness_4d, transpose_matrix,
             },
         },
@@ -38,7 +39,7 @@ use crate::{
         dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds},
     },
     util::{
-        load::{to_field_2d_i64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
+        load::{to_field_2d_i64, to_field_3d_i64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
         bert_attn_lookup::{run_bert_lasso_bundle, run_all_bert_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
@@ -49,13 +50,26 @@ type G1 = G1Projective;
 
 #[derive(Clone)]
 pub struct BERTAttentionCircuit<F: PrimeField> {
-    /// Quantized Q, K, V: [batch][head][seq][head_dim]
-    pub q_q: Vec<Vec<Vec<Vec<F>>>>,
-    pub q_k: Vec<Vec<Vec<Vec<F>>>>,
-    pub q_v: Vec<Vec<Vec<Vec<F>>>>,
     pub z_q: F,
     pub z_k: F,
     pub z_v: F,
+
+    // === Projection inputs ===
+    pub q_x_input: Vec<Vec<Vec<F>>>,
+    pub z_x_input: F,
+
+    // === Q/K/V Projection ===
+    pub proj_q: ProjectionBundle<F>,
+    pub proj_k: ProjectionBundle<F>,
+    pub proj_v: ProjectionBundle<F>,
+
+    // === Q/K Scaling ===
+    pub scale_q: ScalingBundle<F>,
+    pub scale_k: ScalingBundle<F>,
+
+    // === Output Projection ===
+    pub z_attn_output: F,
+    pub proj_o: ProjectionBundle<F>,
 
     /// QK^T matmul: q_sim/r_matmul shape [batch][head][seq][seq], r_mean empty
     pub matmul_attn: MatmulBundle<F>,
@@ -92,36 +106,41 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
         let mut r2_pool = Vec::new(); // from sm.r_exp (5D)
         let mut r3_pool = Vec::new(); // from sm.r_div (4D)
 
-        // Q/K/V: [B][H][S][D]
-        let q_proc = new_matrix_witness_4d(cs.clone(), &self.q_q);
-        let k_proc = new_matrix_witness_4d(cs.clone(), &self.q_k);
-        let v_proc = new_matrix_witness_4d(cs.clone(), &self.q_v);
+        // === Projection input allocation (public input) ===
+        let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_x_input.iter().map(|batch| {
+            batch.iter().map(|seq| {
+                seq.iter().map(|v| FpVar::new_input(cs.clone(), || Ok(*v)).unwrap()).collect()
+            }).collect()
+        }).collect();
+        let proj_q_out = new_matrix_witness_4d(cs.clone(), &self.proj_q.q_out_proj);
+        let proj_q_r = new_matrix_witness_4d(cs.clone(), &self.proj_q.r_out_proj);
+        let proj_k_out = new_matrix_witness_4d(cs.clone(), &self.proj_k.q_out_proj);
+        let proj_k_r = new_matrix_witness_4d(cs.clone(), &self.proj_k.r_out_proj);
+        let proj_v_out = new_matrix_witness_4d(cs.clone(), &self.proj_v.q_out_proj);
+        let proj_v_r = new_matrix_witness_4d(cs.clone(), &self.proj_v.r_out_proj);
 
-        // d2: commit Q, K, V (not CP-linked to Lasso)
+        let scale_q_out = new_matrix_witness_4d(cs.clone(), &self.scale_q.q_scaled);
+        let scale_q_r = new_matrix_witness_4d(cs.clone(), &self.scale_q.r_scale);
+        let scale_k_out = new_matrix_witness_4d(cs.clone(), &self.scale_k.q_scaled);
+        let scale_k_r = new_matrix_witness_4d(cs.clone(), &self.scale_k.r_scale);
+
+        // d2: commit Q(=scale_q_out), K(=scale_k_out), V(=proj_v_out)
         {
             let mut vars_2 = self.committed_vars_2.borrow_mut();
-            for batch in &q_proc {
-                for head in batch {
-                    for seq in head {
-                        vars_2.extend(seq.iter().cloned());
-                    }
-                }
-            }
-            for batch in &k_proc {
-                for head in batch {
-                    for seq in head {
-                        vars_2.extend(seq.iter().cloned());
-                    }
-                }
-            }
-            for batch in &v_proc {
-                for head in batch {
-                    for seq in head {
-                        vars_2.extend(seq.iter().cloned());
-                    }
-                }
-            }
+            for batch in &scale_q_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
+            for batch in &scale_k_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
+            for batch in &proj_v_out  { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
         }
+
+        let proj_o_out = new_matrix_witness_4d(cs.clone(), &self.proj_o.q_out_proj);
+        let proj_o_r = new_matrix_witness_4d(cs.clone(), &self.proj_o.r_out_proj);
+
+        let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
+        let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
+        let mut global_proj_v_lows = Vec::new(); let mut global_proj_v_highs = Vec::new();
+        let mut global_proj_o_lows = Vec::new(); let mut global_proj_o_highs = Vec::new();
+        let mut global_scale_q_lows = Vec::new(); let mut global_scale_q_highs = Vec::new();
+        let mut global_scale_k_lows = Vec::new(); let mut global_scale_k_highs = Vec::new();
 
         // Allocate QK^T output witnesses; ZenParams for QK^T (z_left=z_q, z_right=z_k)
         let (attn_data, params_attn) =
@@ -144,17 +163,117 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
 
         let zero_var = FpVar::zero();
 
-        for b in 0..q_proc.len() {
-            for h in 0..q_proc[b].len() {
-                // [1] QK^T: q_proc[B][H] [S×D] × k_proc[B][H]^T [D×S] → [S×S]
-                let k_t = transpose_matrix(&k_proc[b][h]);
+        for b in 0..scale_q_out.len() {
+            for h in 0..scale_q_out[b].len() {
+                // === Q/K/V Projection + Q/K Scaling ===
+                // Q Projection
+                {
+                    let d_dim = self.proj_q.q_w_diff[h].len();
+                    let hd_dim = self.proj_q.q_w_diff[h][0].len();
+                    let w_q_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_q.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_q_params = ZenParams {
+                        m: FpVar::Constant(self.proj_q.m_proj),
+                        m_prime: FpVar::Constant(self.proj_q.m_prime_proj),
+                        z_w: FpVar::Constant(self.z_x_input),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    let r_pows_pq = gen_challenge_vector(&r_var, d_dim);
+                    enforce_freivalds(
+                        cs.clone(), &x_input_vars[b], &w_q_h_t,
+                        &proj_q_out[b][h], &proj_q_r[b][h],
+                        &self.proj_q.r_out_proj[b][h],
+                        &proj_q_params, &r_pows_pq,
+                        &mut global_proj_q_lows, &mut global_proj_q_highs,
+                        Some(&self.proj_q.q_b_diff[h]),
+                    )?;
+                }
+                // K Projection
+                {
+                    let d_dim = self.proj_k.q_w_diff[h].len();
+                    let hd_dim = self.proj_k.q_w_diff[h][0].len();
+                    let w_k_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_k.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_k_params = ZenParams {
+                        m: FpVar::Constant(self.proj_k.m_proj),
+                        m_prime: FpVar::Constant(self.proj_k.m_prime_proj),
+                        z_w: FpVar::Constant(self.z_x_input),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    let r_pows_pk = gen_challenge_vector(&r_var, d_dim);
+                    enforce_freivalds(
+                        cs.clone(), &x_input_vars[b], &w_k_h_t,
+                        &proj_k_out[b][h], &proj_k_r[b][h],
+                        &self.proj_k.r_out_proj[b][h],
+                        &proj_k_params, &r_pows_pk,
+                        &mut global_proj_k_lows, &mut global_proj_k_highs,
+                        Some(&self.proj_k.q_b_diff[h]),
+                    )?;
+                }
+                // V Projection
+                {
+                    let d_dim = self.proj_v.q_w_diff[h].len();
+                    let hd_dim = self.proj_v.q_w_diff[h][0].len();
+                    let w_v_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_v.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_v_params = ZenParams {
+                        m: FpVar::Constant(self.proj_v.m_proj),
+                        m_prime: FpVar::Constant(self.proj_v.m_prime_proj),
+                        z_w: FpVar::Constant(self.z_x_input),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    let r_pows_pv = gen_challenge_vector(&r_var, d_dim);
+                    enforce_freivalds(
+                        cs.clone(), &x_input_vars[b], &w_v_h_t,
+                        &proj_v_out[b][h], &proj_v_r[b][h],
+                        &self.proj_v.r_out_proj[b][h],
+                        &proj_v_params, &r_pows_pv,
+                        &mut global_proj_v_lows, &mut global_proj_v_highs,
+                        Some(&self.proj_v.q_b_diff[h]),
+                    )?;
+                }
+                // Q Scaling
+                {
+                    let z_raw_q = FpVar::Constant(self.proj_q.z_raw);
+                    let m_scale_q = FpVar::Constant(self.scale_q.m_scale);
+                    let m_prime_q = FpVar::Constant(self.scale_q.m_prime_scale);
+                    enforce_scaling(
+                        cs.clone(),
+                        &proj_q_out[b][h], &scale_q_out[b][h], &scale_q_r[b][h],
+                        &self.scale_q.r_scale[b][h],
+                        &z_raw_q, &m_scale_q, &m_prime_q, &two_k_var,
+                        &mut global_scale_q_lows, &mut global_scale_q_highs,
+                    )?;
+                }
+                // K Scaling
+                {
+                    let z_raw_k = FpVar::Constant(self.proj_k.z_raw);
+                    let m_scale_k = FpVar::Constant(self.scale_k.m_scale);
+                    let m_prime_k = FpVar::Constant(self.scale_k.m_prime_scale);
+                    enforce_scaling(
+                        cs.clone(),
+                        &proj_k_out[b][h], &scale_k_out[b][h], &scale_k_r[b][h],
+                        &self.scale_k.r_scale[b][h],
+                        &z_raw_k, &m_scale_k, &m_prime_k, &two_k_var,
+                        &mut global_scale_k_lows, &mut global_scale_k_highs,
+                    )?;
+                }
+
+                // [1] QK^T: scale_q_out[B][H] [S×D] × scale_k_out[B][H]^T [D×S] → [S×S]
+                let k_t = transpose_matrix(&scale_k_out[b][h]);
                 let r_pows_attn =
                     gen_challenge_vector(&r_var, attn_data.q_sim[b][h][0].len());
                 let mut h_attn_lows  = Vec::new();
                 let mut h_attn_highs = Vec::new();
                 enforce_freivalds(
                     cs.clone(),
-                    &q_proc[b][h],
+                    &scale_q_out[b][h],
                     &k_t,
                     &attn_data.q_sim[b][h],
                     &attn_data.r_matmul[b][h],
@@ -163,6 +282,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                     &r_pows_attn,
                     &mut h_attn_lows,
                     &mut h_attn_highs,
+                    None,
                 )?;
                 global_attn_lows.extend(h_attn_lows);
                 global_attn_highs.extend(h_attn_highs);
@@ -207,14 +327,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 for k in 0..5 { global_sm_idx[k].extend(h_sm_idx[k].clone()); }
                 for k in 0..2 { global_sm_r_sm[k].extend(h_sm_r_sm[k].clone()); }
 
-                // [4] P * V: sm_vars.p[B][H] [S×S] × v_proc[B][H] [S×D] → [S×D]
+                // [4] P * V: sm_vars.p[B][H] [S×S] × proj_v_out[B][H] [S×D] → [S×D]
                 let r_pows_x = gen_challenge_vector(&r_var, x_data.q_sim[b][h][0].len());
                 let mut h_x_lows  = Vec::new();
                 let mut h_x_highs = Vec::new();
                 enforce_freivalds(
                     cs.clone(),
                     &sm_vars.p[b][h],
-                    &v_proc[b][h],
+                    &proj_v_out[b][h],
                     &x_data.q_sim[b][h],
                     &x_data.r_matmul[b][h],
                     &self.matmul_x.r_matmul[b][h],
@@ -222,9 +342,42 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                     &r_pows_x,
                     &mut h_x_lows,
                     &mut h_x_highs,
+                    None,
                 )?;
                 global_x_lows.extend(h_x_lows);
                 global_x_highs.extend(h_x_highs);
+
+                // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
+                // Construct [S][H*D] input directly from x_data.q_sim (no separate attn_out_vars)
+                {
+                    let num_heads = x_data.q_sim[b].len();
+                    let s_dim = x_data.q_sim[b][0].len();
+                    let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
+                        (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
+                    }).collect();
+
+                    let d_dim = self.proj_o.q_w_diff[h].len();
+                    let hd_dim = self.proj_o.q_w_diff[h][0].len();
+                    let w_o_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
+                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_o.q_w_diff[h][d][hd])).collect())
+                        .collect();
+                    let proj_o_params = ZenParams {
+                        m: FpVar::Constant(self.proj_o.m_proj),
+                        m_prime: FpVar::Constant(self.proj_o.m_prime_proj),
+                        z_w: FpVar::Constant(self.z_attn_output),
+                        z_x: FpVar::zero(), z_y: FpVar::zero(),
+                        two_k: two_k_var.clone(),
+                    };
+                    let r_pows_po = gen_challenge_vector(&r_var, d_dim);
+                    enforce_freivalds(
+                        cs.clone(), &o_input, &w_o_h_t,
+                        &proj_o_out[b][h], &proj_o_r[b][h],
+                        &self.proj_o.r_out_proj[b][h],
+                        &proj_o_params, &r_pows_po,
+                        &mut global_proj_o_lows, &mut global_proj_o_highs,
+                        Some(&self.proj_o.q_b_diff[h]),
+                    )?;
+                }
             }
         }
 
@@ -250,9 +403,18 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
             final_vars.extend(global_x_lows);
             final_vars.extend(global_x_highs);
 
+            // Projection remainders
+            final_vars.extend(global_proj_q_lows); final_vars.extend(global_proj_q_highs);
+            final_vars.extend(global_proj_k_lows); final_vars.extend(global_proj_k_highs);
+            final_vars.extend(global_proj_v_lows); final_vars.extend(global_proj_v_highs);
+            final_vars.extend(global_proj_o_lows); final_vars.extend(global_proj_o_highs);
+            // Scaling remainders
+            final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
+            final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
+
             // 16-bit remainder pools
-            final_vars.extend(r2_pool); // from r_exp (5D)
-            final_vars.extend(r3_pool); // from r_div (4D)
+            final_vars.extend(r2_pool);
+            final_vars.extend(r3_pool);
         }
 
         Ok(())
@@ -270,9 +432,9 @@ where
     let mut npz = NpzReader::new(f)?;
 
     // ── Inputs ───────────────────────────────────────────────────────────────
-    let q_q_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_q.npy")?.into_dimensionality()?;
-    let q_k_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_k.npy")?.into_dimensionality()?;
-    let q_v_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_v.npy")?.into_dimensionality()?;
+    let q_q_raw: ndarray::Array4<i64> = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_q.npy")?;
+    let q_k_raw: ndarray::Array4<i64> = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_k.npy")?;
+    let q_v_raw: ndarray::Array4<i64> = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("Q_v.npy")?;
     let z_q = E::ScalarField::from(
         npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_q.npy")?.into_scalar(),
     );
@@ -462,13 +624,55 @@ where
         "mask must be [B={b}, S={s}]"
     );
 
+    // === Projection witness loading ===
+    let q_x_input = to_field_3d_i64(&npz.by_name::<_, Ix3>("Q_x_input.npy")?.into_dimensionality()?);
+    let z_x_input = E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_x_input.npy")?.into_scalar());
+
+    let load_projection = |npz: &mut NpzReader<std::fs::File>, suffix: &str| -> Result<ProjectionBundle<E::ScalarField>> {
+        Ok(ProjectionBundle {
+            q_w_diff: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_w_diff_{}.npy", suffix))?.into_dimensionality()?),
+            q_b_diff: to_field_2d_i64(&npz.by_name::<_, Ix2>(&format!("Q_b_diff_{}.npy", suffix))?.into_dimensionality()?),
+            z_w: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_w_{}.npy", suffix))?.into_scalar()),
+            m_proj: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_proj_{}.npy", suffix))?.into_scalar()),
+            m_prime_proj: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_proj_{}.npy", suffix))?.into_scalar()),
+            q_out_proj: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("Q_raw_proj_{}.npy", suffix))?.into_dimensionality()?),
+            r_out_proj: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("R_proj_{}.npy", suffix))?.into_dimensionality()?),
+            z_raw: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_raw_{}.npy", suffix))?.into_scalar()),
+        })
+    };
+
+    let proj_q = load_projection(&mut npz, "q")?;
+    let proj_k = load_projection(&mut npz, "k")?;
+    let proj_v = load_projection(&mut npz, "v")?;
+
+    let load_scaling = |npz: &mut NpzReader<std::fs::File>, suffix: &str| -> Result<ScalingBundle<E::ScalarField>> {
+        Ok(ScalingBundle {
+            q_scaled: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("Q_scaled_{}.npy", suffix))?.into_dimensionality()?),
+            r_scale: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("R_scale_{}.npy", suffix))?.into_dimensionality()?),
+            m_scale: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_scale_{}.npy", suffix))?.into_scalar()),
+            m_prime_scale: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_scale_{}.npy", suffix))?.into_scalar()),
+        })
+    };
+
+    let scale_q = load_scaling(&mut npz, "q")?;
+    let scale_k = load_scaling(&mut npz, "k")?;
+
+    let z_attn_output = E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_attn_output.npy")?.into_scalar());
+    let proj_o = load_projection(&mut npz, "o")?;
+
     Ok(BERTAttentionCircuit {
-        q_q: to_field_4d_i64(&q_q_raw),
-        q_k: to_field_4d_i64(&q_k_raw),
-        q_v: to_field_4d_i64(&q_v_raw),
         z_q,
         z_k,
         z_v,
+        q_x_input,
+        z_x_input,
+        proj_q,
+        proj_k,
+        proj_v,
+        scale_q,
+        scale_k,
+        z_attn_output,
+        proj_o,
         matmul_attn,
         sm,
         matmul_x,
@@ -583,7 +787,12 @@ where
         let proof_size = proof_bytes.len();
 
         // ── [1] Groth16 Verify ───────────────────────────────────────────────
-        let public_inputs = vec![final_circuit.r_challenge];
+        let mut public_inputs = vec![final_circuit.r_challenge];
+        for batch in &final_circuit.q_x_input {
+            for seq in batch {
+                public_inputs.extend(seq.iter().cloned());
+            }
+        }
         let g16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let g16_verify_time = g16_verify_start.elapsed();

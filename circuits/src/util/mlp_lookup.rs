@@ -369,14 +369,12 @@ pub fn prove_lasso_for_range(
         let start = i * chunks_per_poly;
         let end = start + chunks_per_poly;
 
-        let ccl_start = Instant::now();
         let pure_cm = PolyCommitment {
             C: commitment.l_variate_polys_commitment.C[start..end].to_vec(),
         };
         let blinds = PolyCommitmentBlinds {
             blinds: vec![Fr::zero(); chunks_per_poly],
         };
-        metrics.commit_cplink_link_ms += ccl_start.elapsed().as_millis();
         metrics.commitment_cplink_link_bytes += pure_cm.serialized_size(Compress::Yes);
 
         results.push((pure_cm, blinds, full_gens.clone(), sparsity));
@@ -454,14 +452,12 @@ pub fn prove_lasso_for_rmsnorm(
     assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
     let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
 
-    let ccl_start = Instant::now();
     let pure_data_commitment = PolyCommitment {
         C: commitment.l_variate_polys_commitment.C[..chunks_per_poly].to_vec(),
     };
     let blinds = PolyCommitmentBlinds {
         blinds: vec![Fr::zero(); chunks_per_poly],
     };
-    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
     metrics.commitment_cplink_link_bytes = pure_data_commitment.serialized_size(Compress::Yes);
 
     Ok(((pure_data_commitment, blinds, full_gens, sparsity), metrics))
@@ -524,14 +520,12 @@ pub fn prove_lasso_for_gelu(
     assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
     let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
 
-    let ccl_start = Instant::now();
     let pure_data_commitment = PolyCommitment {
         C: commitment.l_variate_polys_commitment.C[..chunks_per_poly].to_vec(),
     };
     let blinds = PolyCommitmentBlinds {
         blinds: vec![Fr::zero(); chunks_per_poly],
     };
-    metrics.commit_cplink_link_ms = ccl_start.elapsed().as_millis();
     metrics.commitment_cplink_link_bytes = pure_data_commitment.serialized_size(Compress::Yes);
 
     Ok(((pure_data_commitment, blinds, full_gens, sparsity), metrics))

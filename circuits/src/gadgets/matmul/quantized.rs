@@ -6,6 +6,29 @@ use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::R1CSVar;
 use crate::gadgets::{activation::gelu::split_remainder_and_push, dot_prod::constraints::*, matmul::constraints::*};
 
+/// Per-head linear projection bundle (Q=X@W_h^T+b_h)
+#[derive(Clone)]
+pub struct ProjectionBundle<F: PrimeField> {
+    pub q_w_diff: Vec<Vec<Vec<F>>>,       // [H][D][H*D] = Q_w - z_w per head
+    pub q_b_diff: Vec<Vec<F>>,             // [H][D]
+    pub z_w: F,                             // weight zero-point
+    pub m_proj: F,                          // ZEN M
+    pub m_prime_proj: F,                    // ZEN M'
+    pub q_out_proj: Vec<Vec<Vec<Vec<F>>>>,  // [B][H][S][D] raw projection output
+    pub r_out_proj: Vec<Vec<Vec<Vec<F>>>>,  // [B][H][S][D] remainder
+    pub z_raw: F,                           // output zero-point
+}
+
+/// Element-wise scaling bundle (Q_proc = Q_raw / scale)
+/// ZEN: Q_proc * 2^k + R = M_scale * (Q_raw - z_raw + M'_scale)
+#[derive(Clone)]
+pub struct ScalingBundle<F: PrimeField> {
+    pub q_scaled: Vec<Vec<Vec<Vec<F>>>>,  // [B][H][S][D]
+    pub r_scale: Vec<Vec<Vec<Vec<F>>>>,   // [B][H][S][D]
+    pub m_scale: F,
+    pub m_prime_scale: F,
+}
+
 #[derive(Clone)]
 pub struct MatmulBundle<F: PrimeField> {
     pub r_mean: Vec<Vec<Vec<Vec<F>>>>,
@@ -200,53 +223,96 @@ pub fn transpose_matrix<F: PrimeField>(m: &MatrixVar<F>) -> MatrixVar<F> {
     transposed
 }
 
+/// Element-wise ZEN rescaling: Q_scaled * 2^k + R = M_scale * (Q_raw - z_raw + M'_scale)
+pub fn enforce_scaling<F: PrimeField>(
+    cs: ConstraintSystemRef<F>,
+    q_raw: &MatrixVar<F>,
+    q_scaled: &MatrixVar<F>,
+    r_scale: &MatrixVar<F>,
+    r_scale_raw: &Vec<Vec<F>>,
+    z_raw: &FpVar<F>,
+    m_scale: &FpVar<F>,
+    m_prime_scale: &FpVar<F>,
+    two_k: &FpVar<F>,
+    h_lows: &mut Vec<FpVar<F>>,
+    h_highs: &mut Vec<FpVar<F>>,
+) -> Result<(), SynthesisError> {
+    for s in 0..q_raw.len() {
+        for d in 0..q_raw[s].len() {
+            let inner = &q_raw[s][d] - z_raw;
+            let rhs = m_scale * (&inner + m_prime_scale);
+            let lhs = &q_scaled[s][d] * two_k + &r_scale[s][d];
+            lhs.enforce_equal(&rhs)?;
+
+            let (low, high) = split_remainder_and_push(
+                cs.clone(), &r_scale[s][d], r_scale_raw[s][d]
+            )?;
+            h_lows.push(low);
+            h_highs.push(high);
+        }
+    }
+    Ok(())
+}
+
 pub fn enforce_freivalds<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
-    w_matrix: &MatrixVar<F>,        
-    x_matrix_t: &MatrixVar<F>,      
-    q_y_sim_head: &MatrixVar<F>,    
-    r_matmul_head: &MatrixVar<F>,   
+    w_matrix: &MatrixVar<F>,
+    x_matrix_t: &MatrixVar<F>,
+    q_y_sim_head: &MatrixVar<F>,
+    r_matmul_head: &MatrixVar<F>,
     r_matmul_raw: &Vec<Vec<F>>,
     params: &ZenParams<F>,
     r_pows: &[FpVar<F>],
     h_r1_low_vars: &mut Vec<FpVar<F>>,
     h_r1_high_vars: &mut Vec<FpVar<F>>,
+    bias: Option<&[F]>,
 ) -> Result<(), SynthesisError> {
-    
+
     // 1. LHS : (Q_y * 2^k + R) * r
-    let qy_r = mat_vec_mul(q_y_sim_head, r_pows)?; 
+    let qy_r = mat_vec_mul(q_y_sim_head, r_pows)?;
     let r_mat_r = mat_vec_mul(r_matmul_head, r_pows)?;
-    
+
     let lhs: Vec<FpVar<F>> = qy_r.iter().zip(r_mat_r.iter())
         .map(|(y, r)| y * &params.two_k + r).collect();
 
     // 2. RHS : M * (G1 - G2 - G3 + Const) * r
-    let rhs = compute_grouped_rhs(
+    let mut rhs = compute_grouped_rhs(
         w_matrix,
-        x_matrix_t, 
-        &params.m, 
-        &params.m_prime, 
-        &params.z_w, 
-        &params.z_x, 
-        &params.z_y, 
+        x_matrix_t,
+        &params.m,
+        &params.m_prime,
+        &params.z_w,
+        &params.z_x,
+        &params.z_y,
         r_pows)?;
+
+    // Bias correction: bias_dot_r = Σ_j bias[j] * r[j], added to each row
+    if let Some(b) = bias {
+        let bias_dot_r: FpVar<F> = b.iter().zip(r_pows.iter())
+            .map(|(bi, ri)| ri * *bi)
+            .fold(FpVar::zero(), |acc, x| acc + x);
+        let m_bias = &params.m * &bias_dot_r;
+        for rhs_i in rhs.iter_mut() {
+            *rhs_i = &*rhs_i + &m_bias;
+        }
+    }
 
     for (l, r) in lhs.iter().zip(rhs.iter()) {
         l.enforce_equal(r)?;
     }
 
-    // 2. 22-bit lookup index
+    // 3. 22-bit lookup index
     for i in 0..r_matmul_head.len() {
         for j in 0..r_matmul_head[i].len() {
             let (low, high) = split_remainder_and_push(
-                cs.clone(), 
-                &r_matmul_head[i][j], 
+                cs.clone(),
+                &r_matmul_head[i][j],
                 r_matmul_raw[i][j]
             )?;
             h_r1_low_vars.push(low);
             h_r1_high_vars.push(high);
         }
     }
-    
+
     Ok(())
 }
