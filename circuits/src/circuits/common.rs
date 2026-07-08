@@ -47,7 +47,6 @@ pub fn lasso_commitment_size<E: Pairing>(lasso_results: &[LassoResult<E>]) -> us
 /// Fine-grained timing and size metrics for a single Lasso prove invocation.
 #[derive(Debug, Clone, Default)]
 pub struct LassoMetrics {
-    pub commit_cplink_link_ms: u128,
     pub commit_proof_ms: u128,
     pub prove_ms: u128,
     pub verify_ms: u128,
@@ -59,7 +58,6 @@ pub struct LassoMetrics {
 /// Aggregated Lasso metrics across multiple invocations.
 #[derive(Debug, Clone, Default)]
 pub struct LassoMetricsAggregate {
-    pub commit_cplink_link_ms: u128,
     pub commit_proof_ms: u128,
     pub prove_ms: u128,
     pub verify_ms: u128,
@@ -71,7 +69,6 @@ pub struct LassoMetricsAggregate {
 
 impl LassoMetricsAggregate {
     pub fn add(&mut self, m: &LassoMetrics) {
-        self.commit_cplink_link_ms += m.commit_cplink_link_ms;
         self.commit_proof_ms += m.commit_proof_ms;
         self.prove_ms += m.prove_ms;
         self.verify_ms += m.verify_ms;
@@ -81,7 +78,6 @@ impl LassoMetricsAggregate {
     }
 
     pub fn add_aggregate(&mut self, other: &LassoMetricsAggregate) {
-        self.commit_cplink_link_ms += other.commit_cplink_link_ms;
         self.commit_proof_ms += other.commit_proof_ms;
         self.prove_ms += other.prove_ms;
         self.verify_ms += other.verify_ms;
@@ -104,7 +100,6 @@ pub struct Groth16Metrics {
 
 pub struct LassoBenchmarkMetrics {
     pub total_ms: u128,
-    pub commit_cplink_link_ms: u128,
     pub commit_proof_ms: u128,
     pub prove_ms: u128,
     pub verify_ms: u128,
@@ -117,7 +112,6 @@ impl LassoBenchmarkMetrics {
     pub fn from_aggregate(agg: &LassoMetricsAggregate) -> Self {
         LassoBenchmarkMetrics {
             total_ms: agg.total_ms,
-            commit_cplink_link_ms: agg.commit_cplink_link_ms,
             commit_proof_ms: agg.commit_proof_ms,
             prove_ms: agg.prove_ms,
             verify_ms: agg.verify_ms,
@@ -165,7 +159,6 @@ impl BenchmarkResult {
                 "}},",
                 "\"lasso\":{{",
                   "\"total_ms\":{l_total},",
-                  "\"commit_cplink_link_ms\":{l_ccl},",
                   "\"commit_proof_ms\":{l_cp},",
                   "\"prove_ms\":{l_p},",
                   "\"verify_ms\":{l_v},",
@@ -192,7 +185,6 @@ impl BenchmarkResult {
             g16_pf     = self.groth16.proof_size_bytes,
             g16_cm     = self.groth16.commitment_size_bytes,
             l_total    = self.lasso.total_ms,
-            l_ccl      = self.lasso.commit_cplink_link_ms,
             l_cp       = self.lasso.commit_proof_ms,
             l_p        = self.lasso.prove_ms,
             l_v        = self.lasso.verify_ms,
