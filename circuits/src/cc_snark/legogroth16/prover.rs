@@ -291,15 +291,27 @@ where
         .collect::<Vec<_>>();
     end_timer!(aux_assignment_time);
 
-    let count_1 = vk.commit_witness_count_1 as usize;
-    let count_2 = vk.commit_witness_count_2 as usize;
+    let d1_idx = &vk.committed_witness_indices_1;
+    let d2_idx = &vk.committed_witness_indices_2;
+    let count_1 = d1_idx.len();
+    let count_2 = d2_idx.len();
 
-    let committed_witnesses_1 = &aux_assignment[..count_1];
-    let committed_witnesses_2 = &aux_assignment[count_1..count_1 + count_2];
-    let uncommitted_witnesses = &aux_assignment[count_1 + count_2..];
+    let committed_witnesses_1: Vec<_> = d1_idx.iter()
+        .map(|&i| aux_assignment[i as usize])
+        .collect();
+    let committed_witnesses_2: Vec<_> = d2_idx.iter()
+        .map(|&i| aux_assignment[i as usize])
+        .collect();
+
+    let committed_set: std::collections::HashSet<u32> =
+        d1_idx.iter().chain(d2_idx.iter()).copied().collect();
+    let uncommitted_witnesses: Vec<_> = (0u32..aux_assignment.len() as u32)
+        .filter(|i| !committed_set.contains(i))
+        .map(|i| aux_assignment[i as usize])
+        .collect();
 
     let l_aux_acc_time = start_timer!(|| "Compute L for aux");
-    let l_aux_acc = E::G1::msm_bigint(&pk_common.l_query, uncommitted_witnesses);
+    let l_aux_acc = E::G1::msm_bigint(&pk_common.l_query, &uncommitted_witnesses);
     end_timer!(l_aux_acc_time);
 
     let v_eta_delta_inv_time = start_timer!(|| "Compute (v1*eta1/delta + v2*eta2/delta) * G1");
@@ -378,8 +390,13 @@ where
     g_d2 += &v2_eta_gamma_inv;
     end_timer!(d2_acc_time);
 
-    let committed_wits_vec_1 = witness_assignment[..count_1].to_vec();
-    let committed_wits_vec_2 = witness_assignment[count_1..count_1 + count_2].to_vec();
+    // Extract committed witnesses by index (not by position)
+    let committed_wits_vec_1: Vec<_> = d1_idx.iter()
+        .map(|&i| witness_assignment[i as usize])
+        .collect();
+    let committed_wits_vec_2: Vec<_> = d2_idx.iter()
+        .map(|&i| witness_assignment[i as usize])
+        .collect();
     drop(aux_assignment);
 
     Ok((

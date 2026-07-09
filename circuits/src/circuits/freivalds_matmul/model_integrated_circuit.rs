@@ -630,12 +630,36 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let proj_o_out = new_matrix_witness_4d(cs.clone(), &w.proj_o.q_out_proj);
     let proj_o_r = new_matrix_witness_4d(cs.clone(), &w.proj_o.r_out_proj);
 
-    // d2: Q(=scale_q_out), K(=scale_k_out), V(=proj_v_out)
+    // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
+    let num_heads = w.proj_q.q_w_diff.len();
+    let w_q_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_q.q_w_diff[h].len();
+        let hd_dim = w.proj_q.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_q.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+    let w_k_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_k.q_w_diff[h].len();
+        let hd_dim = w.proj_k.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_k.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+    let w_v_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_v.q_w_diff[h].len();
+        let hd_dim = w.proj_v.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_v.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+
+    // d2: commit W_Q, W_K, W_V weights
     {
         let mut vars_2 = committed_vars_2.borrow_mut();
-        for batch in &scale_q_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
-        for batch in &scale_k_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
-        for batch in &proj_v_out  { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
+        for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
     }
 
     let (temp_data, params_temp) = w.matmul_temp.alloc_and_setup(cs.clone(), F::zero(), w.z_v, two_k_var);
@@ -674,10 +698,6 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             // === Q Projection: Q_raw_q = X_input @ W_q_h^T + b_q_h ===
             {
                 let d_dim = w.proj_q.q_w_diff[h].len();
-                let hd_dim = w.proj_q.q_w_diff[h][0].len();
-                let w_q_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_q.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_q_params = ZenParams {
                     m: FpVar::Constant(w.proj_q.m_proj),
                     m_prime: FpVar::Constant(w.proj_q.m_prime_proj),
@@ -687,15 +707,11 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                     two_k: two_k_var.clone(),
                 };
                 let r_pows_pq = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_q_h_t, &proj_q_out[b][h], &proj_q_r[b][h], &w.proj_q.r_out_proj[b][h], &proj_q_params, &r_pows_pq, &mut global_proj_q_lows, &mut global_proj_q_highs, Some(&w.proj_q.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_q_vars[h], &proj_q_out[b][h], &proj_q_r[b][h], &w.proj_q.r_out_proj[b][h], &proj_q_params, &r_pows_pq, &mut global_proj_q_lows, &mut global_proj_q_highs, Some(&w.proj_q.q_b_diff[h]))?;
             }
             // === K Projection ===
             {
                 let d_dim = w.proj_k.q_w_diff[h].len();
-                let hd_dim = w.proj_k.q_w_diff[h][0].len();
-                let w_k_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_k.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_k_params = ZenParams {
                     m: FpVar::Constant(w.proj_k.m_proj),
                     m_prime: FpVar::Constant(w.proj_k.m_prime_proj),
@@ -705,15 +721,11 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                     two_k: two_k_var.clone(),
                 };
                 let r_pows_pk = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_k_h_t, &proj_k_out[b][h], &proj_k_r[b][h], &w.proj_k.r_out_proj[b][h], &proj_k_params, &r_pows_pk, &mut global_proj_k_lows, &mut global_proj_k_highs, Some(&w.proj_k.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_k_vars[h], &proj_k_out[b][h], &proj_k_r[b][h], &w.proj_k.r_out_proj[b][h], &proj_k_params, &r_pows_pk, &mut global_proj_k_lows, &mut global_proj_k_highs, Some(&w.proj_k.q_b_diff[h]))?;
             }
             // === V Projection ===
             {
                 let d_dim = w.proj_v.q_w_diff[h].len();
-                let hd_dim = w.proj_v.q_w_diff[h][0].len();
-                let w_v_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_v.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_v_params = ZenParams {
                     m: FpVar::Constant(w.proj_v.m_proj),
                     m_prime: FpVar::Constant(w.proj_v.m_prime_proj),
@@ -723,7 +735,7 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                     two_k: two_k_var.clone(),
                 };
                 let r_pows_pv = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_v_h_t, &proj_v_out[b][h], &proj_v_r[b][h], &w.proj_v.r_out_proj[b][h], &proj_v_params, &r_pows_pv, &mut global_proj_v_lows, &mut global_proj_v_highs, Some(&w.proj_v.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_v_vars[h], &proj_v_out[b][h], &proj_v_r[b][h], &w.proj_v.r_out_proj[b][h], &proj_v_params, &r_pows_pv, &mut global_proj_v_lows, &mut global_proj_v_highs, Some(&w.proj_v.q_b_diff[h]))?;
             }
             // === Q Scaling: Q_proc = Q_raw_q / scale ===
             {
@@ -972,12 +984,36 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     let proj_o_out = new_matrix_witness_4d(cs.clone(), &w.proj_o.q_out_proj);
     let proj_o_r = new_matrix_witness_4d(cs.clone(), &w.proj_o.r_out_proj);
 
-    // d2: Q(=scale_q_out), K(=scale_k_out), V(=proj_v_out)
+    // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
+    let num_heads = w.proj_q.q_w_diff.len();
+    let w_q_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_q.q_w_diff[h].len();
+        let hd_dim = w.proj_q.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_q.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+    let w_k_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_k.q_w_diff[h].len();
+        let hd_dim = w.proj_k.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_k.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+    let w_v_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_v.q_w_diff[h].len();
+        let hd_dim = w.proj_v.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_v.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+
+    // d2: commit W_Q, W_K, W_V weights
     {
         let mut vars_2 = committed_vars_2.borrow_mut();
-        for batch in &scale_q_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
-        for batch in &scale_k_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
-        for batch in &proj_v_out  { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
+        for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
     }
 
     let (attn_data, params_attn) = w.matmul_attn.alloc_and_setup(cs.clone(), w.z_q, w.z_k, two_k_var);
@@ -1003,44 +1039,32 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
             // === Q Projection ===
             {
                 let d_dim = w.proj_q.q_w_diff[h].len();
-                let hd_dim = w.proj_q.q_w_diff[h][0].len();
-                let w_q_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_q.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_q_params = ZenParams {
                     m: FpVar::Constant(w.proj_q.m_proj), m_prime: FpVar::Constant(w.proj_q.m_prime_proj),
                     z_w: FpVar::Constant(w.z_x_input), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
                 };
                 let r_pows_pq = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_q_h_t, &proj_q_out[b][h], &proj_q_r[b][h], &w.proj_q.r_out_proj[b][h], &proj_q_params, &r_pows_pq, &mut global_proj_q_lows, &mut global_proj_q_highs, Some(&w.proj_q.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_q_vars[h], &proj_q_out[b][h], &proj_q_r[b][h], &w.proj_q.r_out_proj[b][h], &proj_q_params, &r_pows_pq, &mut global_proj_q_lows, &mut global_proj_q_highs, Some(&w.proj_q.q_b_diff[h]))?;
             }
             // === K Projection ===
             {
                 let d_dim = w.proj_k.q_w_diff[h].len();
-                let hd_dim = w.proj_k.q_w_diff[h][0].len();
-                let w_k_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_k.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_k_params = ZenParams {
                     m: FpVar::Constant(w.proj_k.m_proj), m_prime: FpVar::Constant(w.proj_k.m_prime_proj),
                     z_w: FpVar::Constant(w.z_x_input), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
                 };
                 let r_pows_pk = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_k_h_t, &proj_k_out[b][h], &proj_k_r[b][h], &w.proj_k.r_out_proj[b][h], &proj_k_params, &r_pows_pk, &mut global_proj_k_lows, &mut global_proj_k_highs, Some(&w.proj_k.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_k_vars[h], &proj_k_out[b][h], &proj_k_r[b][h], &w.proj_k.r_out_proj[b][h], &proj_k_params, &r_pows_pk, &mut global_proj_k_lows, &mut global_proj_k_highs, Some(&w.proj_k.q_b_diff[h]))?;
             }
             // === V Projection ===
             {
                 let d_dim = w.proj_v.q_w_diff[h].len();
-                let hd_dim = w.proj_v.q_w_diff[h][0].len();
-                let w_v_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_v.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_v_params = ZenParams {
                     m: FpVar::Constant(w.proj_v.m_proj), m_prime: FpVar::Constant(w.proj_v.m_prime_proj),
                     z_w: FpVar::Constant(w.z_x_input), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
                 };
                 let r_pows_pv = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_v_h_t, &proj_v_out[b][h], &proj_v_r[b][h], &w.proj_v.r_out_proj[b][h], &proj_v_params, &r_pows_pv, &mut global_proj_v_lows, &mut global_proj_v_highs, Some(&w.proj_v.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &x_input_vars[b], &w_v_vars[h], &proj_v_out[b][h], &proj_v_r[b][h], &w.proj_v.r_out_proj[b][h], &proj_v_params, &r_pows_pv, &mut global_proj_v_lows, &mut global_proj_v_highs, Some(&w.proj_v.q_b_diff[h]))?;
             }
             // === Q Scaling ===
             {
@@ -1346,15 +1370,20 @@ where
     println!("\n=== [Model Integrated] {} layers, {:?} attn, {:?} norm ===",
         discovered.num_layers, discovered.attn_variant, discovered.norm_variant);
 
-    // Dry-run → d1/d2 count
-    let (num_d1, num_d2) = {
+    // Dry-run → d1/d2 indices
+    let (d1_indices, d2_indices) = {
         let temp = load_model_integrated_circuit::<E>(&discovered)?;
         let v1 = Rc::clone(&temp.committed_vars);
         let v2 = Rc::clone(&temp.committed_vars_2);
         let cs = ConstraintSystem::<Fr>::new_ref();
         temp.generate_constraints(cs)?;
-        (v1.borrow().len() as u32, v2.borrow().len() as u32)
+        (
+            crate::util::utils::extract_witness_indices(&v1.borrow()),
+            crate::util::utils::extract_witness_indices(&v2.borrow()),
+        )
     };
+    let num_d1 = d1_indices.len() as u32;
+    let num_d2 = d2_indices.len() as u32;
     println!("Commit counts: d1={}, d2={}", num_d1, num_d2);
 
     let circuit = load_model_integrated_circuit::<E>(&discovered)?;
@@ -1362,7 +1391,7 @@ where
     // [0] Setup
     println!("=== [0] LegoGroth16 Setup ===");
     let setup_start = Instant::now();
-    let params = generate_random_parameters::<E, _, _>(circuit.clone(), num_d1, num_d2, &mut rng)
+    let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &mut rng)
         .map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
     let setup_time = setup_start.elapsed();
     let pvk = prepare_verifying_key::<E>(&params.vk);

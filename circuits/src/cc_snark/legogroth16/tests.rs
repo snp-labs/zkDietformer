@@ -150,18 +150,23 @@ where
     fn run<E: Pairing>(n_iters: usize, c1: u32, c2: u32) {
         let mut rng = StdRng::seed_from_u64(0u64);
         let circuit = MySillyCircuit { a: None, b: None };
-        // let total_c = c1 + c2;
+
+        // Build index arrays from counts (test circuits allocate witnesses sequentially)
+        let idx1: Vec<u32> = (0..c1).collect();
+        let idx2: Vec<u32> = (c1..c1 + c2).collect();
 
         // CP_link is connected to Group 1, so we need generators for c1 + 1 (hiding)
         let link_gens = get_link_public_gens(&mut rng, c1 + 1);
 
         // Test error when not enough witnesses
+        let bad_idx1: Vec<u32> = (0..2).collect();
+        let bad_idx2: Vec<u32> = (2..3).collect();
         assert_eq!(
             generate_random_parameters_incl_cp_link::<E, _, _>(
                 circuit.clone(),
                 link_gens.clone(),
-                2, // trying to commit 2 to group 1
-                1, // trying to commit 1 to group 2 (total 3, but circuit has 2)
+                &bad_idx1,
+                &bad_idx2,
                 &mut rng,
             )
             .unwrap_err(),
@@ -169,7 +174,7 @@ where
         );
 
         assert_eq!(
-            generate_random_parameters::<E, _, _>(circuit.clone(), 2, 1, &mut rng).unwrap_err(),
+            generate_random_parameters::<E, _, _>(circuit.clone(), &bad_idx1, &bad_idx2, &mut rng).unwrap_err(),
             Error::InsufficientWitnessesForCommitment(2, 3)
         );
 
@@ -177,15 +182,15 @@ where
         let params_link = generate_random_parameters_incl_cp_link::<E, _, _>(
             circuit.clone(),
             link_gens.clone(),
-            c1,
-            c2,
+            &idx1,
+            &idx2,
             &mut rng,
         )
         .unwrap();
 
         // Parameters for generating proof without CP_link
         let params =
-            generate_random_parameters::<E, _, _>(circuit.clone(), c1, c2, &mut rng).unwrap();
+            generate_random_parameters::<E, _, _>(circuit.clone(), &idx1, &idx2, &mut rng).unwrap();
 
         let pvk_link = prepare_verifying_key::<E>(&params_link.vk.groth16_vk);
         let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -369,16 +374,19 @@ where
         d: None,
     };
 
+    let idx1: Vec<u32> = (0..c1).collect();
+    let idx2: Vec<u32> = (c1..c1 + c2).collect();
+
     let params_link = generate_random_parameters_incl_cp_link::<E, _, _>(
         circuit.clone(),
         link_gens.clone(),
-        c1,
-        c2,
+        &idx1,
+        &idx2,
         &mut rng,
     )
     .unwrap();
 
-    let params = generate_random_parameters::<E, _, _>(circuit, c1, c2, &mut rng).unwrap();
+    let params = generate_random_parameters::<E, _, _>(circuit, &idx1, &idx2, &mut rng).unwrap();
 
     let pvk_link = prepare_verifying_key::<E>(&params_link.vk.groth16_vk);
     let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -477,16 +485,19 @@ where
         d: None,
     };
 
+    let idx1: Vec<u32> = (0..c1).collect();
+    let idx2: Vec<u32> = (c1..c1 + c2).collect();
+
     let params_link = generate_random_parameters_incl_cp_link::<E, _, _>(
         circuit.clone(),
         link_gens.clone(),
-        c1,
-        c2,
+        &idx1,
+        &idx2,
         &mut rng,
     )
     .unwrap();
 
-    let params = generate_random_parameters::<E, _, _>(circuit, c1, c2, &mut rng).unwrap();
+    let params = generate_random_parameters::<E, _, _>(circuit, &idx1, &idx2, &mut rng).unwrap();
 
     let pvk_link = prepare_verifying_key::<E>(&params_link.vk.groth16_vk);
     let pvk = prepare_verifying_key::<E>(&params.vk);

@@ -1,6 +1,8 @@
 use crate::cc_snark::legogroth16::*;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM, pairing::Pairing};
 use ark_ff::PrimeField;
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_relations::r1cs::Variable;
 use ark_serialize::CanonicalSerialize;
 use ark_std::{ops::AddAssign, vec::Vec};
 use sha3::{Sha3_256,Digest, digest::Input};
@@ -121,4 +123,16 @@ where
     let seed = hasher.result(); // hash 결과값
 
     E::ScalarField::from_le_bytes_mod_order(&seed)
+}
+
+/// Extract witness indices from committed FpVar slices.
+/// Each FpVar must be an allocated Witness variable.
+pub fn extract_witness_indices<F: PrimeField>(vars: &[FpVar<F>]) -> Vec<u32> {
+    vars.iter().map(|v| match v {
+        FpVar::Var(alloc) => match alloc.variable {
+            Variable::Witness(idx) => idx as u32,
+            other => panic!("Expected Witness variable, got {:?}", other),
+        },
+        _ => panic!("Expected allocated FpVar, got Constant"),
+    }).collect()
 }

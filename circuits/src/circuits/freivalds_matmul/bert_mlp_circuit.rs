@@ -51,14 +51,15 @@ where
         let e2e_start = Instant::now();
         println!("\n=== [BERT MLP] Processing: {:?} ===", file_path);
 
-        // ── Dry-run ──────────────────────────────────────────────────────────
-        let num_commit_1 = {
+        // ── Dry-run: extract committed witness indices ───────────────────────
+        let d1_indices = {
             let temp = load_bert_mlp_circuit::<E>(file_path)?;
             let vars_ptr = Rc::clone(&temp.committed_vars);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
-            vars_ptr.borrow().len() as u32
+            crate::util::utils::extract_witness_indices(&vars_ptr.borrow())
         };
+        let num_commit_1 = d1_indices.len() as u32;
         println!("Commit count d1={}", num_commit_1);
 
         let sample_circuit = load_bert_mlp_circuit::<E>(file_path)?;
@@ -68,8 +69,8 @@ where
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
-            num_commit_1,
-            0, // no d2 group for MLP
+            &d1_indices,
+            &[], // no d2 group for MLP
             &mut rng,
         )
         .map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;

@@ -81,6 +81,11 @@ pub struct VerifyingKey<E: Pairing> {
     pub commit_witness_count_1: u32,
     /// No of witness to commit in Group 2
     pub commit_witness_count_2: u32,
+
+    /// Actual witness indices for Group 1 (d1)
+    pub committed_witness_indices_1: Vec<u32>,
+    /// Actual witness indices for Group 2 (d2)
+    pub committed_witness_indices_2: Vec<u32>,
     // ------------------------
 }
 
@@ -108,6 +113,8 @@ impl<E: Pairing> Default for VerifyingKey<E> {
             eta2_gamma_inv_g1: E::G1Affine::default(), // Modified
             commit_witness_count_1: 0,                 // Modified
             commit_witness_count_2: 0,                 // Modified
+            committed_witness_indices_1: Vec::new(),
+            committed_witness_indices_2: Vec::new(),
         }
     }
 }

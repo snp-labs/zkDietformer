@@ -214,20 +214,25 @@ where
         // Load
         let circuit = load_block_integrated_circuit::<E>(&discovered, layer_idx)?;
 
-        // Dry-run → d1/d2 count
-        let (num_d1, num_d2) = {
+        // Dry-run → d1/d2 indices
+        let (d1_indices, d2_indices) = {
             let temp = load_block_integrated_circuit::<E>(&discovered, layer_idx)?;
             let v1 = Rc::clone(&temp.committed_vars);
             let v2 = Rc::clone(&temp.committed_vars_2);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
-            (v1.borrow().len() as u32, v2.borrow().len() as u32)
+            (
+                crate::util::utils::extract_witness_indices(&v1.borrow()),
+                crate::util::utils::extract_witness_indices(&v2.borrow()),
+            )
         };
+        let num_d1 = d1_indices.len() as u32;
+        let num_d2 = d2_indices.len() as u32;
         println!("  Commit counts: d1={}, d2={}", num_d1, num_d2);
 
         // [0] Setup
         let setup_start = Instant::now();
-        let params = generate_random_parameters::<E, _, _>(circuit.clone(), num_d1, num_d2, &mut rng)
+        let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &mut rng)
             .map_err(|e| anyhow::anyhow!("Setup L{} failed: {:?}", layer_idx, e))?;
         let setup_time = setup_start.elapsed();
         let pvk = prepare_verifying_key::<E>(&params.vk);

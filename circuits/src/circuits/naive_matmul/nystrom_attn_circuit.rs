@@ -76,30 +76,36 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
 
         let v_proc = new_matrix_witness_4d(cs.clone(), &inner.proj_v.q_out_proj);
 
-        // Populate committed_vars_2 with q_q, q_k, q_v witnesses (d2 group)
+        // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
+        let num_heads = inner.proj_q.q_w_diff.len();
+        let w_q_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = inner.proj_q.q_w_diff[h].len();
+            let hd_dim = inner.proj_q.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(inner.proj_q.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+        let w_k_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = inner.proj_k.q_w_diff[h].len();
+            let hd_dim = inner.proj_k.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(inner.proj_k.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+        let w_v_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = inner.proj_v.q_w_diff[h].len();
+            let hd_dim = inner.proj_v.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(inner.proj_v.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+
+        // d2: commit W_Q, W_K, W_V weights
         {
             let mut vars_2 = inner.committed_vars_2.borrow_mut();
-            for batch in &q_proc {
-                for head in batch {
-                    for seq in head {
-                        vars_2.extend(seq.iter().cloned());
-                    }
-                }
-            }
-            for batch in &k_proc {
-                for head in batch {
-                    for seq in head {
-                        vars_2.extend(seq.iter().cloned());
-                    }
-                }
-            }
-            for batch in &v_proc {
-                for head in batch {
-                    for seq in head {
-                        vars_2.extend(seq.iter().cloned());
-                    }
-                }
-            }
+            for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+            for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+            for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         }
 
         // === Projection input allocation (public input) ===
@@ -173,11 +179,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
 
                 // Q Projection
                 {
-                    let d_dim = inner.proj_q.q_w_diff[h].len();
-                    let hd_dim = inner.proj_q.q_w_diff[h][0].len();
-                    let w_q_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_q.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_q_params = ZenParams {
                         m: FpVar::Constant(inner.proj_q.m_proj),
                         m_prime: FpVar::Constant(inner.proj_q.m_prime_proj),
@@ -187,7 +188,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                         two_k: two_k_var.clone(),
                     };
                     enforce_naive_matmul(
-                        cs.clone(), &x_input_vars[b], &w_q_h_t,
+                        cs.clone(), &x_input_vars[b], &w_q_vars[h],
                         &proj_q_out[b][h], &proj_q_r[b][h],
                         &inner.proj_q.r_out_proj[b][h],
                         &proj_q_params,
@@ -198,11 +199,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
 
                 // K Projection
                 {
-                    let d_dim = inner.proj_k.q_w_diff[h].len();
-                    let hd_dim = inner.proj_k.q_w_diff[h][0].len();
-                    let w_k_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_k.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_k_params = ZenParams {
                         m: FpVar::Constant(inner.proj_k.m_proj),
                         m_prime: FpVar::Constant(inner.proj_k.m_prime_proj),
@@ -212,7 +208,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                         two_k: two_k_var.clone(),
                     };
                     enforce_naive_matmul(
-                        cs.clone(), &x_input_vars[b], &w_k_h_t,
+                        cs.clone(), &x_input_vars[b], &w_k_vars[h],
                         &proj_k_out[b][h], &proj_k_r[b][h],
                         &inner.proj_k.r_out_proj[b][h],
                         &proj_k_params,
@@ -223,11 +219,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
 
                 // V Projection
                 {
-                    let d_dim = inner.proj_v.q_w_diff[h].len();
-                    let hd_dim = inner.proj_v.q_w_diff[h][0].len();
-                    let w_v_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(inner.proj_v.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_v_params = ZenParams {
                         m: FpVar::Constant(inner.proj_v.m_proj),
                         m_prime: FpVar::Constant(inner.proj_v.m_prime_proj),
@@ -237,7 +228,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                         two_k: two_k_var.clone(),
                     };
                     enforce_naive_matmul(
-                        cs.clone(), &x_input_vars[b], &w_v_h_t,
+                        cs.clone(), &x_input_vars[b], &w_v_vars[h],
                         &proj_v_out[b][h], &proj_v_r[b][h],
                         &inner.proj_v.r_out_proj[b][h],
                         &proj_v_params,
@@ -696,15 +687,20 @@ where
         let e2e_start = Instant::now();
         println!("\n=== [Nystrom NOT] Processing: {:?} ===", file_path);
 
-        // ── Dry-run: count committed witnesses ───────────────────────────────
-        let (num_commit_1, num_commit_2) = {
+        // ── Dry-run: extract committed witness indices ───────────────────────
+        let (d1_indices, d2_indices) = {
             let temp_circuit = load_nystrom_circuit::<E>(&file_path)?;
             let vars1_ptr = Rc::clone(&temp_circuit.committed_vars);
             let vars2_ptr = Rc::clone(&temp_circuit.committed_vars_2);
             let cs_analyze = ConstraintSystem::<Fr>::new_ref();
             NystromAttentionCircuitNot(temp_circuit).generate_constraints(cs_analyze)?;
-            (vars1_ptr.borrow().len() as u32, vars2_ptr.borrow().len() as u32)
+            (
+                crate::util::utils::extract_witness_indices(&vars1_ptr.borrow()),
+                crate::util::utils::extract_witness_indices(&vars2_ptr.borrow()),
+            )
         };
+        let num_commit_1 = d1_indices.len() as u32;
+        let num_commit_2 = d2_indices.len() as u32;
         println!("Commit counts: d1={:?}, d2={:?}", num_commit_1, num_commit_2);
 
         let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
@@ -714,8 +710,8 @@ where
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             NystromAttentionCircuitNot(sample_circuit.clone()),
-            num_commit_1,
-            num_commit_2,
+            &d1_indices,
+            &d2_indices,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();

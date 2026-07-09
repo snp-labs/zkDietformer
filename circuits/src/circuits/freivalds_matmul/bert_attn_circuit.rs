@@ -92,7 +92,7 @@ pub struct BERTAttentionCircuit<F: PrimeField> {
 
     /// d1 committed group: Lasso-linked wires (remainder splits, softmax indices)
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
-    /// d2 committed group: Q/K/V witnesses committed via v2, NOT CP-linked to Lasso
+    /// d2 committed group: W_Q, W_K, W_V weights committed via v2, NOT CP-linked to Lasso
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 
@@ -127,12 +127,36 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
         let scale_k_out = new_matrix_witness_4d(cs.clone(), &self.scale_k.q_scaled);
         let scale_k_r = new_matrix_witness_4d(cs.clone(), &self.scale_k.r_scale);
 
-        // d2: commit Q(=scale_q_out), K(=scale_k_out), V(=proj_v_out)
+        // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
+        let num_heads = self.proj_q.q_w_diff.len();
+        let w_q_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = self.proj_q.q_w_diff[h].len();
+            let hd_dim = self.proj_q.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(self.proj_q.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+        let w_k_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = self.proj_k.q_w_diff[h].len();
+            let hd_dim = self.proj_k.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(self.proj_k.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+        let w_v_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = self.proj_v.q_w_diff[h].len();
+            let hd_dim = self.proj_v.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(self.proj_v.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+
+        // d2: commit W_Q, W_K, W_V weights
         {
             let mut vars_2 = self.committed_vars_2.borrow_mut();
-            for batch in &scale_q_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
-            for batch in &scale_k_out { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
-            for batch in &proj_v_out  { for head in batch { for seq in head { vars_2.extend(seq.iter().cloned()); } } }
+            for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+            for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+            for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         }
 
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &self.proj_o.q_out_proj);
@@ -172,10 +196,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 // Q Projection
                 {
                     let d_dim = self.proj_q.q_w_diff[h].len();
-                    let hd_dim = self.proj_q.q_w_diff[h][0].len();
-                    let w_q_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_q.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_q_params = ZenParams {
                         m: FpVar::Constant(self.proj_q.m_proj),
                         m_prime: FpVar::Constant(self.proj_q.m_prime_proj),
@@ -185,7 +205,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                     };
                     let r_pows_pq = gen_challenge_vector(&r_var, d_dim);
                     enforce_freivalds(
-                        cs.clone(), &x_input_vars[b], &w_q_h_t,
+                        cs.clone(), &x_input_vars[b], &w_q_vars[h],
                         &proj_q_out[b][h], &proj_q_r[b][h],
                         &self.proj_q.r_out_proj[b][h],
                         &proj_q_params, &r_pows_pq,
@@ -196,10 +216,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 // K Projection
                 {
                     let d_dim = self.proj_k.q_w_diff[h].len();
-                    let hd_dim = self.proj_k.q_w_diff[h][0].len();
-                    let w_k_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_k.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_k_params = ZenParams {
                         m: FpVar::Constant(self.proj_k.m_proj),
                         m_prime: FpVar::Constant(self.proj_k.m_prime_proj),
@@ -209,7 +225,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                     };
                     let r_pows_pk = gen_challenge_vector(&r_var, d_dim);
                     enforce_freivalds(
-                        cs.clone(), &x_input_vars[b], &w_k_h_t,
+                        cs.clone(), &x_input_vars[b], &w_k_vars[h],
                         &proj_k_out[b][h], &proj_k_r[b][h],
                         &self.proj_k.r_out_proj[b][h],
                         &proj_k_params, &r_pows_pk,
@@ -220,10 +236,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 // V Projection
                 {
                     let d_dim = self.proj_v.q_w_diff[h].len();
-                    let hd_dim = self.proj_v.q_w_diff[h][0].len();
-                    let w_v_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_v.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_v_params = ZenParams {
                         m: FpVar::Constant(self.proj_v.m_proj),
                         m_prime: FpVar::Constant(self.proj_v.m_prime_proj),
@@ -233,7 +245,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                     };
                     let r_pows_pv = gen_challenge_vector(&r_var, d_dim);
                     enforce_freivalds(
-                        cs.clone(), &x_input_vars[b], &w_v_h_t,
+                        cs.clone(), &x_input_vars[b], &w_v_vars[h],
                         &proj_v_out[b][h], &proj_v_r[b][h],
                         &self.proj_v.r_out_proj[b][h],
                         &proj_v_params, &r_pows_pv,
@@ -731,15 +743,20 @@ where
         let e2e_start = Instant::now();
         println!("\n=== [BERT Attention] Processing: {:?} ===", file_path);
 
-        // ── Dry-run: count committed witnesses ───────────────────────────────
-        let (num_commit_1, num_commit_2) = {
+        // ── Dry-run: extract committed witness indices ───────────────────────
+        let (d1_indices, d2_indices) = {
             let temp = load_bert_attention_circuit::<E>(file_path)?;
             let v1_ptr = Rc::clone(&temp.committed_vars);
             let v2_ptr = Rc::clone(&temp.committed_vars_2);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
-            (v1_ptr.borrow().len() as u32, v2_ptr.borrow().len() as u32)
+            (
+                crate::util::utils::extract_witness_indices(&v1_ptr.borrow()),
+                crate::util::utils::extract_witness_indices(&v2_ptr.borrow()),
+            )
         };
+        let num_commit_1 = d1_indices.len() as u32;
+        let num_commit_2 = d2_indices.len() as u32;
         println!("Commit counts: d1={}, d2={}", num_commit_1, num_commit_2);
 
         let sample_circuit = load_bert_attention_circuit::<E>(file_path)?;
@@ -749,8 +766,8 @@ where
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
-            num_commit_1,
-            num_commit_2,
+            &d1_indices,
+            &d2_indices,
             &mut rng,
         )
         .map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;

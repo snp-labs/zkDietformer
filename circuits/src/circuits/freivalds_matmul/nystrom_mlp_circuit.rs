@@ -568,14 +568,15 @@ where
         let e2e_start = Instant::now();
         println!("\n=== Processing witness NPZ: {:?} ===", file_path);
 
-        // ── Dry-run: count committed witnesses ───────────────────────────────
-        let num_commit_1 = {
+        // ── Dry-run: extract committed witness indices ───────────────────────
+        let d1_indices = {
             let temp_circuit = load_nystrom_circuit::<E>(&file_path)?;
             let vars_ptr = Rc::clone(&temp_circuit.committed_vars);
             let cs_analyze = ConstraintSystem::<Fr>::new_ref();
             temp_circuit.generate_constraints(cs_analyze)?;
-            vars_ptr.borrow().len() as u32
+            crate::util::utils::extract_witness_indices(&vars_ptr.borrow())
         };
+        let num_commit_1 = d1_indices.len() as u32;
         println!("최종 측정된 커밋 개수: {:?}", num_commit_1);
 
         let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
@@ -585,8 +586,8 @@ where
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
-            num_commit_1,
-            0,
+            &d1_indices,
+            &[],
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
@@ -770,15 +771,16 @@ where
         let e2e_start = Instant::now();
         println!("\n=== [LayerNorm] Processing witness NPZ: {:?} ===", file_path);
 
-        // ── Dry-run: count committed witnesses ───────────────────────────────
+        // ── Dry-run: extract committed witness indices ───────────────────────
         let dry_run_start = Instant::now();
-        let num_commit_1 = {
+        let d1_indices = {
             let temp_circuit = load_nystrom_layernorm_circuit::<E>(&file_path)?;
             let vars_ptr = Rc::clone(&temp_circuit.committed_vars);
             let cs_analyze = ConstraintSystem::<Fr>::new_ref();
             temp_circuit.generate_constraints(cs_analyze)?;
-            vars_ptr.borrow().len() as u32
+            crate::util::utils::extract_witness_indices(&vars_ptr.borrow())
         };
+        let num_commit_1 = d1_indices.len() as u32;
         println!("  - Dry-run commit count: {} ({:?})", num_commit_1, dry_run_start.elapsed());
 
         let load_start = Instant::now();
@@ -790,8 +792,8 @@ where
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
-            num_commit_1,
-            0,
+            &d1_indices,
+            &[],
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();

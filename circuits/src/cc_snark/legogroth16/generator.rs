@@ -11,6 +11,7 @@ use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError, SynthesisMode,
 };
 use ark_std::{cfg_into_iter, cfg_iter, end_timer, rand::Rng, start_timer, vec};
+use std::collections::HashSet;
 
 use crate::cc_snark::legogroth16::r1cs_to_qap::R1CStoQAP;
 
@@ -19,13 +20,13 @@ use rayon::prelude::*;
 
 #[inline]
 /// Generates random parameters including CP_link.
-/// `commit_witness_count_1`: number of witnesses in Group 1 (linked/committed).
-/// `commit_witness_count_2`: number of witnesses in Group 2 (committed).
+/// `committed_witness_indices_1`: witness indices for Group 1 (linked/committed).
+/// `committed_witness_indices_2`: witness indices for Group 2 (committed).
 pub fn generate_random_parameters_incl_cp_link<E, C, R>(
     circuit: C,
     link_gens: LinkPublicGenerators<E>,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKeyWithLink<E>>
 where
@@ -36,8 +37,8 @@ where
     generate_random_parameters_incl_cp_link_with_reduction::<E, C, R, LibsnarkReduction>(
         circuit,
         link_gens,
-        commit_witness_count_1,
-        commit_witness_count_2,
+        committed_witness_indices_1,
+        committed_witness_indices_2,
         rng,
     )
 }
@@ -46,8 +47,8 @@ where
 /// Generates random parameters.
 pub fn generate_random_parameters<E, C, R>(
     circuit: C,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKey<E>>
 where
@@ -57,8 +58,8 @@ where
 {
     generate_random_parameters_with_reduction::<E, C, R, LibsnarkReduction>(
         circuit,
-        commit_witness_count_1,
-        commit_witness_count_2,
+        committed_witness_indices_1,
+        committed_witness_indices_2,
         rng,
     )
 }
@@ -66,8 +67,8 @@ where
 #[inline]
 pub fn generate_random_parameters_with_reduction<E, C, R, QAP>(
     circuit: C,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKey<E>>
 where
@@ -90,8 +91,8 @@ where
         eta2,
         g1_generator,
         g2_generator,
-        commit_witness_count_1,
-        commit_witness_count_2,
+        committed_witness_indices_1,
+        committed_witness_indices_2,
         rng,
     )
 }
@@ -100,8 +101,8 @@ where
 pub fn generate_random_parameters_incl_cp_link_with_reduction<E, C, R, QAP>(
     circuit: C,
     link_gens: LinkPublicGenerators<E>,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKeyWithLink<E>>
 where
@@ -125,8 +126,8 @@ where
         g1_generator,
         g2_generator,
         link_gens,
-        commit_witness_count_1,
-        commit_witness_count_2,
+        committed_witness_indices_1,
+        committed_witness_indices_2,
         rng,
     )
 }
@@ -143,8 +144,8 @@ pub fn generate_parameters_incl_cp_link_with_qap<E, C, R, QAP>(
     g1_generator: E::G1,
     g2_generator: E::G2,
     link_gens: LinkPublicGenerators<E>,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKeyWithLink<E>>
 where
@@ -164,8 +165,8 @@ where
             eta2,
             g1_generator,
             g2_generator,
-            commit_witness_count_1,
-            commit_witness_count_2,
+            committed_witness_indices_1,
+            committed_witness_indices_2,
             rng,
         )?;
 
@@ -173,8 +174,9 @@ where
     // NOTE: This implementation assumes CP_Link is connected to Group 1 witnesses (d1).
     // If you need to link Group 2 or both, the matrix construction below needs adjustment.
 
+    let commit_witness_count_1 = committed_witness_indices_1.len() as u32;
     let link_rows = 2; // comparing d1 and link_d
-    let link_cols = commit_witness_count_1 as u32 + 2; // Group 1 witnesses + 1 hiding factor
+    let link_cols = commit_witness_count_1 + 2; // Group 1 witnesses + 1 hiding factor
     let link_pp = PP::<E::G1Affine, E::G2Affine> {
         l: link_rows,
         t: link_cols,
@@ -227,8 +229,8 @@ pub fn generate_parameters_with_qap<E, C, R, QAP>(
     eta2: E::ScalarField,
     g1_generator: E::G1,
     g2_generator: E::G2,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKey<E>>
 where
@@ -247,8 +249,8 @@ where
         eta2,
         g1_generator,
         g2_generator,
-        commit_witness_count_1,
-        commit_witness_count_2,
+        committed_witness_indices_1,
+        committed_witness_indices_2,
         rng,
     )?;
     Ok(pk)
@@ -266,8 +268,8 @@ fn generate_parameters_and_extra_info_with_qap<E, C, R, QAP>(
     eta2: E::ScalarField, // For Group 2
     g1_generator: E::G1,
     g2_generator: E::G2,
-    commit_witness_count_1: u32,
-    commit_witness_count_2: u32,
+    committed_witness_indices_1: &[u32],
+    committed_witness_indices_2: &[u32],
     rng: &mut R,
 ) -> Result<(ProvingKey<E>, usize)>
 where
@@ -277,6 +279,9 @@ where
     QAP: R1CStoQAP,
 {
     type D<F> = GeneralEvaluationDomain<F>;
+
+    let commit_witness_count_1 = committed_witness_indices_1.len() as u32;
+    let commit_witness_count_2 = committed_witness_indices_2.len() as u32;
 
     let setup_time = start_timer!(|| "Groth16::Generator");
     let cs = ConstraintSystem::new_ref();
@@ -298,19 +303,18 @@ where
     end_timer!(domain_time);
 
     let num_instance_variables = cs.num_instance_variables();
+    let num_witnesses = cs.num_witness_variables();
     // Check if we have enough witnesses for both groups
-    if cs.num_witness_variables() < (commit_witness_count_1 + commit_witness_count_2) as usize {
-        // You might want to update the Error enum to reflect 2 args,
-        // passing total sum for now to match original Error struct
+    if num_witnesses < (commit_witness_count_1 + commit_witness_count_2) as usize {
         return Err(
             crate::cc_snark::legogroth16::error::Error::InsufficientWitnessesForCommitment(
-                cs.num_witness_variables(),
+                num_witnesses,
                 (commit_witness_count_1 + commit_witness_count_2) as usize,
             ),
         );
     }
 
-    // n = Public + Group 1 + Group 2
+    // n = number of gamma_abc entries = Public + Group 1 + Group 2
     let n =
         num_instance_variables + commit_witness_count_1 as usize + commit_witness_count_2 as usize;
 
@@ -324,19 +328,33 @@ where
     let gamma_inverse = gamma.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
     let delta_inverse = delta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
 
-    // Calculate Gamma ABC
-    // This includes Public Inputs, then Group 1 Witnesses, then Group 2 Witnesses
-    let gamma_abc = cfg_iter!(a[..n])
-        .zip(&b[..n])
-        .zip(&c[..n])
-        .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
+    // Build gamma_abc using index-based selection:
+    // [public variables (0..num_pub)] ++ [d1 witness indices] ++ [d2 witness indices]
+    let num_pub = num_instance_variables;
+    let mut gamma_abc_var_indices: Vec<usize> = (0..num_pub).collect();
+    for &idx in committed_witness_indices_1 {
+        gamma_abc_var_indices.push(num_pub + idx as usize);
+    }
+    for &idx in committed_witness_indices_2 {
+        gamma_abc_var_indices.push(num_pub + idx as usize);
+    }
+
+    let gamma_abc = gamma_abc_var_indices.iter()
+        .map(|&i| (beta * a[i] + &(alpha * b[i]) + c[i]) * &gamma_inverse)
         .collect::<Vec<_>>();
 
-    let l = cfg_iter!(a)
-        .zip(&b)
-        .zip(&c)
-        .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &delta_inverse)
-        .collect::<Vec<_>>();
+    // l_query: only uncommitted witness variables (in ascending index order)
+    let committed_set: HashSet<u32> = committed_witness_indices_1.iter()
+        .chain(committed_witness_indices_2.iter())
+        .copied().collect();
+
+    let l_scalars: Vec<_> = (0..num_witnesses)
+        .filter(|i| !committed_set.contains(&(*i as u32)))
+        .map(|i| {
+            let col = num_pub + i;
+            (beta * a[col] + &(alpha * b[col]) + c[col]) * &delta_inverse
+        })
+        .collect();
 
     drop(c);
 
@@ -395,10 +413,10 @@ where
     let h_query = E::G1::normalize_batch(&h_query_proj);
     end_timer!(h_time);
 
-    // Compute the L-query
+    // Compute the L-query (index-based: only uncommitted witnesses)
     // 5. L-query 계산
     let l_time = start_timer!(|| "Calculate L");
-    let l_query_proj: Vec<_> = cfg_iter!(l[n..]).map(|s| g1_generator * s).collect();
+    let l_query_proj: Vec<_> = cfg_iter!(l_scalars).map(|s| g1_generator * s).collect();
     let l_query = E::G1::normalize_batch(&l_query_proj);
     end_timer!(l_time);
 
@@ -430,6 +448,8 @@ where
         eta2_gamma_inv_g1: eta2_gamma_inv_g1_affine, // Set
         commit_witness_count_1,                      // Set
         commit_witness_count_2,                      // Set
+        committed_witness_indices_1: committed_witness_indices_1.to_vec(),
+        committed_witness_indices_2: committed_witness_indices_2.to_vec(),
     };
 
     let batch_normalization_time = start_timer!(|| "Convert proving key elements to affine");
