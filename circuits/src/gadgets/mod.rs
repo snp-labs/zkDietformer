@@ -18,4 +18,5 @@ pub mod softmax;
 
 pub mod linear;
 pub mod layernorm;
+pub mod poseidon_helper;
 

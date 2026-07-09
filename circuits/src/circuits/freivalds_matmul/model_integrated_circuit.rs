@@ -123,6 +123,7 @@ pub struct NystromAttnWitness<F: PrimeField> {
     pub limb_bits: usize,
     pub k_segments: usize,
     pub k_bits: usize,
+    pub output_hash: F,
 }
 
 /// Pure witness data for BERT attention (no circuit scaffolding).
@@ -153,6 +154,7 @@ pub struct BertAttnWitness<F: PrimeField> {
     pub k_segments: usize,
     pub k_bits: usize,
     pub mask: Vec<Vec<F>>,
+    pub output_hash: F,
 }
 
 #[derive(Clone)]
@@ -398,6 +400,7 @@ where
         frac_bits, limb_bits, k_segments, k_bits,
         seg_size: seg,
         mask: to_field_2d_i64(&mask_raw),
+        output_hash: E::ScalarField::zero(),
     })
 }
 
@@ -509,6 +512,7 @@ where
         matmul_attn, sm, matmul_x,
         frac_bits, limb_bits, k_segments, k_bits,
         mask: to_field_2d_i64(&mask_raw),
+        output_hash: E::ScalarField::zero(),
     })
 }
 
@@ -911,6 +915,30 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         final_vars.extend(r3_pool);
     }
 
+    // === Poseidon hash of output → public input ===
+    {
+        use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+        use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
+
+        let declared_hash = FpVar::new_input(cs.clone(), || Ok(w.output_hash))?;
+
+        let mut output_flat: Vec<FpVar<F>> = Vec::new();
+        for batch in &proj_o_out {
+            for head in batch {
+                for seq in head {
+                    output_flat.extend(seq.iter().cloned());
+                }
+            }
+        }
+        let mut sponge_var = PoseidonSpongeVar::new(cs.clone(), &poseidon_config);
+        sponge_var.absorb(&output_flat)?;
+        let computed_hash = sponge_var.squeeze_field_elements(1)?;
+
+        computed_hash[0].enforce_equal(&declared_hash)?;
+    }
+
     Ok(())
 }
 
@@ -1100,6 +1128,30 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
         final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
         final_vars.extend(r2_pool);
         final_vars.extend(r3_pool);
+    }
+
+    // === Poseidon hash of output → public input ===
+    {
+        use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+        use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
+
+        let declared_hash = FpVar::new_input(cs.clone(), || Ok(w.output_hash))?;
+
+        let mut output_flat: Vec<FpVar<F>> = Vec::new();
+        for batch in &proj_o_out {
+            for head in batch {
+                for seq in head {
+                    output_flat.extend(seq.iter().cloned());
+                }
+            }
+        }
+        let mut sponge_var = PoseidonSpongeVar::new(cs.clone(), &poseidon_config);
+        sponge_var.absorb(&output_flat)?;
+        let computed_hash = sponge_var.squeeze_field_elements(1)?;
+
+        computed_hash[0].enforce_equal(&declared_hash)?;
     }
 
     Ok(())
@@ -1333,9 +1385,32 @@ where
     let g16_commit_ms = g16_commit_start.elapsed().as_millis();
     let r_fs = hash_cm_to_field::<E>(&cm1);
 
+    // ── Compute Poseidon hash of proj_o_out for each attention layer ────────
+    let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
+    let mut circuit_with_hashes = circuit.clone();
+    for attn_w in &mut circuit_with_hashes.attn_layers {
+        let proj_o_out = match attn_w {
+            AttnWitness::Nystrom(w) => &w.proj_o.q_out_proj,
+            AttnWitness::Bert(w) => &w.proj_o.q_out_proj,
+        };
+        let mut output_flat: Vec<Fr> = Vec::new();
+        for batch in proj_o_out {
+            for head in batch {
+                for seq in head {
+                    output_flat.extend(seq.iter());
+                }
+            }
+        }
+        let h = crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &output_flat);
+        match attn_w {
+            AttnWitness::Nystrom(w) => w.output_hash = h,
+            AttnWitness::Bert(w) => w.output_hash = h,
+        }
+    }
+
     let final_circuit = ModelIntegratedCircuit {
         r_challenge: r_fs,
-        ..circuit.clone()
+        ..circuit_with_hashes
     };
 
     // [1] Groth16 Prove
@@ -1354,21 +1429,43 @@ where
     let g16_verify_start = Instant::now();
     let mut public_inputs = vec![r_fs];
     for attn_w in &final_circuit.attn_layers {
-        let x_input = match attn_w {
-            AttnWitness::Nystrom(w) => &w.q_x_input,
-            AttnWitness::Bert(w) => &w.q_x_input,
+        let (x_input, output_hash) = match attn_w {
+            AttnWitness::Nystrom(w) => (&w.q_x_input, w.output_hash),
+            AttnWitness::Bert(w) => (&w.q_x_input, w.output_hash),
         };
         for batch in x_input {
             for seq in batch {
                 public_inputs.extend(seq.iter().cloned());
             }
         }
+        public_inputs.push(output_hash);
     }
     let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
     let g16_verify_time = g16_verify_start.elapsed();
     println!("  - Model Integrated SNARK Verification: {:?}", result);
     if let Err(e) = result {
         return Err(anyhow::anyhow!(format!("{:?}", e)));
+    }
+
+    // ── Log circuit output (proj_o_out) per layer ────────────────────────
+    for (layer_idx, attn_w) in final_circuit.attn_layers.iter().enumerate() {
+        let (proj_o_out, output_hash) = match attn_w {
+            AttnWitness::Nystrom(w) => (&w.proj_o.q_out_proj, w.output_hash),
+            AttnWitness::Bert(w) => (&w.proj_o.q_out_proj, w.output_hash),
+        };
+        println!("\n=== Circuit Output (proj_o_out) Layer {} ===", layer_idx);
+        for (b, batch) in proj_o_out.iter().enumerate() {
+            for (h, head) in batch.iter().enumerate() {
+                println!("  [batch={}, head={}] shape=[{}][{}]", b, h, head.len(), head[0].len());
+                for (s, seq) in head.iter().enumerate() {
+                    let vals: Vec<_> = seq.iter()
+                        .map(|v| v.into_bigint())
+                        .collect();
+                    println!("    seq[{}]: {:?}", s, vals);
+                }
+            }
+        }
+        println!("  output_hash = {:?}", output_hash.into_bigint());
     }
 
     let g16_report = proof_size::compute_groth16_report::<E>(&proof);

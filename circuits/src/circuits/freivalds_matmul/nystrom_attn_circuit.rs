@@ -91,6 +91,9 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub k_bits: usize,
     pub mask: Vec<Vec<F>>,
 
+    /// Poseidon hash of flatten(proj_o_out) — native precomputed, declared as public input
+    pub output_hash: F,
+
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
     /// d2 group: scale_q_out, scale_k_out, proj_v_out — committed via v2 but NOT CP-linked to Lasso.
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
@@ -706,6 +709,33 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             final_vars.extend(r3_pool);
         }
 
+        // === Poseidon hash of output → public input ===
+        {
+            use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+            use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+
+            let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
+
+            // 1. Public input: declared hash value
+            let declared_hash = FpVar::new_input(cs.clone(), || Ok(self.output_hash))?;
+
+            // 2. Flatten proj_o_out and compute in-circuit Poseidon hash
+            let mut output_flat: Vec<FpVar<F>> = Vec::new();
+            for batch in &proj_o_out {
+                for head in batch {
+                    for seq in head {
+                        output_flat.extend(seq.iter().cloned());
+                    }
+                }
+            }
+            let mut sponge_var = PoseidonSpongeVar::new(cs.clone(), &poseidon_config);
+            sponge_var.absorb(&output_flat)?;
+            let computed_hash = sponge_var.squeeze_field_elements(1)?;
+
+            // 3. Constraint: in-circuit hash == declared public input
+            computed_hash[0].enforce_equal(&declared_hash)?;
+        }
+
         Ok(())
     }
 }
@@ -873,6 +903,7 @@ where
         seg_size: seg,
         k_bits,
         mask: to_field_2d_i64(&mask_raw),
+        output_hash: E::ScalarField::zero(),
 
         committed_vars: Rc::new(RefCell::new(Vec::new())),
         committed_vars_2: Rc::new(RefCell::new(Vec::new())),
@@ -956,9 +987,24 @@ where
 
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
+        // ── Compute Poseidon hash of proj_o_out (native) ─────────────────────
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
+        let output_hash = {
+            let mut output_flat: Vec<Fr> = Vec::new();
+            for batch in &sample_circuit.proj_o.q_out_proj {
+                for head in batch {
+                    for seq in head {
+                        output_flat.extend(seq.iter());
+                    }
+                }
+            }
+            crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &output_flat)
+        };
+
         println!("=== [1] Building final circuit with Fiat-Shamir challenge ===");
         let final_circuit = NystromAttentionCircuit {
             r_challenge: r_fs,
+            output_hash,
             ..sample_circuit.clone()
         };
 
@@ -985,6 +1031,7 @@ where
                 public_inputs.extend(seq.iter().cloned());
             }
         }
+        public_inputs.push(final_circuit.output_hash);
         let groth16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let groth16_verify_time = groth16_verify_start.elapsed();
@@ -994,6 +1041,21 @@ where
             println!("    Reason: {:?}", e);
             return Err(anyhow::anyhow!(format!("{:?}", e)));
         }
+
+        // ── Log circuit output (proj_o_out) ──────────────────────────────────
+        println!("\n=== Circuit Output (proj_o_out) ===");
+        for (b, batch) in final_circuit.proj_o.q_out_proj.iter().enumerate() {
+            for (h, head) in batch.iter().enumerate() {
+                println!("  [batch={}, head={}] shape=[{}][{}]", b, h, head.len(), head[0].len());
+                for (s, seq) in head.iter().enumerate() {
+                    let vals: Vec<_> = seq.iter()
+                        .map(|v| v.into_bigint())
+                        .collect();
+                    println!("    seq[{}]: {:?}", s, vals);
+                }
+            }
+        }
+        println!("  output_hash = {:?}", final_circuit.output_hash.into_bigint());
 
         // ── Groth16 proof size report ──
         let g16_report = proof_size::compute_groth16_report::<E>(&proof);

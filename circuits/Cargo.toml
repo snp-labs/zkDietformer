@@ -13,7 +13,7 @@ ark-poly = "0.5.0"
 ark-std = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = ["derive"] }
 ark-relations = "0.5.1"
-ark-crypto-primitives = "0.5.0"
+ark-crypto-primitives = { version = "0.5.0", features = ["sponge"] }
 ark-groth16 = "0.5.0"
 ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve", "std"] }
 ark-curve25519 = "0.5.0" # Lasso용 (0.4.0 -> 0.5.0 상향)
@@ -52,9 +52,10 @@ num-integer = "0.1.46" # 0.1.46으로 통일
 # --- Optional R1CS ---
 ark-r1cs-std = { version = "0.5.0", default-features = false}
 mimalloc = "0.1.48"
+derivative = "2.2"
 
 [features]
-default = ["parallel", "multicore"]
+default = ["parallel", "multicore", "r1cs"]
 std = [
     "ark-ff/std",
     "ark-ec/std",
