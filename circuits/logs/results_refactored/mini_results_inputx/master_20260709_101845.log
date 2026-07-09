@@ -1,0 +1,150 @@
+============================================
+ measure_mini.sh started: 2026-07-09 10:18:45
+ Circuit dir: /Users/zkrypto12/zkdietformer/Dietformer/circuits
+ Data base:   /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer
+============================================
+
+측정 매트릭스:
+  - BERT-Mini   (L=4, H=256, A=4): n ∈ {128, 256, 512, 1024, 2048, 4096}
+  - BERT-Medium (L=8, H=512, A=8): n=4096만
+  - 회로: Nystrom Attn (F/N), BERT Attn (F/N), Nystrom MLP, BERT MLP
+  - 총 측정 점: Mini 36 + Medium 6 = 42
+
+=== [BUILD] cargo test --release --no-run ===
+
+warning: `nystromformer` (lib) generated 15 warnings (run `cargo fix --lib -p nystromformer` to apply 2 suggestions)
+warning: `nystromformer` (lib test) generated 15 warnings (15 duplicates)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.21s
+  Executable unittests src/lib.rs (target/release/deps/nystromformer-98f557f4c92443a6)
+
+
+################################################################
+# 1. Nystrom Attention (Freivalds) — BERT-Mini (L=4, H=256, A=4)
+################################################################
+============================================
+[10:18:45] #1 nystrom_attn_freivalds_n128_m32_L4_h256
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n128_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n128_m32_L4_h256_20260709_101845.log
+  Time:  logs/prove_nystrom_attn_freivalds_n128_m32_L4_h256_20260709_101845.time
+============================================
+  [PASS] nystrom_attn_freivalds_n128_m32_L4_h256
+  Peak RSS: 13490716672 bytes (12865 MB)
+  Layers proved: 4
+
+============================================
+[10:24:02] #2 nystrom_attn_freivalds_n256_m32_L4_h256
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n256_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n256_m32_L4_h256_20260709_102402.log
+  Time:  logs/prove_nystrom_attn_freivalds_n256_m32_L4_h256_20260709_102402.time
+============================================
+  [PASS] nystrom_attn_freivalds_n256_m32_L4_h256
+  Peak RSS: 24975982592 bytes (23818 MB)
+  Layers proved: 4
+
+============================================
+[10:33:47] #3 nystrom_attn_freivalds_n512_m32_L4_h256
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n512_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n512_m32_L4_h256_20260709_103347.log
+  Time:  logs/prove_nystrom_attn_freivalds_n512_m32_L4_h256_20260709_103347.time
+============================================
+  [PASS] nystrom_attn_freivalds_n512_m32_L4_h256
+  Peak RSS: 44682133504 bytes (42612 MB)
+  Layers proved: 4
+
+============================================
+[10:52:31] #4 nystrom_attn_freivalds_n1024_m32_L4_h256
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n1024_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n1024_m32_L4_h256_20260709_105231.log
+  Time:  logs/prove_nystrom_attn_freivalds_n1024_m32_L4_h256_20260709_105231.time
+============================================
+  [PASS] nystrom_attn_freivalds_n1024_m32_L4_h256
+  Peak RSS: 83156353024 bytes (79304 MB)
+  Layers proved: 4
+
+============================================
+[11:29:41] #5 nystrom_attn_freivalds_n2048_m32_L4_h256
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n2048_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n2048_m32_L4_h256_20260709_112941.log
+  Time:  logs/prove_nystrom_attn_freivalds_n2048_m32_L4_h256_20260709_112941.time
+============================================
+  [PASS] nystrom_attn_freivalds_n2048_m32_L4_h256
+  Peak RSS: 119945428992 bytes (114388 MB)
+  Layers proved: 4
+
+============================================
+[12:49:15] #6 nystrom_attn_freivalds_n4096_m32_L4_h256
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n4096_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_freivalds_n4096_m32_L4_h256_20260709_124915.log
+  Time:  logs/prove_nystrom_attn_freivalds_n4096_m32_L4_h256_20260709_124915.time
+============================================
+  [FAIL] nystrom_attn_freivalds_n4096_m32_L4_h256 (exit code: 101)
+  Peak RSS: 121570017280 bytes (115938 MB)
+  Layers proved: 1
+
+
+################################################################
+# 2. Nystrom Attention (Naive) — BERT-Mini (L=4, H=256, A=4)
+################################################################
+============================================
+[14:33:22] #7 nystrom_attn_naive_n128_m32_L4_h256
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n128_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n128_m32_L4_h256_20260709_143322.log
+  Time:  logs/prove_nystrom_attn_naive_n128_m32_L4_h256_20260709_143322.time
+============================================
+measure_mini.sh: line 72: 25815 Terminated: 15          env "$WITNESS_VAR=$FULL_DATA_PATH" $TIME_CMD cargo test --release "$TEST_FN" -- --nocapture > "$LOG_FILE" 2> "$TIME_FILE"
+  [FAIL] nystrom_attn_naive_n128_m32_L4_h256 (exit code: 143)
+  Peak RSS: N/A bytes (N/A MB)
+  Layers proved: 3
+
+============================================
+[14:50:49] #8 nystrom_attn_naive_n256_m32_L4_h256
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n256_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n256_m32_L4_h256_20260709_145049.log
+  Time:  logs/prove_nystrom_attn_naive_n256_m32_L4_h256_20260709_145049.time
+============================================
+  [FAIL] nystrom_attn_naive_n256_m32_L4_h256 (exit code: 101)
+  Peak RSS: 52614512640 bytes (50177 MB)
+  Layers proved: 0
+0
+
+============================================
+[14:52:02] #9 nystrom_attn_naive_n512_m32_L4_h256
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n512_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n512_m32_L4_h256_20260709_145202.log
+  Time:  logs/prove_nystrom_attn_naive_n512_m32_L4_h256_20260709_145202.time
+============================================
+measure_mini.sh: line 72: 26119 Terminated: 15          env "$WITNESS_VAR=$FULL_DATA_PATH" $TIME_CMD cargo test --release "$TEST_FN" -- --nocapture > "$LOG_FILE" 2> "$TIME_FILE"
+  [FAIL] nystrom_attn_naive_n512_m32_L4_h256 (exit code: 143)
+  Peak RSS: N/A bytes (N/A MB)
+  Layers proved: 0
+0
+
+============================================
+[14:52:24] #10 nystrom_attn_naive_n1024_m32_L4_h256
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n1024_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n1024_m32_L4_h256_20260709_145224.log
+  Time:  logs/prove_nystrom_attn_naive_n1024_m32_L4_h256_20260709_145224.time
+============================================
+measure_mini.sh: line 72: 26190 Terminated: 15          env "$WITNESS_VAR=$FULL_DATA_PATH" $TIME_CMD cargo test --release "$TEST_FN" -- --nocapture > "$LOG_FILE" 2> "$TIME_FILE"
+  [FAIL] nystrom_attn_naive_n1024_m32_L4_h256 (exit code: 143)
+  Peak RSS: N/A bytes (N/A MB)
+  Layers proved: 0
+0
+
+============================================
+[14:53:31] #11 nystrom_attn_naive_n2048_m32_L4_h256
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n2048_m32_L4_h256_nystrom
+  Log:   logs/prove_nystrom_attn_naive_n2048_m32_L4_h256_20260709_145331.log
+  Time:  logs/prove_nystrom_attn_naive_n2048_m32_L4_h256_20260709_145331.time
+============================================
