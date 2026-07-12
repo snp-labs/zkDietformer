@@ -1,0 +1,1025 @@
+
+running 1 test
+[info] LAYERNORM_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom/layernorm_tables.npz
+[info] GELU_TABLE_PATH not set; using /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom/gelu_tables.npz
+
+=== [LayerNorm prove+verify] dir=/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom | files=4 | mode=all-layers ===
+
+=== [LayerNorm] Processing witness NPZ: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom/outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.0.attention.self.norm.witness.npz" ===
+  - Dry-run commit count: 1706496 (40.82615025s)
+  - Witness load time: 95.155958ms
+=== [0] LegoGroth16 Setup (Num Commit: 1706496) ===
+test circuits::freivalds_matmul::nystrom_mlp_circuit::nystrom_mlp_hf_single_layer_test has been running for over 60 seconds
+  - Setup time: 690.965805625s
+  - Num constraints: 3007488
+
+[Debug] LegoGroth16 committed_group1 (Total: 1706496)
+  Head (10): [251, 251, 252, 249, 253, 250, 254, 252, 253, 249]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] LegoGroth16 GenProof ===
+  - Groth16 prove time: 396.857932542s
+  - LegoGroth16 SNARK Verification: Ok(()) (1.120458ms)
+=== [2] Lasso Lookup Proofs: MLP Sections (LayerNorm) ===
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln1", Total: 256)
+  Head (10): [251, 251, 252, 249, 253, 250, 254, 252, 253, 249]
+  Tail (10): [251, 251, 251, 251, 251, 251, 254, 250, 252, 252]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 135.9445ms
+
+[Debug] Lasso GeLU (Label: "lasso_gelu1", Total: 262144)
+  Head (10): [65535, 0, 0, 65535, 0, 65535, 65535, 0, 65535, 65535]
+  Tail (10): [0, 0, 0, 65535, 65535, 65535, 65535, 65535, 65535, 65535]
+PROOF_SIZE_DETAIL [Lasso: lasso_gelu1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 955 F = 30560 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 75808 bytes
+GeLU Lasso proof verified: "lasso_gelu1"
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln2", Total: 256)
+  Head (10): [255, 253, 248, 248, 252, 249, 250, 248, 249, 249]
+  Tail (10): [246, 246, 252, 245, 248, 247, 246, 250, 246, 251]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 115.892834ms
+
+=== [MLP-LayerNorm] Lasso Lookup Proofs: 22-bit Remainders (R) ===
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_shift", Total: 256)
+  - Dim[0] Head (10): [21300, 37260, 36476, 1560, 53532, 13860, 47292, 780, 49172, 54796]
+  - Dim[0] Tail (10): [12576, 47176, 32600, 45588, 21104, 60460, 12096, 27044, 10896, 15656]
+  - Dim[1] Head (10): [22, 39, 59, 30, 7, 33, 18, 55, 57, 26]
+  - Dim[1] Tail (10): [53, 62, 25, 13, 27, 45, 14, 16, 14, 28]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_shift"
+ - R_mlp_ln1_shift verified | Count: 256 | Time: 144.622833ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_out", Total: 65536)
+  - Dim[0] Head (10): [2033, 50795, 20367, 50275, 33501, 51835, 35061, 63409, 16727, 6193]
+  - Dim[0] Tail (10): [51315, 14647, 51315, 54955, 48715, 19981, 3073, 54955, 26741, 65489]
+  - Dim[1] Head (10): [44, 47, 25, 52, 56, 37, 41, 19, 60, 4]
+  - Dim[1] Tail (10): [42, 16, 42, 7, 3, 58, 34, 7, 57, 63]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_out"
+ - R_mlp_ln1_out verified | Count: 65536 | Time: 337.297792ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_beta"
+ - R_mlp_ln1_beta verified | Count: 256 | Time: 177.867584ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin1", Total: 262144)
+  - Dim[0] Head (10): [65068, 8191, 7647, 61926, 44692, 41746, 42771, 42745, 35189, 29908]
+  - Dim[0] Tail (10): [289, 36592, 18225, 24815, 39076, 32821, 50143, 13655, 19264, 37033]
+  - Dim[1] Head (10): [14, 60, 38, 59, 18, 55, 3, 11, 9, 15]
+  - Dim[1] Tail (10): [31, 58, 31, 38, 54, 26, 12, 50, 45, 63]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_lin1"
+ - R_mlp_lin1 verified | Count: 262144 | Time: 648.737042ms
+
+[Debug] Lasso Range (Label: "R_mlp_gelu", Total: 262144)
+  - Dim[0] Head (10): [3752, 49320, 49320, 47528, 49320, 33960, 3240, 49320, 30376, 12712]
+  - Dim[0] Tail (10): [49320, 49320, 49320, 33960, 55208, 34472, 30376, 7848, 47528, 32168]
+  - Dim[1] Head (10): [0, 63, 63, 13, 63, 41, 61, 63, 5, 58]
+  - Dim[1] Tail (10): [63, 63, 63, 41, 24, 44, 5, 39, 13, 55]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_gelu]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_gelu"
+ - R_mlp_gelu verified | Count: 262144 | Time: 658.655333ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin2", Total: 65536)
+  - Dim[0] Head (10): [34626, 38085, 13683, 62353, 3979, 60795, 12174, 64090, 29216, 1047]
+  - Dim[0] Tail (10): [43573, 14208, 48382, 17225, 12574, 14103, 63550, 38068, 54425, 41819]
+  - Dim[1] Head (10): [43, 0, 36, 19, 37, 35, 14, 30, 23, 55]
+  - Dim[1] Tail (10): [29, 60, 5, 40, 37, 4, 54, 29, 26, 47]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_lin2"
+ - R_mlp_lin2 verified | Count: 65536 | Time: 329.834542ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_shift", Total: 256)
+  - Dim[0] Head (10): [44879, 44215, 39535, 5592, 33817, 9673, 9612, 26954, 39645, 51611]
+  - Dim[0] Tail (10): [11697, 50503, 25598, 21484, 40207, 45131, 60681, 22307, 31100, 26718]
+  - Dim[1] Head (10): [51, 12, 19, 37, 23, 15, 4, 46, 2, 36]
+  - Dim[1] Tail (10): [44, 52, 5, 43, 20, 57, 11, 37, 48, 28]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_shift"
+ - R_mlp_ln2_shift verified | Count: 256 | Time: 145.895709ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_out", Total: 65536)
+  - Dim[0] Head (10): [10752, 10752, 25344, 4608, 768, 16896, 12288, 54784, 3840, 36864]
+  - Dim[0] Tail (10): [42496, 55296, 6144, 24576, 64512, 12288, 13312, 55808, 41984, 62464]
+  - Dim[1] Head (10): [36, 36, 62, 52, 62, 20, 32, 27, 54, 32]
+  - Dim[1] Tail (10): [35, 29, 46, 56, 2, 27, 25, 60, 4, 8]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_out"
+ - R_mlp_ln2_out verified | Count: 65536 | Time: 336.135792ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_beta"
+ - R_mlp_ln2_beta verified | Count: 256 | Time: 142.112958ms
+All MLP-LayerNorm remainders verified sequentially.
+  - Lasso total time: 3.939391833s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 2129 (68128 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 2129 G1 (68128 B) — not counted]
+  Lasso (all 12 proofs): 666560 bytes
+  ──────────────────────────────────────
+  Grand Total: 666784 bytes (651.16 KB)
+════════════════════════════════════════════════════════════
+
+
+=== [LayerNorm] e2e total: 1190.535155584s ===
+BENCHMARK_RESULT {"file":"outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.0.attention.self.norm.witness.npz","circuit":"mlp-layernorm","constraints":3007488,"groth16":{"setup_ms":690965,"commit_ms":452,"prove_ms":396857,"verify_ms":1,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":3939,"commit_proof_ms":333,"prove_ms":2963,"verify_ms":217,"commitment_cplink_link_bytes":68264,"commitment_proof_bytes":311296,"proof_size_bytes":666560},"cp_link":{"setup_ms":19647,"prove_ms":464,"verify_ms":181,"proof_size_bytes":32},"end_to_end_ms":1190535}
+
+=== [LayerNorm] Processing witness NPZ: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom/outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.1.attention.self.norm.witness.npz" ===
+  - Dry-run commit count: 1706496 (70.909440333s)
+  - Witness load time: 103.551333ms
+=== [0] LegoGroth16 Setup (Num Commit: 1706496) ===
+  - Setup time: 781.618775s
+  - Num constraints: 3007488
+
+[Debug] LegoGroth16 committed_group1 (Total: 1706496)
+  Head (10): [251, 252, 253, 250, 250, 253, 252, 248, 254, 251]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] LegoGroth16 GenProof ===
+  - Groth16 prove time: 481.852845459s
+  - LegoGroth16 SNARK Verification: Ok(()) (1.931875ms)
+=== [2] Lasso Lookup Proofs: MLP Sections (LayerNorm) ===
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln1", Total: 256)
+  Head (10): [251, 252, 253, 250, 250, 253, 252, 248, 254, 251]
+  Tail (10): [250, 250, 250, 251, 250, 252, 252, 251, 252, 252]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 155.032792ms
+
+[Debug] Lasso GeLU (Label: "lasso_gelu1", Total: 262144)
+  Head (10): [0, 65535, 65535, 0, 65535, 65535, 0, 0, 65535, 0]
+  Tail (10): [65535, 0, 0, 0, 65535, 65535, 0, 65535, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: lasso_gelu1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 955 F = 30560 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 75808 bytes
+GeLU Lasso proof verified: "lasso_gelu1"
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln2", Total: 256)
+  Head (10): [239, 242, 239, 237, 238, 245, 241, 239, 237, 243]
+  Tail (10): [247, 245, 242, 244, 243, 244, 243, 249, 244, 247]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 114.647959ms
+
+=== [MLP-LayerNorm] Lasso Lookup Proofs: 22-bit Remainders (R) ===
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_shift", Total: 256)
+  - Dim[0] Head (10): [56950, 63412, 48222, 12916, 38744, 20816, 20344, 11854, 28040, 11810]
+  - Dim[0] Tail (10): [38830, 54052, 39388, 40472, 34944, 35802, 26012, 49908, 59526, 10672]
+  - Dim[1] Head (10): [57, 9, 38, 41, 63, 29, 33, 18, 60, 50]
+  - Dim[1] Tail (10): [57, 1, 47, 54, 41, 39, 61, 3, 57, 22]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_shift"
+ - R_mlp_ln1_shift verified | Count: 256 | Time: 140.794167ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_out", Total: 65536)
+  - Dim[0] Head (10): [1536, 2048, 53632, 50048, 32512, 2560, 1536, 64000, 49536, 54656]
+  - Dim[0] Tail (10): [2560, 30464, 50560, 6144, 0, 19200, 52096, 21632, 59904, 64512]
+  - Dim[1] Head (10): [55, 52, 37, 58, 1, 49, 55, 8, 61, 31]
+  - Dim[1] Tail (10): [49, 13, 55, 28, 0, 15, 46, 33, 32, 5]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_out"
+ - R_mlp_ln1_out verified | Count: 65536 | Time: 328.571917ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_beta"
+ - R_mlp_ln1_beta verified | Count: 256 | Time: 183.487833ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin1", Total: 262144)
+  - Dim[0] Head (10): [52456, 47860, 29580, 31476, 29920, 6388, 35524, 44460, 60912, 19212]
+  - Dim[0] Tail (10): [22220, 54756, 59532, 8884, 27908, 53696, 24664, 34388, 16396, 28864]
+  - Dim[1] Head (10): [22, 45, 14, 54, 52, 10, 57, 53, 45, 62]
+  - Dim[1] Tail (10): [32, 9, 9, 41, 24, 59, 15, 17, 9, 6]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_lin1"
+ - R_mlp_lin1 verified | Count: 262144 | Time: 660.37175ms
+
+[Debug] Lasso Range (Label: "R_mlp_gelu", Total: 262144)
+  - Dim[0] Head (10): [43768, 48888, 21240, 43768, 19192, 2808, 43768, 43768, 6904, 43768]
+  - Dim[0] Tail (10): [55032, 43768, 43768, 43768, 43768, 59128, 43768, 760, 43768, 43768]
+  - Dim[1] Head (10): [63, 18, 31, 63, 49, 27, 63, 63, 42, 63]
+  - Dim[1] Tail (10): [28, 63, 63, 63, 63, 43, 63, 45, 63, 63]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_gelu]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_gelu"
+ - R_mlp_gelu verified | Count: 262144 | Time: 649.1975ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin2", Total: 65536)
+  - Dim[0] Head (10): [17125, 54919, 21761, 51702, 13807, 34500, 63265, 20140, 23991, 10608]
+  - Dim[0] Tail (10): [51028, 10434, 32632, 14130, 43992, 57112, 12474, 38151, 23986, 10319]
+  - Dim[1] Head (10): [32, 12, 8, 8, 22, 14, 43, 38, 25, 26]
+  - Dim[1] Tail (10): [42, 46, 5, 60, 36, 0, 16, 1, 52, 63]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_lin2"
+ - R_mlp_lin2 verified | Count: 65536 | Time: 324.327542ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_shift", Total: 256)
+  - Dim[0] Head (10): [2195, 6372, 5894, 44908, 27610, 21660, 18377, 34341, 31148, 24602]
+  - Dim[0] Tail (10): [53073, 33509, 46072, 12545, 24952, 14735, 40079, 11202, 55102, 18964]
+  - Dim[1] Head (10): [17, 27, 4, 6, 31, 3, 8, 27, 9, 35]
+  - Dim[1] Tail (10): [7, 43, 16, 31, 63, 48, 30, 10, 15, 17]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_shift"
+ - R_mlp_ln2_shift verified | Count: 256 | Time: 139.546125ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_out", Total: 65536)
+  - Dim[0] Head (10): [32768, 32768, 32768, 32768, 0, 32768, 32768, 32768, 0, 32768]
+  - Dim[0] Tail (10): [58752, 1664, 24704, 16256, 11904, 61952, 63872, 45184, 3328, 9344]
+  - Dim[1] Head (10): [56, 56, 46, 0, 63, 55, 58, 7, 63, 41]
+  - Dim[1] Tail (10): [37, 40, 41, 39, 12, 59, 23, 49, 16, 19]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_out"
+ - R_mlp_ln2_out verified | Count: 65536 | Time: 339.590167ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_beta"
+ - R_mlp_ln2_beta verified | Count: 256 | Time: 138.5745ms
+All MLP-LayerNorm remainders verified sequentially.
+  - Lasso total time: 3.950630459s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 2129 (68128 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 2129 G1 (68128 B) — not counted]
+  Lasso (all 12 proofs): 666560 bytes
+  ──────────────────────────────────────
+  Grand Total: 666784 bytes (651.16 KB)
+════════════════════════════════════════════════════════════
+
+
+=== [LayerNorm] e2e total: 1413.096728792s ===
+BENCHMARK_RESULT {"file":"outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.1.attention.self.norm.witness.npz","circuit":"mlp-layernorm","constraints":3007488,"groth16":{"setup_ms":781618,"commit_ms":652,"prove_ms":481852,"verify_ms":1,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":3950,"commit_proof_ms":336,"prove_ms":2979,"verify_ms":215,"commitment_cplink_link_bytes":68264,"commitment_proof_bytes":311296,"proof_size_bytes":666560},"cp_link":{"setup_ms":18905,"prove_ms":463,"verify_ms":182,"proof_size_bytes":32},"end_to_end_ms":1413096}
+
+=== [LayerNorm] Processing witness NPZ: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom/outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.2.attention.self.norm.witness.npz" ===
+  - Dry-run commit count: 1706496 (73.157485042s)
+  - Witness load time: 101.109541ms
+=== [0] LegoGroth16 Setup (Num Commit: 1706496) ===
+  - Setup time: 847.85553275s
+  - Num constraints: 3007488
+
+[Debug] LegoGroth16 committed_group1 (Total: 1706496)
+  Head (10): [248, 246, 250, 252, 249, 253, 251, 251, 247, 250]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] LegoGroth16 GenProof ===
+  - Groth16 prove time: 492.237953583s
+  - LegoGroth16 SNARK Verification: Ok(()) (1.66525ms)
+=== [2] Lasso Lookup Proofs: MLP Sections (LayerNorm) ===
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln1", Total: 256)
+  Head (10): [248, 246, 250, 252, 249, 253, 251, 251, 247, 250]
+  Tail (10): [251, 251, 252, 253, 250, 249, 252, 253, 252, 251]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 136.725333ms
+
+[Debug] Lasso GeLU (Label: "lasso_gelu1", Total: 262144)
+  Head (10): [65535, 0, 0, 65535, 0, 65535, 0, 0, 65535, 65535]
+  Tail (10): [65535, 65535, 0, 65535, 0, 0, 0, 0, 0, 65535]
+PROOF_SIZE_DETAIL [Lasso: lasso_gelu1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 955 F = 30560 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 75808 bytes
+GeLU Lasso proof verified: "lasso_gelu1"
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln2", Total: 256)
+  Head (10): [244, 249, 253, 249, 248, 245, 247, 244, 248, 246]
+  Tail (10): [247, 249, 250, 247, 253, 245, 254, 247, 255, 247]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 112.974958ms
+
+=== [MLP-LayerNorm] Lasso Lookup Proofs: 22-bit Remainders (R) ===
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_shift", Total: 256)
+  - Dim[0] Head (10): [27976, 46840, 26632, 1548, 21304, 15760, 63280, 40048, 60956, 65448]
+  - Dim[0] Tail (10): [57376, 59792, 38936, 64792, 5940, 23940, 45788, 52132, 2248, 3648]
+  - Dim[1] Head (10): [41, 31, 19, 39, 35, 5, 44, 40, 0, 44]
+  - Dim[1] Tail (10): [14, 10, 7, 8, 41, 58, 45, 1, 51, 11]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_shift"
+ - R_mlp_ln1_shift verified | Count: 256 | Time: 138.947083ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_out", Total: 65536)
+  - Dim[0] Head (10): [18560, 34560, 37120, 49024, 16512, 51584, 34560, 30976, 33024, 55168]
+  - Dim[0] Tail (10): [4096, 59648, 4352, 13312, 63488, 37888, 5632, 12032, 53248, 63744]
+  - Dim[1] Head (10): [51, 53, 38, 0, 63, 49, 53, 10, 62, 28]
+  - Dim[1] Tail (10): [48, 22, 47, 12, 7, 43, 42, 17, 47, 6]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_out"
+ - R_mlp_ln1_out verified | Count: 65536 | Time: 314.773292ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_beta"
+ - R_mlp_ln1_beta verified | Count: 256 | Time: 138.176625ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin1", Total: 262144)
+  - Dim[0] Head (10): [39438, 35484, 2766, 64316, 49824, 55990, 5700, 188, 62060, 25814]
+  - Dim[0] Tail (10): [12432, 27542, 4792, 22202, 28420, 57142, 3710, 14218, 62464, 7210]
+  - Dim[1] Head (10): [46, 63, 21, 22, 49, 60, 34, 54, 55, 51]
+  - Dim[1] Tail (10): [6, 7, 21, 61, 6, 24, 27, 13, 3, 1]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_lin1"
+ - R_mlp_lin1 verified | Count: 262144 | Time: 637.100292ms
+
+[Debug] Lasso Range (Label: "R_mlp_gelu", Total: 262144)
+  - Dim[0] Head (10): [53820, 55868, 55868, 40508, 55868, 34364, 55868, 55868, 11836, 55868]
+  - Dim[0] Tail (10): [48700, 3644, 55868, 49724, 55868, 55868, 55868, 55868, 55868, 65084]
+  - Dim[1] Head (10): [17, 63, 63, 56, 63, 20, 63, 63, 24, 63]
+  - Dim[1] Tail (10): [36, 25, 63, 27, 63, 63, 63, 63, 63, 34]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_gelu]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_gelu"
+ - R_mlp_gelu verified | Count: 262144 | Time: 665.779083ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin2", Total: 65536)
+  - Dim[0] Head (10): [29480, 25894, 61738, 61020, 27286, 4436, 47912, 41540, 18886, 16974]
+  - Dim[0] Tail (10): [47942, 64760, 61870, 57346, 54768, 52596, 45814, 3844, 33348, 51924]
+  - Dim[1] Head (10): [49, 60, 33, 36, 9, 38, 19, 38, 17, 50]
+  - Dim[1] Tail (10): [3, 2, 19, 20, 30, 2, 63, 1, 6, 16]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_lin2"
+ - R_mlp_lin2 verified | Count: 65536 | Time: 314.142ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_shift", Total: 256)
+  - Dim[0] Head (10): [4802, 36041, 58570, 4628, 6829, 23122, 12282, 4901, 11462, 50034]
+  - Dim[0] Tail (10): [54620, 48625, 40264, 65102, 50044, 36644, 30527, 49181, 1136, 15666]
+  - Dim[1] Head (10): [31, 32, 39, 10, 34, 16, 4, 19, 54, 2]
+  - Dim[1] Tail (10): [35, 10, 45, 41, 30, 1, 20, 56, 51, 62]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_shift"
+ - R_mlp_ln2_shift verified | Count: 256 | Time: 146.589084ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_out", Total: 65536)
+  - Dim[0] Head (10): [47488, 63488, 60928, 16512, 65024, 62976, 64000, 1536, 16000, 43904]
+  - Dim[0] Tail (10): [0, 32768, 32768, 0, 32768, 0, 0, 32768, 0, 32768]
+  - Dim[1] Head (10): [60, 59, 54, 0, 62, 58, 60, 3, 63, 53]
+  - Dim[1] Tail (10): [56, 12, 56, 37, 5, 51, 49, 40, 22, 3]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_out"
+ - R_mlp_ln2_out verified | Count: 65536 | Time: 323.086834ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_beta"
+ - R_mlp_ln2_beta verified | Count: 256 | Time: 137.042333ms
+All MLP-LayerNorm remainders verified sequentially.
+  - Lasso total time: 3.883897s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 2129 (68128 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 2129 G1 (68128 B) — not counted]
+  Lasso (all 12 proofs): 666560 bytes
+  ──────────────────────────────────────
+  Grand Total: 666784 bytes (651.16 KB)
+════════════════════════════════════════════════════════════
+
+
+=== [LayerNorm] e2e total: 1489.537656584s ===
+BENCHMARK_RESULT {"file":"outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.2.attention.self.norm.witness.npz","circuit":"mlp-layernorm","constraints":3007488,"groth16":{"setup_ms":847855,"commit_ms":668,"prove_ms":492237,"verify_ms":1,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":3883,"commit_proof_ms":293,"prove_ms":2950,"verify_ms":219,"commitment_cplink_link_bytes":68264,"commitment_proof_bytes":311296,"proof_size_bytes":666560},"cp_link":{"setup_ms":16284,"prove_ms":458,"verify_ms":182,"proof_size_bytes":32},"end_to_end_ms":1489537}
+
+=== [LayerNorm] Processing witness NPZ: "/Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n256_m32_L4_h256_nystrom/outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.3.attention.self.norm.witness.npz" ===
+  - Dry-run commit count: 1706496 (73.154431459s)
+  - Witness load time: 101.061583ms
+=== [0] LegoGroth16 Setup (Num Commit: 1706496) ===
+  - Setup time: 807.858880417s
+  - Num constraints: 3007488
+
+[Debug] LegoGroth16 committed_group1 (Total: 1706496)
+  Head (10): [253, 250, 250, 253, 249, 250, 254, 253, 250, 252]
+  Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+=== [1] LegoGroth16 GenProof ===
+  - Groth16 prove time: 484.752164792s
+  - LegoGroth16 SNARK Verification: Ok(()) (1.9895ms)
+=== [2] Lasso Lookup Proofs: MLP Sections (LayerNorm) ===
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln1", Total: 256)
+  Head (10): [253, 250, 250, 253, 249, 250, 254, 253, 250, 252]
+  Tail (10): [251, 253, 250, 251, 250, 250, 251, 252, 250, 252]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 163.035833ms
+
+[Debug] Lasso GeLU (Label: "lasso_gelu1", Total: 262144)
+  Head (10): [0, 65535, 65535, 65535, 65535, 0, 0, 65535, 0, 0]
+  Tail (10): [65535, 65535, 0, 0, 0, 0, 0, 0, 65535, 0]
+PROOF_SIZE_DETAIL [Lasso: lasso_gelu1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 955 F = 30560 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 75808 bytes
+GeLU Lasso proof verified: "lasso_gelu1"
+
+[Debug] Lasso RMSNorm (Label: "lasso_ln2", Total: 256)
+  Head (10): [244, 243, 248, 240, 248, 245, 245, 244, 244, 245]
+  Tail (10): [247, 252, 246, 248, 248, 248, 250, 253, 246, 252]
+PROOF_SIZE_DETAIL [Lasso: lasso_ln2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 16 l-variate + 256 log_m-variate G = 8704 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 50 G + 8 F = 1856 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 540 F = 17280 bytes
+    (b)-3 Claimed Evaluations: 10 F = 320 bytes
+  Total: 29184 bytes
+  - Lasso Total Time (LayerNorm): 117.384584ms
+
+=== [MLP-LayerNorm] Lasso Lookup Proofs: 22-bit Remainders (R) ===
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_shift", Total: 256)
+  - Dim[0] Head (10): [62058, 14008, 53744, 9274, 27350, 63828, 27070, 55038, 42478, 23110]
+  - Dim[0] Tail (10): [63436, 57312, 15788, 26268, 8178, 46728, 14702, 7094, 8474, 50488]
+  - Dim[1] Head (10): [63, 26, 32, 49, 50, 52, 19, 22, 55, 7]
+  - Dim[1] Tail (10): [52, 44, 50, 20, 34, 5, 6, 61, 57, 35]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_shift"
+ - R_mlp_ln1_shift verified | Count: 256 | Time: 136.985167ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_out", Total: 65536)
+  - Dim[0] Head (10): [3584, 4352, 9216, 256, 1792, 4608, 2304, 62976, 768, 10752]
+  - Dim[0] Tail (10): [51072, 45440, 18048, 22656, 14464, 3200, 52608, 55168, 26368, 15488]
+  - Dim[1] Head (10): [50, 47, 28, 63, 57, 46, 55, 9, 61, 22]
+  - Dim[1] Tail (10): [52, 21, 54, 27, 11, 13, 43, 28, 37, 5]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_out"
+ - R_mlp_ln1_out verified | Count: 65536 | Time: 324.189334ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln1_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln1_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln1_beta"
+ - R_mlp_ln1_beta verified | Count: 256 | Time: 137.196708ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin1", Total: 262144)
+  - Dim[0] Head (10): [58570, 62118, 9980, 53304, 17933, 27977, 10040, 49739, 3426, 47882]
+  - Dim[0] Tail (10): [53668, 23962, 20824, 41582, 16497, 13713, 61787, 61569, 17079, 5951]
+  - Dim[1] Head (10): [0, 11, 54, 57, 48, 21, 23, 10, 47, 40]
+  - Dim[1] Tail (10): [25, 31, 5, 27, 59, 37, 57, 52, 32, 29]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin1]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_lin1"
+ - R_mlp_lin1 verified | Count: 262144 | Time: 678.291459ms
+
+[Debug] Lasso Range (Label: "R_mlp_gelu", Total: 262144)
+  - Dim[0] Head (10): [47972, 5732, 6244, 47972, 25444, 47972, 47972, 27748, 47972, 47972]
+  - Dim[0] Tail (10): [45668, 12132, 47972, 47972, 47972, 47972, 47972, 47972, 58468, 47972]
+  - Dim[1] Head (10): [63, 22, 57, 63, 38, 63, 63, 12, 63, 63]
+  - Dim[1] Tail (10): [25, 37, 63, 63, 63, 63, 63, 63, 55, 63]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_gelu]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 1024 l-variate + 256 log_m-variate G = 40960 bytes
+    (a)-2 Lookup Vector (comm_derefs): 512 G = 16384 bytes
+    (a)-3 Hyrax Opening Proofs: 86 G + 8 F = 3008 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 36 F = 1152 bytes
+    (b)-2 Grand Product Coeffs+Claims: 1091 F = 34912 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 97024 bytes
+    -> Lasso proof verified for: "R_mlp_gelu"
+ - R_mlp_gelu verified | Count: 262144 | Time: 624.937334ms
+
+[Debug] Lasso Range (Label: "R_mlp_lin2", Total: 65536)
+  - Dim[0] Head (10): [21676, 25118, 5476, 19215, 10487, 23714, 29850, 20129, 10946, 33314]
+  - Dim[0] Tail (10): [16561, 39836, 14554, 43427, 43239, 16465, 22385, 56592, 54035, 26478]
+  - Dim[1] Head (10): [13, 43, 55, 21, 28, 63, 30, 44, 21, 34]
+  - Dim[1] Tail (10): [5, 18, 14, 29, 32, 24, 26, 43, 39, 11]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_lin2]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_lin2"
+ - R_mlp_lin2 verified | Count: 65536 | Time: 325.980209ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_shift", Total: 256)
+  - Dim[0] Head (10): [27988, 39054, 58106, 49018, 25516, 43258, 50190, 39868, 55036, 55918]
+  - Dim[0] Tail (10): [63088, 34500, 34412, 36684, 34430, 30024, 35092, 32772, 8330, 49634]
+  - Dim[1] Head (10): [2, 6, 52, 60, 12, 56, 3, 39, 26, 61]
+  - Dim[1] Tail (10): [15, 10, 53, 19, 17, 16, 9, 60, 39, 60]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_shift]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_shift"
+ - R_mlp_ln2_shift verified | Count: 256 | Time: 148.332208ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_out", Total: 65536)
+  - Dim[0] Head (10): [21283, 5537, 31925, 18297, 62983, 23835, 13193, 23401, 31491, 55761]
+  - Dim[0] Tail (10): [62505, 12165, 57937, 45771, 9135, 18179, 3075, 15287, 39573, 9135]
+  - Dim[1] Head (10): [4, 4, 6, 63, 0, 3, 1, 61, 0, 9]
+  - Dim[1] Tail (10): [50, 19, 47, 28, 6, 14, 44, 30, 37, 6]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_out]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 512 l-variate + 256 log_m-variate G = 24576 bytes
+    (a)-2 Lookup Vector (comm_derefs): 256 G = 8192 bytes
+    (a)-3 Hyrax Opening Proofs: 80 G + 8 F = 2816 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 32 F = 1024 bytes
+    (b)-2 Grand Product Coeffs+Claims: 976 F = 31232 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 68448 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_out"
+ - R_mlp_ln2_out verified | Count: 65536 | Time: 314.35875ms
+
+[Debug] Lasso Range (Label: "R_mlp_ln2_beta", Total: 256)
+  - Dim[0] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[0] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Head (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  - Dim[1] Tail (10): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+PROOF_SIZE_DETAIL [Lasso: R_mlp_ln2_beta]
+  (a) Commitments:
+    (a)-1 Oracle Commitments: 32 l-variate + 256 log_m-variate G = 9216 bytes
+    (a)-2 Lookup Vector (comm_derefs): 16 G = 512 bytes
+    (a)-3 Hyrax Opening Proofs: 56 G + 8 F = 2048 bytes (batched: true)
+  (b) Interactive Proof (Scalars):
+    (b)-1 Primary Sum-Check Coeffs: 16 F = 512 bytes
+    (b)-2 Grand Product Coeffs+Claims: 636 F = 20352 bytes
+    (b)-3 Claimed Evaluations: 19 F = 608 bytes
+  Total: 33248 bytes
+    -> Lasso proof verified for: "R_mlp_ln2_beta"
+ - R_mlp_ln2_beta verified | Count: 256 | Time: 135.670208ms
+All MLP-LayerNorm remainders verified sequentially.
+  - Lasso total time: 3.932513458s
+  -> [Success] Factored Multi-Lasso CP-Link verified
+PROOF_SIZE_DETAIL [Groth16/LegoGroth16]
+  G1 elements: 4 (128 bytes)
+    - A (G1), C (G1), d1 (G1), d2 (G1)
+  G2 elements: 1 (64 bytes)
+    - B (G2)
+  Total: 192 bytes
+PROOF_SIZE_DETAIL [CP-Link]
+  Pure Link Proof G elements: 1 (32 bytes)
+  Pure Link Proof F elements: 0 (0 bytes)
+  [Public Instance G elements]: 2129 (68128 bytes) *excluded from Grand Total
+  => CP-Link Pure Proof Total: 32 bytes
+
+PROOF_SIZE_REPORT ════════════════════════════════════════════
+  Groth16 (LegoGroth16): 192 bytes
+    4 G1 (128 B) + 1 G2 (64 B)
+  CP-Link (pure proof): 32 bytes
+    1 G1 (32 B) + 0 F (0 B)
+    [public instance: 2129 G1 (68128 B) — not counted]
+  Lasso (all 12 proofs): 666560 bytes
+  ──────────────────────────────────────
+  Grand Total: 666784 bytes (651.16 KB)
+════════════════════════════════════════════════════════════
+
+
+=== [LayerNorm] e2e total: 1442.161209792s ===
+BENCHMARK_RESULT {"file":"outputs_n256_m32_L4_h256_nystrom-batch0-nystromformer.encoder.layer.3.attention.self.norm.witness.npz","circuit":"mlp-layernorm","constraints":3007488,"groth16":{"setup_ms":807858,"commit_ms":644,"prove_ms":484752,"verify_ms":1,"proof_size_bytes":384,"commitment_size_bytes":32},"lasso":{"total_ms":3932,"commit_proof_ms":316,"prove_ms":2989,"verify_ms":208,"commitment_cplink_link_bytes":68264,"commitment_proof_bytes":311296,"proof_size_bytes":666560},"cp_link":{"setup_ms":15800,"prove_ms":465,"verify_ms":189,"proof_size_bytes":32},"end_to_end_ms":1442161}
+
+=== [LayerNorm] ALL 4 files PASS | total_wall_ms=5982328 ===
+test circuits::freivalds_matmul::nystrom_mlp_circuit::nystrom_mlp_hf_single_layer_test ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 86 filtered out; finished in 5982.34s
+
