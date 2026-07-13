@@ -115,15 +115,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
             }).collect()
         }).collect();
 
-        {
-            let mut vars_2 = inner.committed_vars_2.borrow_mut();
-            for batch in &x_input_vars {
-                for seq in batch {
-                    vars_2.extend(seq.iter().cloned());
-                }
-            }
-        }
-
         let proj_q_out = new_matrix_witness_4d(cs.clone(), &inner.proj_q.q_out_proj);
         let proj_q_r = new_matrix_witness_4d(cs.clone(), &inner.proj_q.r_out_proj);
         let proj_k_out = new_matrix_witness_4d(cs.clone(), &inner.proj_k.q_out_proj);
