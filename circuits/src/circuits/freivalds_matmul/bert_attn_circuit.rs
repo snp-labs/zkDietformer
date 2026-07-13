@@ -867,7 +867,7 @@ where
         }
 
         // ── Log circuit output (proj_o_out) ──────────────────────────────────
-        println!("\n=== Circuit Output (proj_o_out) ===");
+        /*println!("\n=== Circuit Output (proj_o_out) ===");
         for (b, batch) in final_circuit.proj_o.q_out_proj.iter().enumerate() {
             for (h, head) in batch.iter().enumerate() {
                 println!("  [batch={}, head={}] shape=[{}][{}]", b, h, head.len(), head[0].len());
@@ -878,7 +878,7 @@ where
                     println!("    seq[{}]: {:?}", s, vals);
                 }
             }
-        }
+        }*/
         println!("  output_hash = {:?}", final_circuit.output_hash.into_bigint());
 
         // ── Groth16 proof size report ──

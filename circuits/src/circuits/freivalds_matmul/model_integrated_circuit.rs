@@ -1482,7 +1482,7 @@ where
             AttnWitness::Nystrom(w) => (&w.proj_o.q_out_proj, w.output_hash),
             AttnWitness::Bert(w) => (&w.proj_o.q_out_proj, w.output_hash),
         };
-        println!("\n=== Circuit Output (proj_o_out) Layer {} ===", layer_idx);
+        /*println!("\n=== Circuit Output (proj_o_out) Layer {} ===", layer_idx);
         for (b, batch) in proj_o_out.iter().enumerate() {
             for (h, head) in batch.iter().enumerate() {
                 println!("  [batch={}, head={}] shape=[{}][{}]", b, h, head.len(), head[0].len());
@@ -1493,7 +1493,7 @@ where
                     println!("    seq[{}]: {:?}", s, vals);
                 }
             }
-        }
+        }*/
         println!("  output_hash = {:?}", output_hash.into_bigint());
     }
 

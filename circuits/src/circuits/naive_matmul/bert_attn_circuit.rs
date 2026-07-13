@@ -521,7 +521,7 @@ where
         }
 
         // ── Log circuit output (proj_o_out) ──────────────────────────────────
-        println!("\n=== Circuit Output (proj_o_out) ===");
+        /*println!("\n=== Circuit Output (proj_o_out) ===");
         for (b, batch) in final_inner.proj_o.q_out_proj.iter().enumerate() {
             for (h, head) in batch.iter().enumerate() {
                 println!("  [batch={}, head={}] shape=[{}][{}]", b, h, head.len(), head[0].len());
@@ -532,7 +532,7 @@ where
                     println!("    seq[{}]: {:?}", s, vals);
                 }
             }
-        }
+        }*/
         println!("  output_hash = {:?}", final_inner.output_hash.into_bigint());
 
         // ── [2] Lasso (uses original circuit type — data fields identical) ───
