@@ -255,9 +255,54 @@ where
         let g16_commit_ms = g16_commit_start.elapsed().as_millis();
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
+        // ── Compute Poseidon hashes for attention layer ─────────────────────
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
+        let mut circuit_with_hashes = circuit.clone();
+        {
+            let attn_w = &mut circuit_with_hashes.attn;
+            // input_hash
+            {
+                let x_input = match attn_w {
+                    AttnWitness::Nystrom(w) => &w.q_x_input,
+                    AttnWitness::Bert(w) => &w.q_x_input,
+                };
+                let mut x_flat: Vec<Fr> = Vec::new();
+                for batch in x_input {
+                    for seq in batch {
+                        x_flat.extend(seq.iter());
+                    }
+                }
+                let ih = crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &x_flat);
+                match attn_w {
+                    AttnWitness::Nystrom(w) => w.input_hash = ih,
+                    AttnWitness::Bert(w) => w.input_hash = ih,
+                }
+            }
+            // output_hash
+            {
+                let proj_o_out = match attn_w {
+                    AttnWitness::Nystrom(w) => &w.proj_o.q_out_proj,
+                    AttnWitness::Bert(w) => &w.proj_o.q_out_proj,
+                };
+                let mut output_flat: Vec<Fr> = Vec::new();
+                for batch in proj_o_out {
+                    for head in batch {
+                        for seq in head {
+                            output_flat.extend(seq.iter());
+                        }
+                    }
+                }
+                let oh = crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &output_flat);
+                match attn_w {
+                    AttnWitness::Nystrom(w) => w.output_hash = oh,
+                    AttnWitness::Bert(w) => w.output_hash = oh,
+                }
+            }
+        }
+
         let final_circuit = BlockIntegratedCircuit {
             r_challenge: r_fs,
-            ..circuit.clone()
+            ..circuit_with_hashes
         };
 
         // [1] Groth16 Prove
@@ -273,7 +318,11 @@ where
 
         // [1] Groth16 Verify
         let g16_verify_start = Instant::now();
-        let result = verify_proof::<E>(&pvk, &proof, &[r_fs]);
+        let (input_hash, output_hash) = match &final_circuit.attn {
+            AttnWitness::Nystrom(w) => (w.input_hash, w.output_hash),
+            AttnWitness::Bert(w) => (w.input_hash, w.output_hash),
+        };
+        let result = verify_proof::<E>(&pvk, &proof, &[r_fs, input_hash, output_hash]);
         let g16_verify_time = g16_verify_start.elapsed();
         println!("  - Block L{} SNARK Verification: {:?}", layer_idx, result);
         if let Err(e) = result {

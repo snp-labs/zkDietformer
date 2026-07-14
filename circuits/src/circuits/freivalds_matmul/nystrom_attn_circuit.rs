@@ -91,6 +91,8 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub k_bits: usize,
     pub mask: Vec<Vec<F>>,
 
+    /// Poseidon hash of flatten(q_x_input) — native precomputed, declared as public input
+    pub input_hash: F,
     /// Poseidon hash of flatten(proj_o_out) — native precomputed, declared as public input
     pub output_hash: F,
 
@@ -123,11 +125,11 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let sm2_vars = self.sm2.alloc_vars(cs.clone())?;
         let sm3_vars = self.sm3.alloc_vars(cs.clone())?;
 
-        // === Projection input allocation (public input) ===
+        // === Projection input allocation (witness) ===
         // X_input [B][S][HD] — common input for Q/K/V projections
         let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_x_input.iter().map(|batch| {
             batch.iter().map(|seq| {
-                seq.iter().map(|v| FpVar::new_input(cs.clone(), || Ok(*v)).unwrap()).collect()
+                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
             }).collect()
         }).collect();
 
@@ -718,6 +720,26 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             final_vars.extend(r3_pool);
         }
 
+        // === Poseidon hash of x_input → public input ===
+        {
+            use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+            use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+
+            let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
+            let declared_input_hash = FpVar::new_input(cs.clone(), || Ok(self.input_hash))?;
+
+            let mut x_flat: Vec<FpVar<F>> = Vec::new();
+            for batch in &x_input_vars {
+                for seq in batch {
+                    x_flat.extend(seq.iter().cloned());
+                }
+            }
+            let mut sponge_var = PoseidonSpongeVar::new(cs.clone(), &poseidon_config);
+            sponge_var.absorb(&x_flat)?;
+            let computed_hash = sponge_var.squeeze_field_elements(1)?;
+            computed_hash[0].enforce_equal(&declared_input_hash)?;
+        }
+
         // === Poseidon hash of output → public input ===
         {
             use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
@@ -725,7 +747,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
             let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
 
-            // 1. Public input: declared hash value
             let declared_hash = FpVar::new_input(cs.clone(), || Ok(self.output_hash))?;
 
             // 2. Flatten proj_o_out and compute in-circuit Poseidon hash
@@ -912,6 +933,7 @@ where
         seg_size: seg,
         k_bits,
         mask: to_field_2d_i64(&mask_raw),
+        input_hash: E::ScalarField::zero(),
         output_hash: E::ScalarField::zero(),
 
         committed_vars: Rc::new(RefCell::new(Vec::new())),
@@ -1001,8 +1023,17 @@ where
 
         let r_fs = hash_cm_to_field::<E>(&cm1);
 
-        // ── Compute Poseidon hash of proj_o_out (native) ─────────────────────
+        // ── Compute Poseidon hashes (native) ──────────────────────────────────
         let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
+        let input_hash = {
+            let mut x_flat: Vec<Fr> = Vec::new();
+            for batch in &sample_circuit.q_x_input {
+                for seq in batch {
+                    x_flat.extend(seq.iter());
+                }
+            }
+            crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &x_flat)
+        };
         let output_hash = {
             let mut output_flat: Vec<Fr> = Vec::new();
             for batch in &sample_circuit.proj_o.q_out_proj {
@@ -1018,6 +1049,7 @@ where
         println!("=== [1] Building final circuit with Fiat-Shamir challenge ===");
         let final_circuit = NystromAttentionCircuit {
             r_challenge: r_fs,
+            input_hash,
             output_hash,
             ..sample_circuit.clone()
         };
@@ -1039,13 +1071,11 @@ where
         let proof_size = proof_bytes.len();
 
         // ── [1] Groth16 Verify ───────────────────────────────────────────────
-        let mut public_inputs = vec![final_circuit.r_challenge];
-        for batch in &final_circuit.q_x_input {
-            for seq in batch {
-                public_inputs.extend(seq.iter().cloned());
-            }
-        }
-        public_inputs.push(final_circuit.output_hash);
+        let public_inputs = vec![
+            final_circuit.r_challenge,
+            final_circuit.input_hash,
+            final_circuit.output_hash,
+        ];
         let groth16_verify_start = Instant::now();
         let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
         let groth16_verify_time = groth16_verify_start.elapsed();

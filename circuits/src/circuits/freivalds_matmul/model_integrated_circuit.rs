@@ -123,6 +123,7 @@ pub struct NystromAttnWitness<F: PrimeField> {
     pub limb_bits: usize,
     pub k_segments: usize,
     pub k_bits: usize,
+    pub input_hash: F,
     pub output_hash: F,
 }
 
@@ -154,6 +155,7 @@ pub struct BertAttnWitness<F: PrimeField> {
     pub k_segments: usize,
     pub k_bits: usize,
     pub mask: Vec<Vec<F>>,
+    pub input_hash: F,
     pub output_hash: F,
 }
 
@@ -400,6 +402,7 @@ where
         frac_bits, limb_bits, k_segments, k_bits,
         seg_size: seg,
         mask: to_field_2d_i64(&mask_raw),
+        input_hash: E::ScalarField::zero(),
         output_hash: E::ScalarField::zero(),
     })
 }
@@ -512,6 +515,7 @@ where
         matmul_attn, sm, matmul_x,
         frac_bits, limb_bits, k_segments, k_bits,
         mask: to_field_2d_i64(&mask_raw),
+        input_hash: E::ScalarField::zero(),
         output_hash: E::ScalarField::zero(),
     })
 }
@@ -613,9 +617,9 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let sm2_vars = w.sm2.alloc_vars(cs.clone())?;
     let sm3_vars = w.sm3.alloc_vars(cs.clone())?;
 
-    // === Projection input allocation (public input for x_input) ===
+    // === Projection input allocation (witness for x_input) ===
     let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_x_input.iter().map(|batch|
-        batch.iter().map(|seq| seq.iter().map(|v| FpVar::new_input(cs.clone(), || Ok(*v)).unwrap()).collect()).collect()
+        batch.iter().map(|seq| seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()).collect()
     ).collect();
     let proj_q_out = new_matrix_witness_4d(cs.clone(), &w.proj_q.q_out_proj);
     let proj_q_r = new_matrix_witness_4d(cs.clone(), &w.proj_q.r_out_proj);
@@ -927,6 +931,26 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         final_vars.extend(r3_pool);
     }
 
+    // === Poseidon hash of x_input → public input ===
+    {
+        use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+        use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
+        let declared_input_hash = FpVar::new_input(cs.clone(), || Ok(w.input_hash))?;
+
+        let mut x_flat: Vec<FpVar<F>> = Vec::new();
+        for batch in &x_input_vars {
+            for seq in batch {
+                x_flat.extend(seq.iter().cloned());
+            }
+        }
+        let mut sponge_var = PoseidonSpongeVar::new(cs.clone(), &poseidon_config);
+        sponge_var.absorb(&x_flat)?;
+        let computed_hash = sponge_var.squeeze_field_elements(1)?;
+        computed_hash[0].enforce_equal(&declared_input_hash)?;
+    }
+
     // === Poseidon hash of output → public input ===
     {
         use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
@@ -967,9 +991,9 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     let mut r2_pool = Vec::new();
     let mut r3_pool = Vec::new();
 
-    // === Projection input allocation (public input for x_input) ===
+    // === Projection input allocation (witness for x_input) ===
     let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_x_input.iter().map(|batch|
-        batch.iter().map(|seq| seq.iter().map(|v| FpVar::new_input(cs.clone(), || Ok(*v)).unwrap()).collect()).collect()
+        batch.iter().map(|seq| seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()).collect()
     ).collect();
     let proj_q_out = new_matrix_witness_4d(cs.clone(), &w.proj_q.q_out_proj);
     let proj_q_r = new_matrix_witness_4d(cs.clone(), &w.proj_q.r_out_proj);
@@ -1152,6 +1176,26 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
         final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
         final_vars.extend(r2_pool);
         final_vars.extend(r3_pool);
+    }
+
+    // === Poseidon hash of x_input → public input ===
+    {
+        use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+        use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<F>();
+        let declared_input_hash = FpVar::new_input(cs.clone(), || Ok(w.input_hash))?;
+
+        let mut x_flat: Vec<FpVar<F>> = Vec::new();
+        for batch in &x_input_vars {
+            for seq in batch {
+                x_flat.extend(seq.iter().cloned());
+            }
+        }
+        let mut sponge_var = PoseidonSpongeVar::new(cs.clone(), &poseidon_config);
+        sponge_var.absorb(&x_flat)?;
+        let computed_hash = sponge_var.squeeze_field_elements(1)?;
+        computed_hash[0].enforce_equal(&declared_input_hash)?;
     }
 
     // === Poseidon hash of output → public input ===
@@ -1414,10 +1458,29 @@ where
     let g16_commit_ms = g16_commit_start.elapsed().as_millis();
     let r_fs = hash_cm_to_field::<E>(&cm1);
 
-    // ── Compute Poseidon hash of proj_o_out for each attention layer ────────
+    // ── Compute Poseidon hashes for each attention layer ─────────────────────
     let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
     let mut circuit_with_hashes = circuit.clone();
     for attn_w in &mut circuit_with_hashes.attn_layers {
+        // input_hash = Poseidon(flatten(q_x_input))
+        {
+            let x_input = match attn_w {
+                AttnWitness::Nystrom(w) => &w.q_x_input,
+                AttnWitness::Bert(w) => &w.q_x_input,
+            };
+            let mut x_flat: Vec<Fr> = Vec::new();
+            for batch in x_input {
+                for seq in batch {
+                    x_flat.extend(seq.iter());
+                }
+            }
+            let ih = crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &x_flat);
+            match attn_w {
+                AttnWitness::Nystrom(w) => w.input_hash = ih,
+                AttnWitness::Bert(w) => w.input_hash = ih,
+            }
+        }
+        // output_hash = Poseidon(flatten(proj_o_out))
         let proj_o_out = match attn_w {
             AttnWitness::Nystrom(w) => &w.proj_o.q_out_proj,
             AttnWitness::Bert(w) => &w.proj_o.q_out_proj,
@@ -1458,15 +1521,11 @@ where
     let g16_verify_start = Instant::now();
     let mut public_inputs = vec![r_fs];
     for attn_w in &final_circuit.attn_layers {
-        let (x_input, output_hash) = match attn_w {
-            AttnWitness::Nystrom(w) => (&w.q_x_input, w.output_hash),
-            AttnWitness::Bert(w) => (&w.q_x_input, w.output_hash),
+        let (input_hash, output_hash) = match attn_w {
+            AttnWitness::Nystrom(w) => (w.input_hash, w.output_hash),
+            AttnWitness::Bert(w) => (w.input_hash, w.output_hash),
         };
-        for batch in x_input {
-            for seq in batch {
-                public_inputs.extend(seq.iter().cloned());
-            }
-        }
+        public_inputs.push(input_hash);
         public_inputs.push(output_hash);
     }
     let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
