@@ -1,7 +1,7 @@
 use std::{fs::File, path::Path, str::FromStr, time::Instant};
 use anyhow::{Context, Result};
 use ark_ec::pairing::Pairing;
-use ndarray::{IxDyn, Ix0, Ix2, Ix3, Ix4};
+use ndarray::{Ix0, Ix2, Ix3, Ix4};
 use ndarray_npy::NpzReader;
 use ark_std::{
     rc::Rc, fs, UniformRand,
@@ -32,14 +32,14 @@ use crate::{
                 new_matrix_witness_4d, transpose_matrix,
             },
         },
-        softmax::constraints::{SoftmaxBundle, enforce_softmax},
+        softmax::constraints::{SoftmaxBundle, SoftmaxVarBundle, enforce_softmax},
     },
     lasso::poly::{
         commitments::MultiCommitGens,
         dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds},
     },
     util::{
-        load::{to_field_2d_i64, to_field_3d_i64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
+        load::{to_field_2d_i64, to_field_3d_i64, to_field_4d_i64, to_field_4d_u64},
         bert_attn_lookup::{run_bert_lasso_bundle, run_all_bert_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
@@ -81,11 +81,9 @@ pub struct BERTAttentionCircuit<F: PrimeField> {
     pub matmul_x: MatmulBundle<F>,
 
     pub frac_bits: usize,
-    pub limb_bits: usize,
-    pub k_segments: usize,
     pub r_challenge: F,
     pub k_bits: usize,
-    pub mask: Vec<Vec<F>>, 
+    pub mask: Vec<Vec<F>>,
 
     /// Poseidon hash of flatten(q_x_input) — native precomputed, declared as public input
     pub input_hash: F,
@@ -107,9 +105,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
 
-        // 16-bit remainder pools accumulated across all (b, h)
-        let mut r2_pool = Vec::new(); // from sm.r_exp (5D)
-        let mut r3_pool = Vec::new(); // from sm.r_div (4D)
+        // v3: r2_pool removed (no exp chain in v3)
+        let mut r_div_lows = Vec::new();
+        let mut r_div_highs = Vec::new();
 
         // === Projection input allocation (witness) ===
         let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_x_input.iter().map(|batch| {
@@ -185,8 +183,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
         // ── Per-(batch, head) loop ────────────────────────────────────────────
         let mut global_attn_lows  = Vec::new();
         let mut global_attn_highs = Vec::new();
-        let mut global_sm_idx   = vec![Vec::new(); 5];
-        let mut global_sm_r_sm  = vec![Vec::new(); 2];
+        // v3: single pool (C=1)
+        let mut global_sm_idx: Vec<FpVar<F>> = Vec::new();
+        let mut global_sm_r_sm: [Vec<FpVar<F>>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
         let mut global_x_lows   = Vec::new();
         let mut global_x_highs  = Vec::new();
 
@@ -304,45 +303,43 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 global_attn_lows.extend(h_attn_lows);
                 global_attn_highs.extend(h_attn_highs);
 
-                // [2] Mask padding key positions in attention scores [S×S]
-                let seq_len = attn_data.q_sim[b][h].len();
-                let col_len = attn_data.q_sim[b][h][0].len();
-                let mut masked_q_sim = attn_data.q_sim[b][h].clone();
-                for row in 0..seq_len {
-                    for col in 0..col_len {
-                        let is_valid = mask_var[b][col].is_one()?;
-                        masked_q_sim[row][col] = FpVar::conditionally_select(
-                            &is_valid,
-                            &attn_data.q_sim[b][h][row][col],
-                            &zero_var,
-                        )?;
-                    }
-                }
-
-                // [3] Full-sequence softmax on masked [S×S] scores
-                let mut h_sm_idx = [const { Vec::new() }; 5];
-                let mut h_sm_r_sm = [const { Vec::new() }; 2];
+                // [2] + [3] v3 softmax: no q_sim masking, mask applied to exp_total
                 enforce_softmax(
                     cs.clone(),
-                    &masked_q_sim,
+                    &attn_data.q_sim[b][h],
                     &attn_data.r_matmul[b][h],
                     &sm_vars.r_sm[b][h],
                     &sm_vars.m_sm,
-                    &sm_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &sm_vars.table_idx[b][h],
+                    &sm_vars.exp_total[b][h],
                     &sm_vars.p[b][h],
                     &sm_vars.r_div[b][h],
+                    &self.sm.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                    &mut h_sm_idx,
-                    &mut h_sm_r_sm,
-                    &mut r2_pool,
-                    &mut r3_pool,
+                    &mut global_sm_idx,
+                    &mut global_sm_r_sm,
+                    &mut r_div_lows,
+                    &mut r_div_highs,
                 )?;
-                for k in 0..5 { global_sm_idx[k].extend(h_sm_idx[k].clone()); }
-                for k in 0..2 { global_sm_r_sm[k].extend(h_sm_r_sm[k].clone()); }
+
+                // v3 mask: verify exp_total=0 at padding positions
+                {
+                    let seq_len = sm_vars.exp_total[b][h].len();
+                    let col_len = sm_vars.exp_total[b][h][0].len();
+                    for row in 0..seq_len {
+                        for col in 0..col_len {
+                            let is_valid = mask_var[b][col].is_one()?;
+                            // If NOT valid (padding), exp_total must be zero
+                            let should_be_zero = FpVar::conditionally_select(
+                                &is_valid,
+                                &zero_var,
+                                &sm_vars.exp_total[b][h][row][col],
+                            )?;
+                            should_be_zero.enforce_equal(&zero_var)?;
+                        }
+                    }
+                }
 
                 // [4] P * V: sm_vars.p[B][H] [S×S] × proj_v_out[B][H] [S×D] → [S×D]
                 let r_pows_x = gen_challenge_vector(&r_var, x_data.q_sim[b][h][0].len());
@@ -402,24 +399,17 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
         {
             let mut final_vars = self.committed_vars.borrow_mut();
 
-            // Softmax index lookup vars (C=5 segments)
-            for seg in 0..5 {
-                final_vars.extend(global_sm_idx[seg].clone());
-            }
+            // === Softmax index lookup vars (C=1, single pool) ===
+            final_vars.extend(global_sm_idx);
 
+            // === 26-bit remainders (C=2: 16+10) ===
+            // Order must match run_all_bert_remainders_with_link target_26bit
             // QK^T matmul remainder splits (low / high)
             final_vars.extend(global_attn_lows);
             final_vars.extend(global_attn_highs);
-
-            // Softmax r_sm (K=2 chunks)
-            for k in 0..2 {
-                final_vars.extend(global_sm_r_sm[k].clone());
-            }
-
             // P*V matmul remainder splits
             final_vars.extend(global_x_lows);
             final_vars.extend(global_x_highs);
-
             // Projection remainders
             final_vars.extend(global_proj_q_lows); final_vars.extend(global_proj_q_highs);
             final_vars.extend(global_proj_k_lows); final_vars.extend(global_proj_k_highs);
@@ -429,9 +419,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
             final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
             final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
 
-            // 16-bit remainder pools
-            final_vars.extend(r2_pool);
-            final_vars.extend(r3_pool);
+            // === 52-bit r_sm (C=4: 16+16+16+4) ===
+            for k in 0..4 {
+                final_vars.extend(global_sm_r_sm[k].clone());
+            }
+
+            // === R_div per-softmax (26-bit C=2: 16+10) ===
+            final_vars.extend(r_div_lows);
+            final_vars.extend(r_div_highs);
         }
 
         // === Poseidon hash of x_input → public input ===
@@ -573,48 +568,14 @@ where
     // ── Metadata ─────────────────────────────────────────────────────────────
     let frac_bits =
         npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
-    let limb_bits =
-        npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("limb_bits.npy")?.into_scalar() as usize;
-    let k_segments =
-        npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_segments.npy")?.into_scalar() as usize;
+    // v3: limb_bits and k_segments removed from NPZ
     let k_bits =
         npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
 
-    // ── Softmax ───────────────────────────────────────────────────────────────
-    // 5D arrays: [K_SEGMENTS=5, B, H, S, S]
-    let limbs_raw =
-        npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("limbs.npy")?;
-    let exp_limbs_raw =
-        npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("exp_limbs.npy")?;
-    let q_exp_raw =
-        npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("Q_exp.npy")?;
-    let r_exp_raw =
-        npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("R_exp.npy")?;
-
-    // limbs / exp_limbs: [K_SEGMENTS=5, B, H, S, S]
-    assert_eq!(limbs_raw.ndim(), 5, "limbs must be 5D [C, B, H, S, S]");
-    assert_eq!(
-        &limbs_raw.shape()[1..], &[b, h, s, s],
-        "limbs inner dims must be [B={b}, H={h}, S={s}, S={s}]"
-    );
-    assert_eq!(
-        exp_limbs_raw.shape(), limbs_raw.shape(),
-        "exp_limbs shape must match limbs [C, B, H, S, S]"
-    );
-
-    // Q_exp / R_exp: [K_SEGMENTS-1=4, B, H, S, S]
-    // combine_exp_limbs produces one fewer segment than the raw limb count.
-    assert_eq!(q_exp_raw.ndim(), 5, "Q_exp must be 5D");
-    assert_eq!(
-        &q_exp_raw.shape()[1..], &[b, h, s, s],
-        "Q_exp inner dims must be [B={b}, H={h}, S={s}, S={s}]"
-    );
-    assert_eq!(
-        r_exp_raw.shape(), q_exp_raw.shape(),
-        "R_exp shape must match Q_exp shape"
-    );
-
-    // 4D softmax arrays: [B, H, S, S]
+    // ── Softmax v3 ──────────────────────────────────────────────────────────
+    // All 4D arrays: [B, H, S, S]
+    let table_idx_raw =
+        npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("table_idx.npy")?.into_dimensionality()?;
     let exp_total_raw =
         npz.by_name::<ndarray::OwnedRepr<u64>, Ix4>("exp_total.npy")?.into_dimensionality()?;
     let p_attn_raw =
@@ -624,20 +585,15 @@ where
     let r_sm_raw =
         npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("r_sm.npy")?.into_dimensionality()?;
 
-    // Shape: P_attn must be [B, H, S, S]
-    assert_eq!(
-        p_attn_raw.shape(), &[b, h, s, s],
-        "P_attn must be [B={b}, H={h}, S={s}, S={s}]"
-    );
+    // Shape: all must be [B, H, S, S]
+    assert_eq!(table_idx_raw.shape(), &[b, h, s, s], "table_idx must be [B={b}, H={h}, S={s}, S={s}]");
+    assert_eq!(p_attn_raw.shape(), &[b, h, s, s], "P_attn must be [B={b}, H={h}, S={s}, S={s}]");
     assert_eq!(exp_total_raw.shape(), p_attn_raw.shape(), "exp_total shape must match P_attn");
     assert_eq!(r_div_attn_raw.shape(), p_attn_raw.shape(), "R_div_attn shape must match P_attn");
     assert_eq!(r_sm_raw.shape(), p_attn_raw.shape(), "r_sm shape must match P_attn");
 
     let sm = SoftmaxBundle {
-        limbs:     to_field_5d_i64(&limbs_raw),
-        exp_limbs: to_field_5d_u64(&exp_limbs_raw),
-        q_exp:     to_field_5d_u64(&q_exp_raw),
-        r_exp:     to_field_5d_u64(&r_exp_raw),
+        table_idx: to_field_4d_i64(&table_idx_raw),
         exp_total: to_field_4d_u64(&exp_total_raw),
         p:         to_field_4d_u64(&p_attn_raw),
         r_div:     to_field_4d_u64(&r_div_attn_raw),
@@ -741,8 +697,6 @@ where
         sm,
         matmul_x,
         frac_bits,
-        limb_bits,
-        k_segments,
         r_challenge: E::ScalarField::zero(),
         k_bits,
         mask: to_field_2d_i64(&mask_raw),

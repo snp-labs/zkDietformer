@@ -25,7 +25,7 @@ use crate::{
             constraints::{MatrixVar, new_matrix_witness},
             quantized::{MatmulBundle, MatmulData, ProjectionBundle, ScalingBundle, PseudoinverseBundle, ZenParams, compute_circuit_landmarks, enforce_freivalds, enforce_scaling, gen_challenge_vector, new_matrix_witness_4d, transpose_matrix},
         },
-        softmax::constraints::{SoftmaxBundle, enforce_softmax},
+        softmax::constraints::{SoftmaxBundle, SoftmaxVarBundle, enforce_softmax},
     },
     lasso::{
         lasso::{
@@ -37,7 +37,7 @@ use crate::{
         utils::random::RandomTape,
     },
     util::{
-        load::{read_array_i64, to_field_2d_i64, to_field_3d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64},
+        load::{read_array_i64, to_field_2d_i64, to_field_3d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64},
         nystrom_attn_lookup::{prove_lasso_for_softmax, run_lasso_bundle, run_all_remainders_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
@@ -66,6 +66,7 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
 
     // === Output Projection ===
     pub z_attn_output: F,
+    pub q_attn_output: Vec<Vec<Vec<F>>>,  // [B][S][HD] — O-proj input (post-conv if conv exists)
     pub proj_o: ProjectionBundle<F>,
 
     pub matmul1: MatmulBundle<F>,
@@ -84,9 +85,7 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub matmul_x: MatmulBundle<F>,
 
     pub frac_bits: usize,
-    pub limb_bits: usize,
-    pub k_segments: usize,
-    pub r_challenge: F, 
+    pub r_challenge: F,
     pub seg_size: usize,
     pub k_bits: usize,
     pub mask: Vec<Vec<F>>,
@@ -108,8 +107,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
 
-        let mut r2_pool = Vec::new(); // FRAC_BITS remainder 5d
-        let mut r3_pool = Vec::new(); // FRAC_BITS remainder 4d
+        // v3: r2_pool removed (no exp chain in v3)
+        // r_div: 26-bit split (low 16 + high 10) — R_div can exceed 2^16
+        let mut r_div_k1_lows = Vec::new();
+        let mut r_div_k1_highs = Vec::new();
+        let mut r_div_k2_lows = Vec::new();
+        let mut r_div_k2_highs = Vec::new();
+        let mut r_div_k3_lows = Vec::new();
+        let mut r_div_k3_highs = Vec::new();
 
         // 1. 공통 입력 할당
         let r_mean_k1 = new_matrix_witness_4d(cs.clone(), &self.matmul1.r_mean);
@@ -128,6 +133,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         // === Projection input allocation (witness) ===
         // X_input [B][S][HD] — common input for Q/K/V projections
         let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_x_input.iter().map(|batch| {
+            batch.iter().map(|seq| {
+                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+            }).collect()
+        }).collect();
+
+        // O-projection input [B][S][HD] — may differ from x_data.q_sim when conv exists
+        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_attn_output.iter().map(|batch| {
             batch.iter().map(|seq| {
                 seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
             }).collect()
@@ -199,12 +211,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
         let mut global_k3_lows = Vec::new(); let mut global_k3_highs = Vec::new();
 
-        let mut global_sm1_idx = vec![Vec::new(); 5];
-        let mut global_sm1_r_sm = vec![Vec::new(); 2];
-        let mut global_sm2_idx = vec![Vec::new(); 5];
-        let mut global_sm2_r_sm = vec![Vec::new(); 2];
-        let mut global_sm3_idx = vec![Vec::new(); 5];
-        let mut global_sm3_r_sm = vec![Vec::new(); 2];
+        // v3: single pool (C=1) per softmax
+        let mut global_sm1_idx: Vec<FpVar<F>> = Vec::new();
+        let mut global_sm1_r_sm: [Vec<FpVar<F>>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        let mut global_sm2_idx: Vec<FpVar<F>> = Vec::new();
+        let mut global_sm2_r_sm: [Vec<FpVar<F>>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        let mut global_sm3_idx: Vec<FpVar<F>> = Vec::new();
+        let mut global_sm3_r_sm: [Vec<FpVar<F>>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
 
         let mut global_inv0_lows = Vec::new(); let mut global_inv0_highs = Vec::new();
         let mut global_inv1_lows = Vec::new(); let mut global_inv1_highs = Vec::new();
@@ -380,100 +393,96 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 )?;
                 global_k3_lows.extend(h_k3_lows); global_k3_highs.extend(h_k3_highs);
                 
-                // Softmax 1
-                let mut h_sm1_idx = [const { Vec::new() }; 5];
-                let mut h_sm1_r_sm = [const { Vec::new() }; 2];
+                // Softmax 1 (v3)
+                let _nc0 = cs.num_constraints();
                 enforce_softmax(
                     cs.clone(),
-                    &k1_data.q_sim[b][h], 
+                    &k1_data.q_sim[b][h],
                     &k1_data.r_matmul[b][h],
-                    &sm1_vars.r_sm[b][h],        
+                    &sm1_vars.r_sm[b][h],
                     &sm1_vars.m_sm,
-                    &sm1_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm1_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm1_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm1_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    //&sm1_vars.exp_total[b][h],
+                    &sm1_vars.table_idx[b][h],
+                    &sm1_vars.exp_total[b][h],
                     &sm1_vars.p[b][h],
                     &sm1_vars.r_div[b][h],
+                    &self.sm1.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                    &mut h_sm1_idx,
-                    &mut h_sm1_r_sm, 
-                    &mut r2_pool,
-                    &mut r3_pool,
+                    &mut global_sm1_idx,
+                    &mut global_sm1_r_sm,
+                    &mut r_div_k1_lows,
+                    &mut r_div_k1_highs,
                 )?;
-                for k in 0..5 { global_sm1_idx[k].extend(h_sm1_idx[k].clone()); }
-                for k in 0..2 { global_sm1_r_sm[k].extend(h_sm1_r_sm[k].clone()); }
+                if b == 0 && h == 0 { println!("[DEBUG] sm1 constraints: {}..{}", _nc0, cs.num_constraints()); }
 
-                // Softmax 2
-                let mut h_sm2_idx = [const { Vec::new() }; 5];
-                let mut h_sm2_r_sm = [const { Vec::new() }; 2];
+                // Softmax 2 (v3)
+                let _nc1 = cs.num_constraints();
                 enforce_softmax(
                     cs.clone(),
-                    &k2_data.q_sim[b][h], 
+                    &k2_data.q_sim[b][h],
                     &k2_data.r_matmul[b][h],
-                    &sm2_vars.r_sm[b][h],        
+                    &sm2_vars.r_sm[b][h],
                     &sm2_vars.m_sm,
-                    &sm2_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm2_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm2_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm2_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &sm2_vars.table_idx[b][h],
+                    &sm2_vars.exp_total[b][h],
                     &sm2_vars.p[b][h],
                     &sm2_vars.r_div[b][h],
+                    &self.sm2.r_div[b][h],
                     self.frac_bits,
                     &two_k_var,
-                    &mut h_sm2_idx,
-                    &mut h_sm2_r_sm, 
-                    &mut r2_pool, 
-                    &mut r3_pool,
+                    &mut global_sm2_idx,
+                    &mut global_sm2_r_sm,
+                    &mut r_div_k2_lows,
+                    &mut r_div_k2_highs,
                 )?;
-                for k in 0..5 { global_sm2_idx[k].extend(h_sm2_idx[k].clone()); }
-                for k in 0..2 { global_sm2_r_sm[k].extend(h_sm2_r_sm[k].clone()); }
 
-                // Softmax 3
+                if b == 0 && h == 0 { println!("[DEBUG] sm2 constraints: {}..{}", _nc1, cs.num_constraints()); }
+
+                // Softmax 3 (v3) — mask applied to exp_total (not q_sim)
+                let _nc2 = cs.num_constraints();
                 let zero_var = FpVar::zero();
-                let num_landmarks = k3_data.q_sim[b][h].len();
-                let seq_len = k3_data.q_sim[b][h][0].len();
 
-                let mut masked_q_sim_k3 = k3_data.q_sim[b][h].clone();
-                for l in 0..num_landmarks {
-                    for s in 0..seq_len {
-                        let is_not_padding = mask_var[b][s].is_one()?; 
-                        
-                        masked_q_sim_k3[l][s] = FpVar::conditionally_select(
-                            &is_not_padding,
-                            &k3_data.q_sim[b][h][l][s], 
-                            &zero_var
-                        )?;
+                // v3: enforce softmax without masking q_sim
+                enforce_softmax(
+                    cs.clone(),
+                    &k3_data.q_sim[b][h],
+                    &k3_data.r_matmul[b][h],
+                    &sm3_vars.r_sm[b][h],
+                    &sm3_vars.m_sm,
+                    &sm3_vars.table_idx[b][h],
+                    &sm3_vars.exp_total[b][h],
+                    &sm3_vars.p[b][h],
+                    &sm3_vars.r_div[b][h],
+                    &self.sm3.r_div[b][h],
+                    self.frac_bits,
+                    &two_k_var,
+                    &mut global_sm3_idx,
+                    &mut global_sm3_r_sm,
+                    &mut r_div_k3_lows,
+                    &mut r_div_k3_highs,
+                )?;
+
+                // v3 mask: verify exp_total=0 at padding positions
+                {
+                    let num_landmarks = sm3_vars.exp_total[b][h].len();
+                    let seq_len = sm3_vars.exp_total[b][h][0].len();
+                    for l in 0..num_landmarks {
+                        for s in 0..seq_len {
+                            let is_valid = mask_var[b][s].is_one()?;
+                            // If NOT valid (padding), exp_total must be zero
+                            let should_be_zero = FpVar::conditionally_select(
+                                &is_valid,
+                                &zero_var,
+                                &sm3_vars.exp_total[b][h][l][s],
+                            )?;
+                            should_be_zero.enforce_equal(&zero_var)?;
+                        }
                     }
                 }
 
-                let mut h_sm3_idx = [const { Vec::new() }; 5];
-                let mut h_sm3_r_sm = [const { Vec::new() }; 2];
-                enforce_softmax(
-                    cs.clone(),
-                    &masked_q_sim_k3, 
-                    &k3_data.r_matmul[b][h],
-                    &sm3_vars.r_sm[b][h],        
-                    &sm3_vars.m_sm,
-                    &sm3_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm3_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm3_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm3_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    //&sm3_vars.exp_total[b][h],
-                    &sm3_vars.p[b][h],
-                    &sm3_vars.r_div[b][h],
-                    self.frac_bits,
-                    &two_k_var,
-                    &mut h_sm3_idx,
-                    &mut h_sm3_r_sm, 
-                    &mut r2_pool,
-                    &mut r3_pool,
-                )?;
-                for k in 0..5 { global_sm3_idx[k].extend(h_sm3_idx[k].clone()); }
-                for k in 0..2 { global_sm3_r_sm[k].extend(h_sm3_r_sm[k].clone()); }
+                if b == 0 && h == 0 { println!("[DEBUG] sm3+mask constraints: {}..{}", _nc2, cs.num_constraints()); }
 
+                let _nc_pinv_start = cs.num_constraints();
                 // moore-penrose
                 let q_inv_var = new_matrix_witness_4d(cs.clone(), &self.pseudo_inv.q_inv);
                 let q_y_vars = self.pseudo_inv.q_y_intermediates.iter()
@@ -526,6 +535,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv0_lows.extend(h_inv0_lows); global_inv0_highs.extend(h_inv0_highs);
+                if b == 0 && h == 0 { println!("[DEBUG] inv0 constraints: {}..{}", _nc_pinv_start, cs.num_constraints()); }
 
                 // Step 2: Q_y1 * P_k2 = P_k2
                 let mut h_inv1_lows = Vec::new(); 
@@ -544,7 +554,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv1_lows.extend(h_inv1_lows); global_inv1_highs.extend(h_inv1_highs);
-                
+                if b == 0 && h == 0 { println!("[DEBUG] inv1 end: {}", cs.num_constraints()); }
+
                 // A_inv * A * A_inv = A_inv
                 // Step 2-1: Q_inv (A+) * P_k2 (A) = Q_y3
                 let mut h_inv2_lows = Vec::new(); 
@@ -563,6 +574,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv2_lows.extend(h_inv2_lows); global_inv2_highs.extend(h_inv2_highs);
+                if b == 0 && h == 0 { println!("[DEBUG] inv2 end: {}", cs.num_constraints()); }
 
                 // Step 2-2: Q_y3 * Q_inv (A+) = Q_y4
                 let mut h_inv3_lows = Vec::new(); 
@@ -581,7 +593,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv3_lows.extend(h_inv3_lows); global_inv3_highs.extend(h_inv3_highs);
-
+                if b == 0 && h == 0 { println!("[DEBUG] inv3 end (pseudo_inv done): {}", cs.num_constraints()); }
 
                 // temp
                 let mut h_temp_lows = Vec::new(); 
@@ -601,6 +613,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_temp_lows.extend(h_temp_lows); global_temp_highs.extend(h_temp_highs);
+                if b == 0 && h == 0 { println!("[DEBUG] matmul_temp end: {}", cs.num_constraints()); }
 
                 // mid
                 let mut h_mid_lows = Vec::new(); 
@@ -620,6 +633,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_mid_lows.extend(h_mid_lows); global_mid_highs.extend(h_mid_highs);
+                if b == 0 && h == 0 { println!("[DEBUG] matmul_mid end: {}", cs.num_constraints()); }
 
                 // X
                 let mut h_x_lows = Vec::new(); 
@@ -639,16 +653,12 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
+                if b == 0 && h == 0 { println!("[DEBUG] matmul_x end: {}", cs.num_constraints()); }
 
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
-                // Construct [S][H*D] input directly from x_data.q_sim (no separate attn_out_vars)
+                // Use q_attn_output [B][S][HD] (post-conv if conv exists, else same as x_data.q_sim)
                 {
-                    let num_heads = x_data.q_sim[b].len();
-                    let s_dim = x_data.q_sim[b][0].len();
-                    let d_per_head = x_data.q_sim[b][0][0].len();
-                    let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
-                        (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
-                    }).collect();
+                    let o_input = &attn_output_vars[b];
 
                     let d_dim = self.proj_o.q_w_diff[h].len();
                     let hd_dim = self.proj_o.q_w_diff[h][0].len();
@@ -673,52 +683,58 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                         Some(&self.proj_o.q_b_diff[h]),
                     )?;
                 }
+                if b == 0 && h == 0 { println!("[DEBUG] O-proj end (head 0): {}", cs.num_constraints()); }
+                if b == 0 && h == 1 { println!("[DEBUG] head 1 end: {}", cs.num_constraints()); }
             }
         }
 
         {
             let mut final_vars = self.committed_vars.borrow_mut();
-        
-            // 1. Softmax 인덱스 블록 (C=5)
-            for seg in 0..5 { final_vars.extend(global_sm1_idx[seg].clone()); }
-            for seg in 0..5 { final_vars.extend(global_sm2_idx[seg].clone()); }
-            for seg in 0..5 { final_vars.extend(global_sm3_idx[seg].clone()); }
-        
-            // MatMul Kernels
+
+            // 1. Softmax 인덱스 블록 (v3: C=1, single pool)
+            final_vars.extend(global_sm1_idx);
+            final_vars.extend(global_sm2_idx);
+            final_vars.extend(global_sm3_idx);
+
+            // === 26-bit remainders (C=2: 16+10) ===
+            // Order must match run_all_remainders_with_link target_26bit
             final_vars.extend(global_k1_lows); final_vars.extend(global_k1_highs);
             final_vars.extend(global_k2_lows); final_vars.extend(global_k2_highs);
             final_vars.extend(global_k3_lows); final_vars.extend(global_k3_highs);
-            
-            // Softmax R_sm
-            for k in 0..2 { final_vars.extend(global_sm1_r_sm[k].clone()); }
-            for k in 0..2 { final_vars.extend(global_sm2_r_sm[k].clone()); }
-            for k in 0..2 { final_vars.extend(global_sm3_r_sm[k].clone()); }
-
             // Moore-Penrose Steps
             final_vars.extend(global_inv0_lows); final_vars.extend(global_inv0_highs);
             final_vars.extend(global_inv1_lows); final_vars.extend(global_inv1_highs);
             final_vars.extend(global_inv2_lows); final_vars.extend(global_inv2_highs);
             final_vars.extend(global_inv3_lows); final_vars.extend(global_inv3_highs);
-
             // Final MatMuls
             final_vars.extend(global_temp_lows); final_vars.extend(global_temp_highs);
             final_vars.extend(global_mid_lows); final_vars.extend(global_mid_highs);
             final_vars.extend(global_x_lows); final_vars.extend(global_x_highs);
-
             // Projection remainders
             final_vars.extend(global_proj_q_lows); final_vars.extend(global_proj_q_highs);
             final_vars.extend(global_proj_k_lows); final_vars.extend(global_proj_k_highs);
             final_vars.extend(global_proj_v_lows); final_vars.extend(global_proj_v_highs);
             final_vars.extend(global_proj_o_lows); final_vars.extend(global_proj_o_highs);
-
             // Scaling remainders
             final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
             final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
 
-            // --- 16-bit Remainders (C=1 Blocks) ---
-            final_vars.extend(r2_pool);
-            final_vars.extend(r3_pool);
+            // === 52-bit r_sm (C=4: 16+16+16+4) ===
+            for k in 0..4 { final_vars.extend(global_sm1_r_sm[k].clone()); }
+            for k in 0..4 { final_vars.extend(global_sm2_r_sm[k].clone()); }
+            for k in 0..4 { final_vars.extend(global_sm3_r_sm[k].clone()); }
+
+            // === R_div per-softmax (26-bit C=2: 16+10) ===
+            // Order must match Lasso results: sm1[low,high], sm2[low,high], sm3[low,high]
+            final_vars.extend(r_div_k1_lows);
+            final_vars.extend(r_div_k1_highs);
+            final_vars.extend(r_div_k2_lows);
+            final_vars.extend(r_div_k2_highs);
+            final_vars.extend(r_div_k3_lows);
+            final_vars.extend(r_div_k3_highs);
         }
+
+        println!("[DEBUG] Before Poseidon: {} constraints", cs.num_constraints());
 
         // === Poseidon hash of x_input → public input ===
         {
@@ -803,17 +819,15 @@ where
     let matmul2 = load_matmul(&mut npz, "k2", true)?;
     let matmul3 = load_matmul(&mut npz, "k3", false)?;
     
+    // v3: single table lookup — load table_idx, exp_total, P, R_div, r_sm, M_sm per kernel
     let load_softmax = |npz: &mut NpzReader<File>, suffix: &str| -> Result<SoftmaxBundle<E::ScalarField>> {
         Ok(SoftmaxBundle {
-            limbs: to_field_5d_i64(&npz.by_name::<_, IxDyn>(&format!("limbs_{}.npy", suffix))?),
-            exp_limbs: to_field_5d_u64(&npz.by_name::<_, IxDyn>(&format!("exp_limbs_{}.npy", suffix))?),
-            q_exp: to_field_5d_u64(&npz.by_name::<_, IxDyn>(&format!("Q_exp_{}.npy", suffix))?),
-            r_exp: to_field_5d_u64(&npz.by_name::<_, IxDyn>(&format!("R_exp_{}.npy", suffix))?),
+            table_idx: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("table_idx_{}.npy", suffix))?.into_dimensionality()?),
             exp_total: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("exp_total_{}.npy", suffix))?.into_dimensionality()?),
             p: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("P_{}.npy", suffix))?.into_dimensionality()?),
             r_div: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("R_div_{}.npy", suffix))?.into_dimensionality()?),
             r_sm: to_field_4d_i64(&npz.by_name::<_, Ix4>(&format!("r_sm_{}.npy", suffix))?.into_dimensionality()?),
-            m_sm: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("M_sm.npy")?.into_scalar()), // 또는 커널별 suffix 적용
+            m_sm: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_sm_{}.npy", suffix))?.into_scalar()),
         })
     };
 
@@ -822,8 +836,7 @@ where
     let sm3 = load_softmax(&mut npz, "k3")?;
 
     let frac_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("frac_bits.npy")?.into_scalar() as usize;
-    let limb_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("limb_bits.npy")?.into_scalar() as usize;
-    let k_segments = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_segments.npy")?.into_scalar() as usize;
+    // v3: limb_bits and k_segments removed from NPZ
     let k_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
     let mask_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix2>("mask.npy")?.into_dimensionality()?;
 
@@ -896,6 +909,7 @@ where
 
     // Output projection
     let z_attn_output = E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_attn_output.npy")?.into_scalar());
+    let q_attn_output = to_field_3d_i64(&npz.by_name::<_, Ix3>("Q_attn_output.npy")?.into_dimensionality()?);
     let proj_o = load_projection(&mut npz, "o")?;
 
     Ok(NystromAttentionCircuit {
@@ -911,6 +925,7 @@ where
         scale_q,
         scale_k,
         z_attn_output,
+        q_attn_output,
         proj_o,
 
         matmul1,
@@ -927,8 +942,6 @@ where
         matmul_x,
 
         frac_bits,
-        limb_bits,
-        k_segments,
         r_challenge: r,
         seg_size: seg,
         k_bits,
@@ -987,6 +1000,8 @@ where
         let cs_witness = ConstraintSystem::<Fr>::new_ref();
         sample_circuit.clone().generate_constraints(cs_witness.clone())?;
         let num_constraints = cs_witness.num_constraints();
+
+        // (constraint check moved to final_circuit below)
 
         let committed_group1 = {
             let vars = sample_circuit.committed_vars.borrow();
@@ -1053,6 +1068,21 @@ where
             output_hash,
             ..sample_circuit.clone()
         };
+
+        // ── DEBUG: R1CS constraint satisfaction check (with correct hashes) ──
+        {
+            let cs_check = ConstraintSystem::<Fr>::new_ref();
+            final_circuit.clone().generate_constraints(cs_check.clone())?;
+            let is_sat = cs_check.is_satisfied().unwrap_or(false);
+            println!("[DEBUG] R1CS is_satisfied (final_circuit) = {}", is_sat);
+            if !is_sat {
+                println!("[DEBUG] num_constraints={}", cs_check.num_constraints());
+                if let Some(unsat) = cs_check.which_is_unsatisfied().unwrap() {
+                    println!("[DEBUG] First unsatisfied: {}", unsat);
+                }
+                return Err(anyhow::anyhow!("R1CS not satisfied (final_circuit)"));
+            }
+        }
 
         // ── [1] Groth16 Prove ────────────────────────────────────────────────
         let groth16_prove_start = Instant::now();

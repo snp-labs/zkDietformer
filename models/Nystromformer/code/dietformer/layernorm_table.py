@@ -22,7 +22,7 @@ EPS_NYSTROMFORMER = 1e-5
 EPS_DEFAULT = EPS_BERT
 
 
-def generate_layernorm_tables(out_dir, k_bits=22, frac_bits=8, eps=EPS_DEFAULT, var_scale=VAR_SCALE):
+def generate_layernorm_tables(out_dir, k_bits=26, frac_bits=8, eps=EPS_DEFAULT, var_scale=VAR_SCALE):
     """
     1/√(real_var + eps) 값을 fixed-point uint64로 표 작성.
 
@@ -51,7 +51,7 @@ def generate_layernorm_tables(out_dir, k_bits=22, frac_bits=8, eps=EPS_DEFAULT, 
     return out_path
 
 
-def get_layernorm_index_multiplier(s_var, k_bits=22, var_scale=VAR_SCALE):
+def get_layernorm_index_multiplier(s_var, k_bits=26, var_scale=VAR_SCALE):
     """
     bert_normalization_pipeline.py 가 호출. 
     VAR_SCALE 을 곱해서 인덱스가 var_real · VAR_SCALE 형태로 떨어지게 한다. 

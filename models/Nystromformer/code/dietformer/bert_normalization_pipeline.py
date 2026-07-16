@@ -130,7 +130,7 @@ def _flatten_block(suffix, block_dict):
 
 
 def process_standard_normalization_debug_npz(
-    debug_npz_path, out_npz_path, k_bits=22, eps=EPS_BERT,
+    debug_npz_path, out_npz_path, k_bits=26, eps=EPS_BERT,
     table_dir="outputs_bert",
 ):
     """LayerNorm + FFN 디버그 npz → 양자화 witness npz 변환.

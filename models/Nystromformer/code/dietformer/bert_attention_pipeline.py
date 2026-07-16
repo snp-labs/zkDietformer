@@ -3,12 +3,11 @@ import numpy as np
 import os
 from quantize import (
     get_quantization_params, quantize_tensor,
-    get_m_constant, sign_bit_grouping_matmul, get_softmax_index_multiplier, check_neg_torch
+    get_m_constant, sign_bit_grouping_matmul, check_neg_torch
 )
 from softmax_table import (
-    generate_softmax_tables,
-    extract_exp_from_segments, combine_exp_limbs,
-    FRAC_BITS, LIMB_BITS, K_SEGMENTS
+    FRAC_BITS, TABLE_FRAC_BITS,
+    generate_fractional_exp_table, softmax_v3_lookup, save_softmax_tables_v3,
 )
 from transformers import BertForMaskedLM, BertConfig
 
@@ -56,7 +55,10 @@ def load_small_bert(
     model = BertForMaskedLM(config)
     return model
 
-def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
+def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
+    # Save v3 softmax table for Rust Lasso lookup
+    save_softmax_tables_v3(os.path.dirname(out_npz_path))
+
     debug = np.load(debug_npz_path, allow_pickle=True)
 
     # ── Phase 0: Linear Projection Witness ──────────────────────────────────
@@ -196,28 +198,16 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     assert Q_score_sim.shape == Y_real.shape, \
         f"Q_score_sim shape {Q_score_sim.shape} != Y_real shape {Y_real.shape}"
 
-    # 3. Softmax Tables 로드
-    table_dir = os.path.dirname(out_npz_path) or "."
-    table_path = generate_softmax_tables(table_dir, k_bits, FRAC_BITS)
-    sm_tables = np.load(table_path)['tables']
+    # 3. Softmax v3 (single table, table_frac_bits=10)
+    exp_table = generate_fractional_exp_table(TABLE_FRAC_BITS, FRAC_BITS)
 
-    # 4. Softmax 처리
-    # 마스크 적용
+    # 4. Softmax 처리 — mask 적용
     mask = debug['mask']
-    mask_4d = mask[:, None, None, :].astype(np.int64)
-    Q_score_sim_masked = Q_score_sim * mask_4d # 0인 부분은 마스킹 처리
+    mask_4d = mask[:, None, None, :].astype(object)
 
-    M_sm = get_softmax_index_multiplier(s_q, s_k, k_bits) #
-    
-    # 5-Segment 분해 및 테이블 룩업
-    limbs, exp_limbs, r_sm = extract_exp_from_segments(Q_score_sim_masked, R_matmul_score, sm_tables, M_sm, k_bits)
-    
-    # 지수값 결합 및 정규화 (P = exp / sum(exp))
-    exp_total, Q_exp, R_exp = combine_exp_limbs(exp_limbs, FRAC_BITS)
-    exp_sum = np.sum(exp_total, axis=-1, keepdims=True)
-    
-    P_attn = (exp_total << FRAC_BITS) // exp_sum
-    R_div_attn = (exp_total << FRAC_BITS) % exp_sum
+    P_attn, R_div_attn, exp_total, exp_sum, M_sm, table_idx, r_sm = \
+        softmax_v3_lookup(Q_score_sim, R_matmul_score, s_y, k_bits, FRAC_BITS,
+                          TABLE_FRAC_BITS, exp_table, mask=mask_4d)
 
     # 5. 최종 출력 행렬곱 (P * V)
     X_real = debug['X']
@@ -270,6 +260,24 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_o_4d = Q_o_flat.reshape(B, S, H, D).transpose(0, 2, 1, 3)
     R_o_4d = R_o_flat.reshape(B, S, H, D).transpose(0, 2, 1, 3)
 
+    # ── Quantization Error Measurement ──────────────────────────────────────
+    o_approx = (Q_o_4d.astype(np.float64) - z_raw_o) * s_raw_o
+    o_ref = o_real_4d.astype(np.float64)
+    _diff = o_ref - o_approx
+    _mse = float(np.mean(_diff ** 2))
+    _rmse = float(np.sqrt(_mse))
+    _max_abs = float(np.max(np.abs(_diff)))
+    _norm_ref = np.linalg.norm(o_ref)
+    _norm_approx = np.linalg.norm(o_approx)
+    _cos_sim = float(np.sum(o_ref * o_approx) / (_norm_ref * _norm_approx + 1e-12))
+    _rel_err = float(np.mean(np.abs(_diff) / (np.abs(o_ref) + 1e-12)))
+    quant_metrics = {
+        "mse": _mse, "rmse": _rmse, "max_abs_error": _max_abs,
+        "cosine_similarity": _cos_sim, "mean_relative_error": _rel_err,
+    }
+    print(f"  [BERT O-proj] MSE={_mse:.6e}  RMSE={_rmse:.6e}  "
+          f"MaxAbs={_max_abs:.6e}  CosSim={_cos_sim:.8f}  RelErr={_rel_err:.6e}")
+
     Q_w_diff_o_per_head = np.array([(Q_w_o[h*D:(h+1)*D, :] - z_w_o).astype(np.int64) for h in range(H)])
     Q_b_diff_o_per_head = Q_b_diff_o.reshape(H, D)
 
@@ -284,6 +292,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         "M_proj_o": np.uint64(M_proj_o),
         "M_prime_proj_o": np.uint64(M_prime_proj_o),
         "z_raw_o": np.uint64(z_raw_o),
+        "s_raw_o": np.float64(s_raw_o),
     })
 
     # 6. NPZ 저장
@@ -303,13 +312,10 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         M_prime_attn=np.uint64(M_prime_score),
         z_sim_attn=np.uint64(z_y),
         
-        # Softmax 결과
+        # Softmax 결과 — v3
         M_sm=np.uint64(M_sm),
-        limbs=limbs.astype(np.int64),
-        exp_limbs=exp_limbs.astype(np.uint64),
+        table_idx=table_idx.astype(np.int64),
         r_sm=r_sm.astype(np.int64),
-        Q_exp=np.stack(Q_exp, axis=0).astype(np.uint64),
-        R_exp=np.stack(R_exp, axis=0).astype(np.uint64),
         exp_total=exp_total.astype(np.uint64),
         P_attn=P_attn.astype(np.uint64),
         R_div_attn=R_div_attn.astype(np.uint64),
@@ -322,11 +328,11 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         M_prime_x=np.uint64(M_prime_x),
         z_sim_x=np.uint64(z_sim_x),
         
-        # 메타데이터 (Nystrom과 동일)
-        sm_tables=sm_tables,
+        # 메타데이터
+        exp_table=exp_table,
+        table_frac_bits=np.uint32(TABLE_FRAC_BITS),
         frac_bits=np.uint32(FRAC_BITS),
-        limb_bits=np.uint32(LIMB_BITS),
-        k_segments=np.uint32(K_SEGMENTS),
         k_bits=np.uint32(k_bits),
         mask=mask.astype(np.int64)
     )
+    return quant_metrics

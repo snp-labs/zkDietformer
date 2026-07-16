@@ -5,7 +5,7 @@ TABLE_SIZE = 1 << 16  # 65536
 FRAC_BITS = 8
 GELU_INDEX_SCALE = 1.0 / (1 << 9)
 
-def generate_gelu_sigmoid_tables(out_dir, k_bits=22, frac_bits=16):
+def generate_gelu_sigmoid_tables(out_dir, k_bits=26, frac_bits=16):
     os.makedirs(out_dir, exist_ok=True)
     
     indices = np.arange(TABLE_SIZE, dtype=np.float64)

@@ -17,14 +17,14 @@ use crate::{
             NystromMLPRMSNormData, NystromMLPLayerNormData, LassoResult,
         },
     },
-    config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M,
+    config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SM_KBITS_C, SM_KBITS_M, SOFTMAX_C, SOFTMAX_M,
              RMSNORM_C, RMSNORM_M, GELU_C, GELU_M},
     lasso::{
         lasso::surge::SparsePolyCommitmentGens,
         poly::{commitments::MultiCommitGens, dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds}},
     },
     util::{
-        nystrom_attn_lookup::{prove_lasso_for_softmax, prove_lasso_for_range_22, prove_lasso_for_range_16},
+        nystrom_attn_lookup::{prove_lasso_for_softmax, prove_lasso_for_range_22, prove_lasso_for_range_52},
         mlp_lookup::{prove_lasso_for_rmsnorm, prove_lasso_for_gelu, prove_lasso_for_range},
     },
 };
@@ -78,20 +78,20 @@ fn run_nystrom_attn_lasso(
     let mut results = Vec::new();
     let mut agg = LassoMetricsAggregate::default();
 
-    // Softmax 3 bundles (sm1, sm2, sm3) → 5 LassoResults each
+    // Softmax 3 bundles (sm1, sm2, sm3) — v3: table_idx is 4D
     for (sm_bundle, name) in [(&w.sm1, "attn_sm1"), (&w.sm2, "attn_sm2"), (&w.sm3, "attn_sm3")] {
         let label = make_lasso_label(layer_idx, name);
-        let b_dim = sm_bundle.limbs[0].len();
-        let h_dim = sm_bundle.limbs[0][0].len();
-        let dim1 = sm_bundle.limbs[0][0][0].len();
-        let dim2 = sm_bundle.limbs[0][0][0][0].len();
+        let b_dim = sm_bundle.table_idx.len();
+        let h_dim = sm_bundle.table_idx[0].len();
+        let dim1 = sm_bundle.table_idx[0][0].len();
+        let dim2 = sm_bundle.table_idx[0][0][0].len();
         let total_sparsity = b_dim * h_dim * dim1 * dim2;
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label, SOFTMAX_C, total_sparsity.next_power_of_two(), SOFTMAX_C, SOFTMAX_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_results, metrics) = prove_lasso_for_softmax(&sm_bundle.limbs, &gens, rng, label)?;
+        let (link_results, metrics) = prove_lasso_for_softmax(&sm_bundle.table_idx, &gens, rng, label)?;
         agg.add(&metrics);
         results.extend(link_results);
         println!("  - Lasso Softmax L{} {} | Time: {:?}", layer_idx, name, start.elapsed());
@@ -102,9 +102,6 @@ fn run_nystrom_attn_lasso(
         (&w.matmul1.r_matmul, "attn_k1_rem"),
         (&w.matmul2.r_matmul, "attn_k2_rem"),
         (&w.matmul3.r_matmul, "attn_k3_rem"),
-        (&w.sm1.r_sm, "attn_sm1_rsm"),
-        (&w.sm2.r_sm, "attn_sm2_rsm"),
-        (&w.sm3.r_sm, "attn_sm3_rsm"),
     ];
 
     // Pseudoinverse steps
@@ -155,40 +152,43 @@ fn run_nystrom_attn_lasso(
         println!("  - L{} {} verified | Count: {} | Time: {:?}", layer_idx, name, total_sparsity, start.elapsed());
     }
 
-    // 16-bit 5D: r_exp for 3 softmaxes
-    for (r_exp_5d, name) in [(&w.sm1.r_exp, "attn_sm1_rexp"), (&w.sm2.r_exp, "attn_sm2_rexp"), (&w.sm3.r_exp, "attn_sm3_rexp")] {
+    // 52-bit 4D: r_sm for 3 softmaxes (v3: 4 limbs [16,16,16,4])
+    for (r_sm_4d, name) in [(&w.sm1.r_sm, "attn_sm1_rsm_52bit"), (&w.sm2.r_sm, "attn_sm2_rsm_52bit"), (&w.sm3.r_sm, "attn_sm3_rsm_52bit")] {
         let label = make_lasso_label(layer_idx, name);
-        let b_dim = r_exp_5d.len();
-        let h_dim = r_exp_5d[0].len();
-        let s_dim = r_exp_5d[0][0].len();
-        let l_dim = r_exp_5d[0][0][0].len();
-        let c_dim = r_exp_5d[0][0][0][0].len();
-        let total_sparsity = b_dim * h_dim * s_dim * l_dim * c_dim;
+        let b_dim = r_sm_4d.len();
+        let h_dim = r_sm_4d[0].len();
+        let s_dim = r_sm_4d[0][0].len();
+        let l_dim = r_sm_4d[0][0][0].len();
+        let total_sparsity = b_dim * h_dim * s_dim * l_dim;
 
-        let mut nz = Vec::with_capacity(total_sparsity);
+        let mut nz: Vec<[usize; SM_KBITS_C]> = Vec::with_capacity(total_sparsity);
         for b in 0..b_dim {
             for h in 0..h_dim {
                 for s in 0..s_dim {
                     for l in 0..l_dim {
-                        for c in 0..c_dim {
-                            nz.push([r_exp_5d[b][h][s][l][c].into_bigint().as_ref()[0] as usize]);
-                        }
+                        let val_u64 = r_sm_4d[b][h][s][l].into_bigint().as_ref()[0];
+                        nz.push([
+                            (val_u64 & 0xFFFF) as usize,
+                            ((val_u64 >> 16) & 0xFFFF) as usize,
+                            ((val_u64 >> 32) & 0xFFFF) as usize,
+                            ((val_u64 >> 48) & 0xF) as usize,    // 4 bits
+                        ]);
                     }
                 }
             }
         }
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
-            label, FRACBITS_C, total_sparsity.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            label, SM_KBITS_C, total_sparsity.next_power_of_two(), SM_KBITS_C, SM_KBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label)?;
-        results.push(link_data);
+        let (link_data, metrics) = prove_lasso_for_range_52(nz, &gens, rng, label)?;
+        results.extend(link_data);
         agg.add(&metrics);
         println!("  - L{} {} verified | Count: {} | Time: {:?}", layer_idx, name, total_sparsity, start.elapsed());
     }
 
-    // 16-bit 4D: r_div for 3 softmaxes
+    // 26-bit 4D: r_div for 3 softmaxes (bounded by exp_sum, can exceed 16-bit)
     for (r_div_4d, name) in [(&w.sm1.r_div, "attn_sm1_rdiv"), (&w.sm2.r_div, "attn_sm2_rdiv"), (&w.sm3.r_div, "attn_sm3_rdiv")] {
         let label = make_lasso_label(layer_idx, name);
         let b_dim = r_div_4d.len();
@@ -202,18 +202,21 @@ fn run_nystrom_attn_lasso(
             for h in 0..h_dim {
                 for s in 0..s_dim {
                     for l in 0..l_dim {
-                        nz.push([r_div_4d[b][h][s][l].into_bigint().as_ref()[0] as usize]);
+                        let val_u64 = r_div_4d[b][h][s][l].into_bigint().as_ref()[0];
+                        let idx0 = (val_u64 & 0xFFFF) as usize;
+                        let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;
+                        nz.push([idx0, idx1]);
                     }
                 }
             }
         }
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
-            label, FRACBITS_C, total_sparsity.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            label, KBITS_C, total_sparsity.next_power_of_two(), KBITS_C, KBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label)?;
-        results.push(link_data);
+        let (link_data, metrics) = prove_lasso_for_range_22(nz, &gens, rng, label)?;
+        results.extend(link_data);
         agg.add(&metrics);
         println!("  - L{} {} verified | Count: {} | Time: {:?}", layer_idx, name, total_sparsity, start.elapsed());
     }
@@ -233,20 +236,20 @@ fn run_bert_attn_lasso(
     let mut results = Vec::new();
     let mut agg = LassoMetricsAggregate::default();
 
-    // Single softmax → 5 LassoResults
+    // Single softmax — v3: table_idx is 4D
     {
         let label = make_lasso_label(layer_idx, "attn_sm");
-        let b_dim = w.sm.limbs[0].len();
-        let h_dim = w.sm.limbs[0][0].len();
-        let dim1 = w.sm.limbs[0][0][0].len();
-        let dim2 = w.sm.limbs[0][0][0][0].len();
+        let b_dim = w.sm.table_idx.len();
+        let h_dim = w.sm.table_idx[0].len();
+        let dim1 = w.sm.table_idx[0][0].len();
+        let dim2 = w.sm.table_idx[0][0][0].len();
         let total_sparsity = b_dim * h_dim * dim1 * dim2;
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label, SOFTMAX_C, total_sparsity.next_power_of_two(), SOFTMAX_C, SOFTMAX_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_results, metrics) = prove_lasso_for_softmax(&w.sm.limbs, &gens, rng, label)?;
+        let (link_results, metrics) = prove_lasso_for_softmax(&w.sm.table_idx, &gens, rng, label)?;
         agg.add(&metrics);
         results.extend(link_results);
         println!("  - Lasso Softmax L{} bert_sm | Time: {:?}", layer_idx, start.elapsed());
@@ -255,7 +258,6 @@ fn run_bert_attn_lasso(
     // 22-bit remainder checks
     let target_22bit: &[(&Vec<Vec<Vec<Vec<Fr>>>>, &str)] = &[
         (&w.matmul_attn.r_matmul, "attn_rem"),
-        (&w.sm.r_sm, "attn_sm_rsm"),
         (&w.matmul_x.r_matmul, "attn_x_rem"),
         // Projection remainders
         (&w.proj_q.r_out_proj, "proj_q_rem"),
@@ -297,42 +299,44 @@ fn run_bert_attn_lasso(
         println!("  - L{} {} verified | Count: {} | Time: {:?}", layer_idx, name, total_sparsity, start.elapsed());
     }
 
-    // 16-bit 5D: sm.r_exp
+    // 52-bit 4D: sm.r_sm (v3: 4 limbs [16,16,16,4])
     {
-        let r_exp_5d = &w.sm.r_exp;
-        let label = make_lasso_label(layer_idx, "attn_sm_rexp");
-        let c_seg = r_exp_5d.len();
-        let b_batch = r_exp_5d[0].len();
-        let h_num = r_exp_5d[0][0].len();
-        let s1_num = r_exp_5d[0][0][0].len();
-        let s2_num = r_exp_5d[0][0][0][0].len();
-        let total_sparsity = c_seg * b_batch * h_num * s1_num * s2_num;
+        let r_sm_4d = &w.sm.r_sm;
+        let label = make_lasso_label(layer_idx, "attn_sm_rsm_52bit");
+        let b_dim = r_sm_4d.len();
+        let h_dim = r_sm_4d[0].len();
+        let s_dim = r_sm_4d[0][0].len();
+        let l_dim = r_sm_4d[0][0][0].len();
+        let total_sparsity = b_dim * h_dim * s_dim * l_dim;
 
-        // Iterate in (b, h, s1, s2, k) order to match circuit r2_pool accumulation
-        let mut nz = Vec::with_capacity(total_sparsity);
-        for b in 0..b_batch {
-            for h in 0..h_num {
-                for s1 in 0..s1_num {
-                    for s2 in 0..s2_num {
-                        for k in 0..c_seg {
-                            nz.push([r_exp_5d[k][b][h][s1][s2].into_bigint().as_ref()[0] as usize]);
-                        }
+        let mut nz: Vec<[usize; SM_KBITS_C]> = Vec::with_capacity(total_sparsity);
+        for b in 0..b_dim {
+            for h in 0..h_dim {
+                for s in 0..s_dim {
+                    for l in 0..l_dim {
+                        let val_u64 = r_sm_4d[b][h][s][l].into_bigint().as_ref()[0];
+                        nz.push([
+                            (val_u64 & 0xFFFF) as usize,
+                            ((val_u64 >> 16) & 0xFFFF) as usize,
+                            ((val_u64 >> 32) & 0xFFFF) as usize,
+                            ((val_u64 >> 48) & 0xF) as usize,    // 4 bits
+                        ]);
                     }
                 }
             }
         }
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
-            label, FRACBITS_C, total_sparsity.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            label, SM_KBITS_C, total_sparsity.next_power_of_two(), SM_KBITS_C, SM_KBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label)?;
-        results.push(link_data);
+        let (link_data, metrics) = prove_lasso_for_range_52(nz, &gens, rng, label)?;
+        results.extend(link_data);
         agg.add(&metrics);
-        println!("  - L{} attn_sm_rexp verified | Count: {} | Time: {:?}", layer_idx, total_sparsity, start.elapsed());
+        println!("  - L{} attn_sm_rsm_52bit verified | Count: {} | Time: {:?}", layer_idx, total_sparsity, start.elapsed());
     }
 
-    // 16-bit 4D: sm.r_div
+    // 26-bit 4D: sm.r_div (bounded by exp_sum, can exceed 16-bit)
     {
         let matrix_4d = &w.sm.r_div;
         let label = make_lasso_label(layer_idx, "attn_sm_rdiv");
@@ -347,18 +351,21 @@ fn run_bert_attn_lasso(
             for h in 0..h_dim {
                 for s in 0..s_dim {
                     for l in 0..l_dim {
-                        nz.push([matrix_4d[b][h][s][l].into_bigint().as_ref()[0] as usize]);
+                        let val_u64 = matrix_4d[b][h][s][l].into_bigint().as_ref()[0];
+                        let idx0 = (val_u64 & 0xFFFF) as usize;
+                        let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;
+                        nz.push([idx0, idx1]);
                     }
                 }
             }
         }
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
-            label, FRACBITS_C, total_sparsity.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            label, KBITS_C, total_sparsity.next_power_of_two(), KBITS_C, KBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label)?;
-        results.push(link_data);
+        let (link_data, metrics) = prove_lasso_for_range_22(nz, &gens, rng, label)?;
+        results.extend(link_data);
         agg.add(&metrics);
         println!("  - L{} attn_sm_rdiv verified | Count: {} | Time: {:?}", layer_idx, total_sparsity, start.elapsed());
     }

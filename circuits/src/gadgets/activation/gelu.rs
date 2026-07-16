@@ -23,7 +23,7 @@ pub fn split_remainder_and_push<F: PrimeField>(
 ) -> Result<(FpVar<F>, FpVar<F>), SynthesisError> {
     let r_u64 = r_val_raw.into_bigint().as_ref()[0];
     let r_low_val = r_u64 & 0xFFFF; // 16 bits for low part
-    let r_high_val = (r_u64 >> 16) & 0x3F; // 6 bits for high part
+    let r_high_val = (r_u64 >> 16) & 0x3FF; // 10 bits for high part (26-bit total)
 
     let r_low_var = FpVar::new_witness(cs.clone(), || Ok(F::from(r_low_val)))?;
     let r_high_var = FpVar::new_witness(cs.clone(), || Ok(F::from(r_high_val)))?;

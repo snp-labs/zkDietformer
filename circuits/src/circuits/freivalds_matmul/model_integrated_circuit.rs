@@ -64,7 +64,7 @@ use crate::{
         load::{
             read_array_i64, to_field_1d_i64, to_field_2d_i32, to_field_2d_i64,
             to_field_3d_i32, to_field_3d_i64, to_field_3d_u64,
-            to_field_4d_i64, to_field_4d_u64, to_field_5d_i64, to_field_5d_u64,
+            to_field_4d_i64, to_field_4d_u64, to_field_5d_i64,
         },
         norm_detect::{NormType, detect_norm_type},
         utils::{cm1_from_vk, hash_cm_to_field},
@@ -300,10 +300,7 @@ where
 
     let load_softmax = |npz: &mut NpzReader<File>, suffix: &str| -> Result<SoftmaxBundle<E::ScalarField>> {
         Ok(SoftmaxBundle {
-            limbs: to_field_5d_i64(&npz.by_name::<_, IxDyn>(&format!("limbs_{}.npy", suffix))?),
-            exp_limbs: to_field_5d_u64(&npz.by_name::<_, IxDyn>(&format!("exp_limbs_{}.npy", suffix))?),
-            q_exp: to_field_5d_u64(&npz.by_name::<_, IxDyn>(&format!("Q_exp_{}.npy", suffix))?),
-            r_exp: to_field_5d_u64(&npz.by_name::<_, IxDyn>(&format!("R_exp_{}.npy", suffix))?),
+            table_idx: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("table_idx_{}.npy", suffix))?.into_dimensionality()?),
             exp_total: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("exp_total_{}.npy", suffix))?.into_dimensionality()?),
             p: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("P_{}.npy", suffix))?.into_dimensionality()?),
             r_div: to_field_4d_u64(&npz.by_name::<_, Ix4>(&format!("R_div_{}.npy", suffix))?.into_dimensionality()?),
@@ -438,20 +435,14 @@ where
     let k_segments = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_segments.npy")?.into_scalar() as usize;
     let k_bits = npz.by_name::<ndarray::OwnedRepr<u32>, Ix0>("k_bits.npy")?.into_scalar() as usize;
 
-    let limbs_raw = npz.by_name::<ndarray::OwnedRepr<i64>, IxDyn>("limbs.npy")?;
-    let exp_limbs_raw = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("exp_limbs.npy")?;
-    let q_exp_raw = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("Q_exp.npy")?;
-    let r_exp_raw = npz.by_name::<ndarray::OwnedRepr<u64>, IxDyn>("R_exp.npy")?;
+    let table_idx_raw = npz.by_name::<ndarray::OwnedRepr<u64>, Ix4>("table_idx.npy")?.into_dimensionality()?;
     let exp_total_raw = npz.by_name::<ndarray::OwnedRepr<u64>, Ix4>("exp_total.npy")?.into_dimensionality()?;
     let p_attn_raw = npz.by_name::<ndarray::OwnedRepr<u64>, Ix4>("P_attn.npy")?.into_dimensionality()?;
     let r_div_attn_raw = npz.by_name::<ndarray::OwnedRepr<u64>, Ix4>("R_div_attn.npy")?.into_dimensionality()?;
     let r_sm_raw = npz.by_name::<ndarray::OwnedRepr<i64>, Ix4>("r_sm.npy")?.into_dimensionality()?;
 
     let sm = SoftmaxBundle {
-        limbs: to_field_5d_i64(&limbs_raw),
-        exp_limbs: to_field_5d_u64(&exp_limbs_raw),
-        q_exp: to_field_5d_u64(&q_exp_raw),
-        r_exp: to_field_5d_u64(&r_exp_raw),
+        table_idx: to_field_4d_u64(&table_idx_raw),
         exp_total: to_field_4d_u64(&exp_total_raw),
         p: to_field_4d_u64(&p_attn_raw),
         r_div: to_field_4d_u64(&r_div_attn_raw),
@@ -602,8 +593,13 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     committed_vars: &Rc<RefCell<Vec<FpVar<F>>>>,
     committed_vars_2: &Rc<RefCell<Vec<FpVar<F>>>>,
 ) -> Result<(), SynthesisError> {
-    let mut r2_pool = Vec::new();
-    let mut r3_pool = Vec::new();
+    // r_div: 26-bit split (low 16 + high 10) — per-softmax pools
+    let mut r_div_k1_lows = Vec::new();
+    let mut r_div_k1_highs = Vec::new();
+    let mut r_div_k2_lows = Vec::new();
+    let mut r_div_k2_highs = Vec::new();
+    let mut r_div_k3_lows = Vec::new();
+    let mut r_div_k3_highs = Vec::new();
 
     let r_mean_k1 = new_matrix_witness_4d(cs.clone(), &w.matmul1.r_mean);
     let r_mean_k2 = new_matrix_witness_4d(cs.clone(), &w.matmul2.r_mean);
@@ -673,12 +669,12 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
     let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
     let mut global_k3_lows = Vec::new(); let mut global_k3_highs = Vec::new();
-    let mut global_sm1_idx = vec![Vec::new(); 5];
-    let mut global_sm1_r_sm = vec![Vec::new(); 2];
-    let mut global_sm2_idx = vec![Vec::new(); 5];
-    let mut global_sm2_r_sm = vec![Vec::new(); 2];
-    let mut global_sm3_idx = vec![Vec::new(); 5];
-    let mut global_sm3_r_sm = vec![Vec::new(); 2];
+    let mut global_sm1_idx = Vec::new();
+    let mut global_sm1_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut global_sm2_idx = Vec::new();
+    let mut global_sm2_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut global_sm3_idx = Vec::new();
+    let mut global_sm3_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut global_inv0_lows = Vec::new(); let mut global_inv0_highs = Vec::new();
     let mut global_inv1_lows = Vec::new(); let mut global_inv1_highs = Vec::new();
     let mut global_inv2_lows = Vec::new(); let mut global_inv2_highs = Vec::new();
@@ -779,18 +775,18 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             global_k3_lows.extend(h_k3_lows); global_k3_highs.extend(h_k3_highs);
 
             // Softmax 1
-            let mut h_sm1_idx = [const { Vec::new() }; 5];
-            let mut h_sm1_r_sm = [const { Vec::new() }; 2];
-            enforce_softmax(cs.clone(), &k1_data.q_sim[b][h], &k1_data.r_matmul[b][h], &sm1_vars.r_sm[b][h], &sm1_vars.m_sm, &sm1_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm1_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm1_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm1_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm1_vars.p[b][h], &sm1_vars.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm1_idx, &mut h_sm1_r_sm, &mut r2_pool, &mut r3_pool)?;
-            for k in 0..5 { global_sm1_idx[k].extend(h_sm1_idx[k].clone()); }
-            for k in 0..2 { global_sm1_r_sm[k].extend(h_sm1_r_sm[k].clone()); }
+            let mut h_sm1_idx = Vec::new();
+            let mut h_sm1_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            enforce_softmax(cs.clone(), &k1_data.q_sim[b][h], &k1_data.r_matmul[b][h], &sm1_vars.r_sm[b][h], &sm1_vars.m_sm, &sm1_vars.table_idx[b][h], &sm1_vars.exp_total[b][h], &sm1_vars.p[b][h], &sm1_vars.r_div[b][h], &w.sm1.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm1_idx, &mut h_sm1_r_sm, &mut r_div_k1_lows, &mut r_div_k1_highs)?;
+            global_sm1_idx.extend(h_sm1_idx);
+            for k in 0..4 { global_sm1_r_sm[k].extend(h_sm1_r_sm[k].clone()); }
 
             // Softmax 2
-            let mut h_sm2_idx = [const { Vec::new() }; 5];
-            let mut h_sm2_r_sm = [const { Vec::new() }; 2];
-            enforce_softmax(cs.clone(), &k2_data.q_sim[b][h], &k2_data.r_matmul[b][h], &sm2_vars.r_sm[b][h], &sm2_vars.m_sm, &sm2_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm2_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm2_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm2_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm2_vars.p[b][h], &sm2_vars.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm2_idx, &mut h_sm2_r_sm, &mut r2_pool, &mut r3_pool)?;
-            for k in 0..5 { global_sm2_idx[k].extend(h_sm2_idx[k].clone()); }
-            for k in 0..2 { global_sm2_r_sm[k].extend(h_sm2_r_sm[k].clone()); }
+            let mut h_sm2_idx = Vec::new();
+            let mut h_sm2_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            enforce_softmax(cs.clone(), &k2_data.q_sim[b][h], &k2_data.r_matmul[b][h], &sm2_vars.r_sm[b][h], &sm2_vars.m_sm, &sm2_vars.table_idx[b][h], &sm2_vars.exp_total[b][h], &sm2_vars.p[b][h], &sm2_vars.r_div[b][h], &w.sm2.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm2_idx, &mut h_sm2_r_sm, &mut r_div_k2_lows, &mut r_div_k2_highs)?;
+            global_sm2_idx.extend(h_sm2_idx);
+            for k in 0..4 { global_sm2_r_sm[k].extend(h_sm2_r_sm[k].clone()); }
 
             // Softmax 3 (with mask)
             let zero_var = FpVar::zero();
@@ -803,11 +799,11 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                     masked_q_sim_k3[l][s] = FpVar::conditionally_select(&is_not_padding, &k3_data.q_sim[b][h][l][s], &zero_var)?;
                 }
             }
-            let mut h_sm3_idx = [const { Vec::new() }; 5];
-            let mut h_sm3_r_sm = [const { Vec::new() }; 2];
-            enforce_softmax(cs.clone(), &masked_q_sim_k3, &k3_data.r_matmul[b][h], &sm3_vars.r_sm[b][h], &sm3_vars.m_sm, &sm3_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm3_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm3_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm3_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm3_vars.p[b][h], &sm3_vars.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm3_idx, &mut h_sm3_r_sm, &mut r2_pool, &mut r3_pool)?;
-            for k in 0..5 { global_sm3_idx[k].extend(h_sm3_idx[k].clone()); }
-            for k in 0..2 { global_sm3_r_sm[k].extend(h_sm3_r_sm[k].clone()); }
+            let mut h_sm3_idx = Vec::new();
+            let mut h_sm3_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            enforce_softmax(cs.clone(), &masked_q_sim_k3, &k3_data.r_matmul[b][h], &sm3_vars.r_sm[b][h], &sm3_vars.m_sm, &sm3_vars.table_idx[b][h], &sm3_vars.exp_total[b][h], &sm3_vars.p[b][h], &sm3_vars.r_div[b][h], &w.sm3.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm3_idx, &mut h_sm3_r_sm, &mut r_div_k3_lows, &mut r_div_k3_highs)?;
+            global_sm3_idx.extend(h_sm3_idx);
+            for k in 0..4 { global_sm3_r_sm[k].extend(h_sm3_r_sm[k].clone()); }
 
             // Moore-Penrose pseudoinverse (4 steps)
             let q_inv_var = new_matrix_witness_4d(cs.clone(), &w.pseudo_inv.q_inv);
@@ -901,22 +897,26 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         }
     }
 
-    // Push to committed_vars in the same order as the original
+    // Push to committed_vars in CP-Link ordering
     {
         let mut final_vars = committed_vars.borrow_mut();
-        for seg in 0..5 { final_vars.extend(global_sm1_idx[seg].clone()); }
-        for seg in 0..5 { final_vars.extend(global_sm2_idx[seg].clone()); }
-        for seg in 0..5 { final_vars.extend(global_sm3_idx[seg].clone()); }
+
+        // === Softmax index lookup vars (C=1, single pool) ===
+        final_vars.extend(global_sm1_idx);
+        final_vars.extend(global_sm2_idx);
+        final_vars.extend(global_sm3_idx);
+
+        // === 26-bit remainders (C=2: 16+10) ===
+        // Order must match run_all_remainders_with_link target_26bit
         final_vars.extend(global_k1_lows); final_vars.extend(global_k1_highs);
         final_vars.extend(global_k2_lows); final_vars.extend(global_k2_highs);
         final_vars.extend(global_k3_lows); final_vars.extend(global_k3_highs);
-        for k in 0..2 { final_vars.extend(global_sm1_r_sm[k].clone()); }
-        for k in 0..2 { final_vars.extend(global_sm2_r_sm[k].clone()); }
-        for k in 0..2 { final_vars.extend(global_sm3_r_sm[k].clone()); }
+        // Moore-Penrose Steps
         final_vars.extend(global_inv0_lows); final_vars.extend(global_inv0_highs);
         final_vars.extend(global_inv1_lows); final_vars.extend(global_inv1_highs);
         final_vars.extend(global_inv2_lows); final_vars.extend(global_inv2_highs);
         final_vars.extend(global_inv3_lows); final_vars.extend(global_inv3_highs);
+        // Final MatMuls
         final_vars.extend(global_temp_lows); final_vars.extend(global_temp_highs);
         final_vars.extend(global_mid_lows); final_vars.extend(global_mid_highs);
         final_vars.extend(global_x_lows); final_vars.extend(global_x_highs);
@@ -927,8 +927,20 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         final_vars.extend(global_proj_o_lows); final_vars.extend(global_proj_o_highs);
         final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
         final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
-        final_vars.extend(r2_pool);
-        final_vars.extend(r3_pool);
+
+        // === 52-bit r_sm (C=4: 16+16+16+4) ===
+        for k in 0..4 { final_vars.extend(global_sm1_r_sm[k].clone()); }
+        for k in 0..4 { final_vars.extend(global_sm2_r_sm[k].clone()); }
+        for k in 0..4 { final_vars.extend(global_sm3_r_sm[k].clone()); }
+
+        // === R_div per-softmax (26-bit C=2: 16+10) ===
+        // Order must match Lasso results: sm1[low,high], sm2[low,high], sm3[low,high]
+        final_vars.extend(r_div_k1_lows);
+        final_vars.extend(r_div_k1_highs);
+        final_vars.extend(r_div_k2_lows);
+        final_vars.extend(r_div_k2_highs);
+        final_vars.extend(r_div_k3_lows);
+        final_vars.extend(r_div_k3_highs);
     }
 
     // === Poseidon hash of x_input → public input ===
@@ -988,8 +1000,8 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     committed_vars: &Rc<RefCell<Vec<FpVar<F>>>>,
     committed_vars_2: &Rc<RefCell<Vec<FpVar<F>>>>,
 ) -> Result<(), SynthesisError> {
-    let mut r2_pool = Vec::new();
-    let mut r3_pool = Vec::new();
+    let mut r_div_lows = Vec::new();
+    let mut r_div_highs = Vec::new();
 
     // === Projection input allocation (witness for x_input) ===
     let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_x_input.iter().map(|batch|
@@ -1046,8 +1058,8 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     let sm_vars = w.sm.alloc_vars(cs.clone())?;
 
     let mut global_attn_lows = Vec::new(); let mut global_attn_highs = Vec::new();
-    let mut global_sm_idx = vec![Vec::new(); 5];
-    let mut global_sm_r_sm = vec![Vec::new(); 2];
+    let mut global_sm_idx = Vec::new();
+    let mut global_sm_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut global_x_lows = Vec::new(); let mut global_x_highs = Vec::new();
     // Projection/scaling remainder accumulators
     let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
@@ -1124,11 +1136,11 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
             }
 
             // Full-sequence softmax
-            let mut h_sm_idx = [const { Vec::new() }; 5];
-            let mut h_sm_r_sm = [const { Vec::new() }; 2];
-            enforce_softmax(cs.clone(), &masked_q_sim, &attn_data.r_matmul[b][h], &sm_vars.r_sm[b][h], &sm_vars.m_sm, &sm_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(), &sm_vars.p[b][h], &sm_vars.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm_idx, &mut h_sm_r_sm, &mut r2_pool, &mut r3_pool)?;
-            for k in 0..5 { global_sm_idx[k].extend(h_sm_idx[k].clone()); }
-            for k in 0..2 { global_sm_r_sm[k].extend(h_sm_r_sm[k].clone()); }
+            let mut h_sm_idx = Vec::new();
+            let mut h_sm_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            enforce_softmax(cs.clone(), &masked_q_sim, &attn_data.r_matmul[b][h], &sm_vars.r_sm[b][h], &sm_vars.m_sm, &sm_vars.table_idx[b][h], &sm_vars.exp_total[b][h], &sm_vars.p[b][h], &sm_vars.r_div[b][h], &w.sm.r_div[b][h], w.frac_bits, two_k_var, &mut h_sm_idx, &mut h_sm_r_sm, &mut r_div_lows, &mut r_div_highs)?;
+            global_sm_idx.extend(h_sm_idx);
+            for k in 0..4 { global_sm_r_sm[k].extend(h_sm_r_sm[k].clone()); }
 
             // P * V
             let r_pows_x = gen_challenge_vector(r_var, x_data.q_sim[b][h][0].len());
@@ -1160,12 +1172,16 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
         }
     }
 
-    // Push to committed_vars
+    // Push to committed_vars in CP-Link ordering
     {
         let mut final_vars = committed_vars.borrow_mut();
-        for seg in 0..5 { final_vars.extend(global_sm_idx[seg].clone()); }
+
+        // === Softmax index lookup vars (C=1, single pool) ===
+        final_vars.extend(global_sm_idx);
+
+        // === 26-bit remainders (C=2: 16+10) ===
+        // Order must match run_all_bert_remainders_with_link target_26bit
         final_vars.extend(global_attn_lows); final_vars.extend(global_attn_highs);
-        for k in 0..2 { final_vars.extend(global_sm_r_sm[k].clone()); }
         final_vars.extend(global_x_lows); final_vars.extend(global_x_highs);
         // Projection/scaling remainders
         final_vars.extend(global_proj_q_lows); final_vars.extend(global_proj_q_highs);
@@ -1174,8 +1190,13 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
         final_vars.extend(global_proj_o_lows); final_vars.extend(global_proj_o_highs);
         final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
         final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
-        final_vars.extend(r2_pool);
-        final_vars.extend(r3_pool);
+
+        // === 52-bit r_sm (C=4: 16+16+16+4) ===
+        for k in 0..4 { final_vars.extend(global_sm_r_sm[k].clone()); }
+
+        // === R_div per-softmax (26-bit C=2: 16+10) ===
+        final_vars.extend(r_div_lows);
+        final_vars.extend(r_div_highs);
     }
 
     // === Poseidon hash of x_input → public input ===

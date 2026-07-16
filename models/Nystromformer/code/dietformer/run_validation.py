@@ -296,7 +296,7 @@ def _capture_and_process_nystrom_intermediates(
         if os.path.exists(debug_path):
             # Attention witness (Nystrom 3-kernel pipeline)
             witness_path = debug_path.replace(".npz", ".witness.npz")
-            process_attn_debug_npz(debug_path, witness_path, k_bits=22)
+            process_attn_debug_npz(debug_path, witness_path, k_bits=26)
             print(f"[Nystromformer Batch {batch_idx}] Generated Attention Witness: {witness_path}")
 
             # LayerNorm witness — module name 의 "layer.{i}" 로부터 layer_key 매핑
@@ -311,7 +311,7 @@ def _capture_and_process_nystrom_intermediates(
                     norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
                     process_standard_normalization_debug_npz(
                         norm_debug_path, norm_witness_path,
-                        k_bits=22,
+                        k_bits=26,
                         eps=EPS_NYSTROMFORMER,        # 1e-5 — Nystrom 사전학습 정합
                         table_dir=output_dir_abs,     # 작업 2C 일반화 인자 활용
                     )

@@ -6,13 +6,13 @@ use ark_std::rand::rngs::StdRng;
 use crate::{
     circuits::common::{LassoMetrics, LassoMetricsAggregate},
     circuits::freivalds_matmul::bert_attn_circuit::BERTAttentionCircuit,
-    config::{FRACBITS_C, FRACBITS_M, KBITS_C, KBITS_M, SOFTMAX_C, SOFTMAX_M},
+    config::{KBITS_C, KBITS_M, SM_KBITS_C, SM_KBITS_M, SOFTMAX_C, SOFTMAX_M},
     gadgets::softmax::constraints::SoftmaxBundle,
     lasso::{
         lasso::surge::SparsePolyCommitmentGens,
         poly::{commitments::MultiCommitGens, dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds}},
     },
-    util::nystrom_attn_lookup::{prove_lasso_for_softmax, prove_lasso_for_range_16, prove_lasso_for_range_22},
+    util::nystrom_attn_lookup::{prove_lasso_for_softmax, prove_lasso_for_range_22, prove_lasso_for_range_52},
 };
 
 type G1 = G1Projective;
@@ -27,10 +27,11 @@ pub fn run_bert_lasso_bundle(
     label: &'static [u8],
     rng: &mut StdRng,
 ) -> Result<(Vec<LassoResult>, LassoMetricsAggregate)> {
-    let b_dim = bundle.limbs[0].len();
-    let h_dim = bundle.limbs[0][0].len();
-    let dim1 = bundle.limbs[0][0][0].len();
-    let dim2 = bundle.limbs[0][0][0][0].len();
+    // v3: table_idx is 4D [B][H][S][L]
+    let b_dim = bundle.table_idx.len();
+    let h_dim = bundle.table_idx[0].len();
+    let dim1 = bundle.table_idx[0][0].len();
+    let dim2 = bundle.table_idx[0][0][0].len();
     let total_sparsity = b_dim * h_dim * dim1 * dim2;
 
     let gens = SparsePolyCommitmentGens::<G1>::new(
@@ -44,7 +45,7 @@ pub fn run_bert_lasso_bundle(
     let mut metrics_agg = LassoMetricsAggregate::default();
 
     let start = Instant::now();
-    let (results, metrics) = prove_lasso_for_softmax(&bundle.limbs, &gens, rng, label)?;
+    let (results, metrics) = prove_lasso_for_softmax(&bundle.table_idx, &gens, rng, label)?;
     metrics_agg.add(&metrics);
     println!(
         "  - Lasso Total Time (BERT Softmax {:?}): {:?}",
@@ -58,8 +59,8 @@ pub fn run_bert_lasso_bundle(
 /// Run all range-check Lasso proofs for a BERT attention circuit.
 ///
 /// Targets:
-///   22-bit (C=2): matmul_attn.r_matmul, sm.r_sm, matmul_x.r_matmul
-///   16-bit 5D:    sm.r_exp
+///   22-bit (C=2): matmul_attn.r_matmul, matmul_x.r_matmul, projections, scaling
+///   52-bit (C=4): sm.r_sm  (v3: 4 limbs [16,16,16,4])
 ///   16-bit 4D:    sm.r_div
 pub fn run_all_bert_remainders_with_link(
     circuit: &BERTAttentionCircuit<Fr>,
@@ -70,10 +71,9 @@ pub fn run_all_bert_remainders_with_link(
     let mut all_results = Vec::new();
     let mut metrics_agg = LassoMetricsAggregate::default();
 
-    // ── 22-bit range checks ──────────────────────────────────────────────────
-    let target_22bit: &[(&Vec<Vec<Vec<Vec<Fr>>>>, &str)] = &[
+    // ── 26-bit range checks (sm.r_sm handled separately as 52-bit) ─────────
+    let target_26bit: &[(&Vec<Vec<Vec<Vec<Fr>>>>, &str)] = &[
         (&circuit.matmul_attn.r_matmul, "bert_attn_remainder"),
-        (&circuit.sm.r_sm,              "bert_sm_remainder"),
         (&circuit.matmul_x.r_matmul,   "bert_x_remainder"),
         // Projection remainders
         (&circuit.proj_q.r_out_proj,    "bert_proj_q_remainder"),
@@ -85,7 +85,7 @@ pub fn run_all_bert_remainders_with_link(
         (&circuit.scale_k.r_scale,      "bert_scale_k_remainder"),
     ];
 
-    for (r_matrix, label) in target_22bit {
+    for (r_matrix, label) in target_26bit {
         let b_dim   = r_matrix.len();
         let h_dim   = r_matrix[0].len();
         let row_dim = r_matrix[0][0].len();
@@ -99,7 +99,7 @@ pub fn run_all_bert_remainders_with_link(
                     for c in 0..col_dim {
                         let val_u64 = r_matrix[b][h][r][c].into_bigint().as_ref()[0];
                         let idx0 = (val_u64 & 0xFFFF) as usize;
-                        let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
+                        let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;  // 10 bits (26-bit total)
                         nz.push([idx0, idx1]);
                     }
                 }
@@ -124,28 +124,29 @@ pub fn run_all_bert_remainders_with_link(
         );
     }
 
-    // ── 16-bit 5D: sm.r_exp ──────────────────────────────────────────────────
+    // ── 52-bit r_sm range check (v3: 4 limbs [16,16,16,4]) ─────────────────
     {
-        let r_exp_5d = &circuit.sm.r_exp;
-        let label = "bert_sm_r_exp";
+        let r_sm_4d = &circuit.sm.r_sm;
+        let label = "bert_sm_r_sm_52bit";
 
-        let c_seg  = r_exp_5d.len();                    // C (K_SEGMENTS-1)
-        let b_batch = r_exp_5d[0].len();                 // B
-        let h_num  = r_exp_5d[0][0].len();               // H
-        let s1_num = r_exp_5d[0][0][0].len();            // S
-        let s2_num = r_exp_5d[0][0][0][0].len();         // S
-        let total_sparsity = c_seg * b_batch * h_num * s1_num * s2_num;
+        let b_dim = r_sm_4d.len();
+        let h_dim = r_sm_4d[0].len();
+        let s_dim = r_sm_4d[0][0].len();
+        let l_dim = r_sm_4d[0][0][0].len();
+        let total_sparsity = b_dim * h_dim * s_dim * l_dim;
 
-        // Iterate in (b, h, s1, s2, k) order to match the circuit r2_pool
-        // accumulation order in enforce_softmax: for i { for j { for k { r2_pool.push(r_exp[k][i][j]) }}}
-        let mut nz = Vec::with_capacity(total_sparsity);
-        for b in 0..b_batch {
-            for h in 0..h_num {
-                for s1 in 0..s1_num {
-                    for s2 in 0..s2_num {
-                        for k in 0..c_seg {
-                            nz.push([r_exp_5d[k][b][h][s1][s2].into_bigint().as_ref()[0] as usize]);
-                        }
+        let mut nz: Vec<[usize; SM_KBITS_C]> = Vec::with_capacity(total_sparsity);
+        for b in 0..b_dim {
+            for h in 0..h_dim {
+                for s in 0..s_dim {
+                    for l in 0..l_dim {
+                        let val_u64 = r_sm_4d[b][h][s][l].into_bigint().as_ref()[0];
+                        nz.push([
+                            (val_u64 & 0xFFFF) as usize,
+                            ((val_u64 >> 16) & 0xFFFF) as usize,
+                            ((val_u64 >> 32) & 0xFFFF) as usize,
+                            ((val_u64 >> 48) & 0xF) as usize,    // 4 bits
+                        ]);
                     }
                 }
             }
@@ -153,23 +154,23 @@ pub fn run_all_bert_remainders_with_link(
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
-            FRACBITS_C,
+            SM_KBITS_C,
             total_sparsity.next_power_of_two(),
-            FRACBITS_C,
-            FRACBITS_M.trailing_zeros() as usize,
+            SM_KBITS_C,
+            SM_KBITS_M.trailing_zeros() as usize,
         );
 
         let start = Instant::now();
-        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
+        let (link_data, metrics) = prove_lasso_for_range_52(nz, &gens, rng, label.as_bytes())?;
+        all_results.extend(link_data);
+        metrics_agg.add(&metrics);
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
         );
-        all_results.push(link_data);
-        metrics_agg.add(&metrics);
     }
 
-    // ── 16-bit 4D: sm.r_div ──────────────────────────────────────────────────
+    // ── 26-bit 4D: sm.r_div (bounded by exp_sum, can exceed 16-bit) ────────
     {
         let matrix_4d = &circuit.sm.r_div;
         let label = "bert_sm_r_div";
@@ -185,7 +186,10 @@ pub fn run_all_bert_remainders_with_link(
             for h in 0..h_dim {
                 for s in 0..s_dim {
                     for l in 0..l_dim {
-                        nz.push([matrix_4d[b][h][s][l].into_bigint().as_ref()[0] as usize]);
+                        let val_u64 = matrix_4d[b][h][s][l].into_bigint().as_ref()[0];
+                        let idx0 = (val_u64 & 0xFFFF) as usize;
+                        let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;  // 10 bits (26-bit total)
+                        nz.push([idx0, idx1]);
                     }
                 }
             }
@@ -193,19 +197,19 @@ pub fn run_all_bert_remainders_with_link(
 
         let gens = SparsePolyCommitmentGens::<G1>::new(
             label.as_bytes(),
-            FRACBITS_C,
+            KBITS_C,
             total_sparsity.next_power_of_two(),
-            FRACBITS_C,
-            FRACBITS_M.trailing_zeros() as usize,
+            KBITS_C,
+            KBITS_M.trailing_zeros() as usize,
         );
 
         let start = Instant::now();
-        let (link_data, metrics) = prove_lasso_for_range_16(nz, &gens, rng, label.as_bytes())?;
+        let (link_data, metrics) = prove_lasso_for_range_22(nz, &gens, rng, label.as_bytes())?;
         println!(
             "  - {} verified | Count: {} | Time: {:?}",
             label, total_sparsity, start.elapsed()
         );
-        all_results.push(link_data);
+        all_results.extend(link_data);
         metrics_agg.add(&metrics);
     }
 

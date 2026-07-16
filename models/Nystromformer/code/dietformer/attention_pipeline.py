@@ -4,12 +4,11 @@ import os
 import numpy as np
 from quantize import (
     get_quantization_params, quantize_tensor,
-    get_m_constant, sign_bit_grouping_matmul, get_softmax_index_multiplier, check_neg_torch
+    get_m_constant, sign_bit_grouping_matmul, check_neg_torch
 )
 from softmax_table import (
-    generate_softmax_tables,
-    extract_exp_from_segments, combine_exp_limbs,
-    FRAC_BITS, LIMB_BITS, K_SEGMENTS
+    FRAC_BITS, TABLE_FRAC_BITS,
+    generate_fractional_exp_table, softmax_v3_lookup, save_softmax_tables_v3,
 )
 
 
@@ -24,7 +23,10 @@ def _load_optional_array(debug, key):
     return val
 
     
-def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
+def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
+    # Save v3 softmax table for Rust Lasso lookup
+    save_softmax_tables_v3(os.path.dirname(out_npz_path))
+
     debug = np.load(debug_npz_path, allow_pickle=True)
 
     # ── Phase 0: Linear Projection Witness ──────────────────────────────────
@@ -201,38 +203,25 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         Q_landmarks_q, z_q, K_T, z_k, z_y3, M_k3, k_bits
     )
 
-    ### softmax tables 생성 — 출력 디렉터리에 자동 생성 (caller 의 out_npz_path 기준)
-    # 예: out_npz_path="outputs_m64/...witness.npz" → table_dir="outputs_m64"
-    # num_landmarks sweep (m ∈ {32, 64, 112}) 시 각 디렉터리에 자동 생성됨.
-    table_dir = os.path.dirname(out_npz_path) or "."
-    table_path = generate_softmax_tables(table_dir, k_bits, FRAC_BITS)
-    sm_tables = np.load(table_path)['tables']
+    ### softmax v3 (single table, table_frac_bits=10)
+    exp_table = generate_fractional_exp_table(TABLE_FRAC_BITS, FRAC_BITS)
 
-    ### softmax(kernel)
-    M_sm = get_softmax_index_multiplier(s_q, s_k, k_bits) # k2,k3도 모두 동일
-    limbs_k1, exp_limbs_k1, r_sm_k1 = extract_exp_from_segments(Q_y1_sim, R_matmul_k1, sm_tables, M_sm, k_bits)
-    exp_total_k1, Q_exp_k1, R_exp_k1 = combine_exp_limbs(exp_limbs_k1, FRAC_BITS)
-    exp_sum_k1 = np.sum(exp_total_k1, axis=-1, keepdims=True)
-    P_k1 = (exp_total_k1 << FRAC_BITS) // exp_sum_k1
-    R_div_k1 = (exp_total_k1 << FRAC_BITS) % exp_sum_k1
+    ### softmax(kernel1)
+    P_k1, R_div_k1, exp_total_k1, exp_sum_k1, M_sm_k1, table_idx_k1, r_sm_k1 = \
+        softmax_v3_lookup(Q_y1_sim, R_matmul_k1, s_y1, k_bits, FRAC_BITS,
+                          TABLE_FRAC_BITS, exp_table)
 
-    ### softmax(kernel2) 
-    limbs_k2, exp_limbs_k2, r_sm_k2 = extract_exp_from_segments(Q_y2_sim, R_matmul_k2, sm_tables, M_sm, k_bits)
-    exp_total_k2, Q_exp_k2, R_exp_k2 = combine_exp_limbs(exp_limbs_k2, FRAC_BITS)
-    exp_sum_k2 = np.sum(exp_total_k2, axis=-1, keepdims=True)
-    P_k2 = (exp_total_k2 << FRAC_BITS) // exp_sum_k2
-    R_div_k2 = (exp_total_k2 << FRAC_BITS) % exp_sum_k2
+    ### softmax(kernel2)
+    P_k2, R_div_k2, exp_total_k2, exp_sum_k2, M_sm_k2, table_idx_k2, r_sm_k2 = \
+        softmax_v3_lookup(Q_y2_sim, R_matmul_k2, s_y2, k_bits, FRAC_BITS,
+                          TABLE_FRAC_BITS, exp_table)
 
-    ### softmax(kernel3) 
-    mask = debug['mask'] 
-    mask_4d = mask[:, None, None, :].astype(np.int64) 
-    Q_sim_k3_masked = Q_sim_k3 * mask_4d
-
-    limbs_k3, exp_limbs_k3, r_sm_k3 = extract_exp_from_segments(Q_sim_k3_masked, R_matmul_k3, sm_tables, M_sm, k_bits)
-    exp_total_k3, Q_exp_k3, R_exp_k3 = combine_exp_limbs(exp_limbs_k3, FRAC_BITS)
-    exp_sum_k3 = np.sum(exp_total_k3, axis=-1, keepdims=True)
-    P_k3 = (exp_total_k3 << FRAC_BITS) // exp_sum_k3
-    R_div_k3 = (exp_total_k3 << FRAC_BITS) % exp_sum_k3
+    ### softmax(kernel3) — mask 적용
+    mask = debug['mask']
+    mask_4d = mask[:, None, None, :].astype(object)
+    P_k3, R_div_k3, exp_total_k3, exp_sum_k3, M_sm_k3, table_idx_k3, r_sm_k3 = \
+        softmax_v3_lookup(Q_sim_k3, R_matmul_k3, s_y3, k_bits, FRAC_BITS,
+                          TABLE_FRAC_BITS, exp_table, mask=mask_4d)
 
     check_neg_torch(P_k3, "P_k3")
     check_neg_torch(R_div_k3, "R_div_k3")
@@ -317,6 +306,90 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     check_neg_torch(Q_sim_x, "Q_sim_x")
     check_neg_torch(R_matmul_x, "R_matmul_x")
 
+    # Save original matmul_x results before potential conv overwrite
+    Q_sim_x_matmul = Q_sim_x.copy()  # pre-conv: for matmul_x constraint
+    z_sim_x_matmul = z_sim_x          # pre-conv: for matmul_x constraint
+
+    # ── Conv: Toeplitz(W_conv) @ V ───────────────────────────────────────
+    W_conv = _load_optional_array(debug, 'W_conv')  # [H, 1, K_conv, 1]
+    conv_term_real = _load_optional_array(debug, 'conv_term')  # [B, H, S, D]
+
+    if W_conv is not None and conv_term_real is not None:
+        K_conv = W_conv.shape[2]  # 65
+        pad_conv = K_conv // 2     # 32
+
+        # Toeplitz matrix: T[h, s, j] = kernel[h, s-j+pad]
+        T_toeplitz = np.zeros((H, S, S), dtype=np.float64)
+        for h in range(H):
+            kernel = W_conv[h, 0, :, 0]
+            for s_idx in range(S):
+                for k_idx in range(K_conv):
+                    j = s_idx + k_idx - pad_conv
+                    if 0 <= j < S:
+                        T_toeplitz[h, s_idx, j] = kernel[k_idx]
+
+        # Toeplitz quantization
+        s_t_conv, z_t_conv = get_quantization_params(T_toeplitz)
+        Q_t_conv = quantize_tensor(T_toeplitz, s_t_conv, z_t_conv)
+
+        # Conv output quantization params (float reference)
+        s_conv_out, z_conv_out = get_quantization_params(conv_term_real)
+
+        # ZEN matmul per head: T_h(S,S) @ V_h(S,D)
+        M_conv = get_m_constant(s_t_conv, s_v, s_conv_out, k=k_bits)
+        Q_conv_list, R_conv_list = [], []
+        M_prime_conv = None
+        for h in range(H):
+            Q_ch, R_ch, M_prime_conv = sign_bit_grouping_matmul(
+                Q_t_conv[h], z_t_conv,
+                Q_v[:, h, :, :].astype(np.int64), z_v,
+                z_conv_out, M_conv, k_bits
+            )
+            Q_conv_list.append(Q_ch)
+            R_conv_list.append(R_ch)
+        Q_conv = np.stack(Q_conv_list, axis=1)  # [B, H, S, D]
+        R_conv = np.stack(R_conv_list, axis=1)
+
+        # X_final = X + conv (integer rescaled addition)
+        X_final_real = debug['X_final']
+        s_xf, z_xf = get_quantization_params(X_final_real)
+
+        M_add_x = int(np.floor((1 << k_bits) * s_x / s_xf))
+        M_add_conv = int(np.floor((1 << k_bits) * s_conv_out / s_xf))
+        if M_add_x == 0: M_add_x = 1
+        if M_add_conv == 0: M_add_conv = 1
+
+        numerator_add = (M_add_x * (Q_sim_x - z_sim_x).astype(np.int64)
+                       + M_add_conv * (Q_conv - z_conv_out).astype(np.int64)
+                       + z_xf * (1 << k_bits))
+        Q_xf = (numerator_add >> k_bits).astype(np.int32)
+        R_xf = (numerator_add % (1 << k_bits)).astype(np.int64)
+
+        # Update variables so O-projection uses X_final
+        Q_sim_x = Q_xf.astype(np.int64)
+        s_x = s_xf
+        z_sim_x = z_xf
+
+        conv_witness = {
+            "Q_t_conv": Q_t_conv.astype(np.int64),
+            "z_t_conv": np.uint64(z_t_conv),
+            "M_conv": np.uint64(M_conv),
+            "M_prime_conv": np.uint64(M_prime_conv),
+            "z_conv_out": np.uint64(z_conv_out),
+            "Q_conv": Q_conv.astype(np.int64),
+            "R_conv": R_conv.astype(np.int64),
+            "Q_xf": Q_xf.astype(np.int64),
+            "R_xf": R_xf.astype(np.int64),
+            "M_add_x": np.uint64(M_add_x),
+            "M_add_conv": np.uint64(M_add_conv),
+            "z_xf": np.uint64(z_xf),
+        }
+
+        print(f"  [Conv Toeplitz] K_conv={K_conv}, M_conv={M_conv}, "
+              f"M_add_x={M_add_x}, M_add_conv={M_add_conv}")
+    else:
+        conv_witness = {}
+
     # ── Output Projection: O = Q_sim_x @ W_O^T + b_O ─────────────────────
     # Q_sim_x [B,H,S,D] → [B,S,HD] reshape 후 sign_bit_grouping_matmul
     Q_sim_x_flat = Q_sim_x.transpose(0, 2, 1, 3).reshape(B, S, HD)
@@ -355,6 +428,24 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
     Q_o_4d = Q_o_flat.reshape(B, S, H, D).transpose(0, 2, 1, 3)
     R_o_4d = R_o_flat.reshape(B, S, H, D).transpose(0, 2, 1, 3)
 
+    # ── Quantization Error Measurement ──────────────────────────────────────
+    o_approx = (Q_o_4d.astype(np.float64) - z_raw_o) * s_raw_o
+    o_ref = o_real_4d.astype(np.float64)
+    _diff = o_ref - o_approx
+    _mse = float(np.mean(_diff ** 2))
+    _rmse = float(np.sqrt(_mse))
+    _max_abs = float(np.max(np.abs(_diff)))
+    _norm_ref = np.linalg.norm(o_ref)
+    _norm_approx = np.linalg.norm(o_approx)
+    _cos_sim = float(np.sum(o_ref * o_approx) / (_norm_ref * _norm_approx + 1e-12))
+    _rel_err = float(np.mean(np.abs(_diff) / (np.abs(o_ref) + 1e-12)))
+    quant_metrics = {
+        "mse": _mse, "rmse": _rmse, "max_abs_error": _max_abs,
+        "cosine_similarity": _cos_sim, "mean_relative_error": _rel_err,
+    }
+    print(f"  [Nystrom O-proj] MSE={_mse:.6e}  RMSE={_rmse:.6e}  "
+          f"MaxAbs={_max_abs:.6e}  CosSim={_cos_sim:.8f}  RelErr={_rel_err:.6e}")
+
     Q_w_diff_o_per_head = np.array([(Q_w_o[h*D:(h+1)*D, :] - z_w_o).astype(np.int64) for h in range(H)])
     Q_b_diff_o_per_head = Q_b_diff_o.reshape(H, D)
 
@@ -369,6 +460,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         "M_proj_o": np.uint64(M_proj_o),
         "M_prime_proj_o": np.uint64(M_prime_proj_o),
         "z_raw_o": np.uint64(z_raw_o),
+        "s_raw_o": np.float64(s_raw_o),
     })
 
     np.savez_compressed(
@@ -400,36 +492,29 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         M_k3=np.uint64(M_k3),  
         M_prime_k3=np.uint64(M_prime_k3),  
         z_sim_k3=np.uint64(z_y3),  
-        ### softmax(kernel1)
-        M_sm = np.uint64(M_sm),  
-        limbs_k1=limbs_k1.astype(np.int64), 
-        exp_limbs_k1=exp_limbs_k1.astype(np.uint64),
-        r_sm_k1 = r_sm_k1.astype(np.int64),
-        Q_exp_k1=np.stack(Q_exp_k1, axis=0).astype(np.uint64),
-        R_exp_k1=np.stack(R_exp_k1, axis=0).astype(np.uint64),
+        ### softmax(kernel1) — v3
+        M_sm_k1=np.uint64(M_sm_k1),
+        table_idx_k1=table_idx_k1.astype(np.int64),
+        r_sm_k1=r_sm_k1.astype(np.int64),
         exp_total_k1=exp_total_k1.astype(np.uint64),
-        exp_sum_k1=exp_sum_k1.astype(np.uint64), # 서킷내에서 사용하지 않음
+        exp_sum_k1=exp_sum_k1.astype(np.uint64),
         P_k1=P_k1.astype(np.uint64),
         R_div_k1=R_div_k1.astype(np.uint64),
-        ### softmax(kernel2)
-        limbs_k2=limbs_k2.astype(np.int64), 
-        exp_limbs_k2=exp_limbs_k2.astype(np.uint64),
-        r_sm_k2 = r_sm_k2.astype(np.int64),
-        Q_exp_k2=np.stack(Q_exp_k2, axis=0).astype(np.uint64),
-        R_exp_k2=np.stack(R_exp_k2, axis=0).astype(np.uint64),
+        ### softmax(kernel2) — v3
+        M_sm_k2=np.uint64(M_sm_k2),
+        table_idx_k2=table_idx_k2.astype(np.int64),
+        r_sm_k2=r_sm_k2.astype(np.int64),
         exp_total_k2=exp_total_k2.astype(np.uint64),
-        exp_sum_k2=exp_sum_k2.astype(np.uint64), # 서킷내에서 사용하지 않음
+        exp_sum_k2=exp_sum_k2.astype(np.uint64),
         P_k2=P_k2.astype(np.uint64),
         R_div_k2=R_div_k2.astype(np.uint64),
-        ### softmax(kernel3)
-        limbs_k3=limbs_k3.astype(np.int64), 
-        exp_limbs_k3=exp_limbs_k3.astype(np.uint64),
-        r_sm_k3 = r_sm_k3.astype(np.int64),
-        Q_exp_k3=np.stack(Q_exp_k3, axis=0).astype(np.uint64),
-        R_exp_k3=np.stack(R_exp_k3, axis=0).astype(np.uint64), 
+        ### softmax(kernel3) — v3
+        M_sm_k3=np.uint64(M_sm_k3),
+        table_idx_k3=table_idx_k3.astype(np.int64),
+        r_sm_k3=r_sm_k3.astype(np.int64),
         exp_total_k3=exp_total_k3.astype(np.uint64),
-        exp_sum_k3=exp_sum_k3.astype(np.uint64), # 서킷내에서 사용하지 않음
-        P_k3=P_k3.astype(np.uint64), 
+        exp_sum_k3=exp_sum_k3.astype(np.uint64),
+        P_k3=P_k3.astype(np.uint64),
         R_div_k3=R_div_k3.astype(np.uint64),
         ### moore-penrose (Pseudoinverse)
         Q_inv_k2=Q_inv_k2.astype(np.int64),
@@ -452,19 +537,20 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=22):
         M_mid=np.uint64(M_mid),  
         M_prime_mid=np.uint64(M_prime_mid),  
         z_sim_mid=np.uint64(z_sim_mid),  
-        ### X = mid @ temp
-        Q_sim_x=Q_sim_x.astype(np.int64),
+        ### X = mid @ temp (pre-conv values for matmul constraint)
+        Q_sim_x=Q_sim_x_matmul.astype(np.int64),
         R_matmul_x=R_matmul_x.astype(np.int64),
-        M_x=np.uint64(M_x),  
-        M_prime_x=np.uint64(M_prime_x),  
-        z_sim_x=np.uint64(z_sim_x),  
+        M_x=np.uint64(M_x),
+        M_prime_x=np.uint64(M_prime_x),
+        z_sim_x=np.uint64(z_sim_x_matmul),
         ### meta data
-        sm_tables=sm_tables,
-        frac_bits=np.uint32(FRAC_BITS),  
-        limb_bits=np.uint32(LIMB_BITS),  
-        k_segments=np.uint32(K_SEGMENTS),  
+        exp_table=exp_table,
+        table_frac_bits=np.uint32(TABLE_FRAC_BITS),
+        frac_bits=np.uint32(FRAC_BITS),
         seg_size=np.uint64(seg),  
-        k_bits=np.uint32(k_bits),  
-        mask=mask.astype(np.int64) 
+        k_bits=np.uint32(k_bits),
+        mask=mask.astype(np.int64),
+        ### conv (Toeplitz) — W_conv 존재 시에만
+        **conv_witness,
     )
-    
+    return quant_metrics

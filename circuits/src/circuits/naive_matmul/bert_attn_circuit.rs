@@ -54,8 +54,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
         let _r_var = FpVar::new_input(cs.clone(), || Ok(inner.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << inner.k_bits))?;
 
-        let mut r2_pool = Vec::new();
-        let mut r3_pool = Vec::new();
+        let mut r_div_lows = Vec::new();
+        let mut r_div_highs = Vec::new();
 
         // Q/K/V: [B][H][S][D]
         let q_proc = new_matrix_witness_4d(cs.clone(), &inner.scale_q.q_scaled);
@@ -133,8 +133,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
 
         let mut global_attn_lows  = Vec::new();
         let mut global_attn_highs = Vec::new();
-        let mut global_sm_idx   = vec![Vec::new(); 5];
-        let mut global_sm_r_sm  = vec![Vec::new(); 2];
+        let mut global_sm_idx   = Vec::new();
+        let mut global_sm_r_sm  = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
         let mut global_x_lows   = Vec::new();
         let mut global_x_highs  = Vec::new();
 
@@ -243,45 +243,46 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
                 global_attn_lows.extend(h_attn_lows);
                 global_attn_highs.extend(h_attn_highs);
 
-                // [2] Mask padding (unchanged)
-                let seq_len = attn_data.q_sim[b][h].len();
-                let col_len = attn_data.q_sim[b][h][0].len();
-                let mut masked_q_sim = attn_data.q_sim[b][h].clone();
-                for row in 0..seq_len {
-                    for col in 0..col_len {
-                        let is_valid = mask_var[b][col].is_one()?;
-                        masked_q_sim[row][col] = FpVar::conditionally_select(
-                            &is_valid,
-                            &attn_data.q_sim[b][h][row][col],
-                            &zero_var,
-                        )?;
-                    }
-                }
-
-                // [3] Softmax (unchanged)
-                let mut h_sm_idx = [const { Vec::new() }; 5];
-                let mut h_sm_r_sm = [const { Vec::new() }; 2];
+                // [2-3] Softmax (v3) — mask applied to exp_total (not q_sim)
+                let mut h_sm_idx = Vec::new();
+                let mut h_sm_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
                 enforce_softmax(
                     cs.clone(),
-                    &masked_q_sim,
+                    &attn_data.q_sim[b][h],
                     &attn_data.r_matmul[b][h],
                     &sm_vars.r_sm[b][h],
                     &sm_vars.m_sm,
-                    &sm_vars.limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm_vars.exp_limbs.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm_vars.q_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
-                    &sm_vars.r_exp.iter().map(|v| v[b][h].clone()).collect::<Vec<_>>(),
+                    &sm_vars.table_idx[b][h],
+                    &sm_vars.exp_total[b][h],
                     &sm_vars.p[b][h],
                     &sm_vars.r_div[b][h],
+                    &inner.sm.r_div[b][h],
                     inner.frac_bits,
                     &two_k_var,
                     &mut h_sm_idx,
                     &mut h_sm_r_sm,
-                    &mut r2_pool,
-                    &mut r3_pool,
+                    &mut r_div_lows,
+                    &mut r_div_highs,
                 )?;
-                for k in 0..5 { global_sm_idx[k].extend(h_sm_idx[k].clone()); }
-                for k in 0..2 { global_sm_r_sm[k].extend(h_sm_r_sm[k].clone()); }
+                global_sm_idx.extend(h_sm_idx);
+                for k in 0..4 { global_sm_r_sm[k].extend(h_sm_r_sm[k].clone()); }
+
+                // v3 mask: verify exp_total=0 at padding positions
+                {
+                    let seq_len = sm_vars.exp_total[b][h].len();
+                    let col_len = sm_vars.exp_total[b][h][0].len();
+                    for row in 0..seq_len {
+                        for col in 0..col_len {
+                            let is_valid = mask_var[b][col].is_one()?;
+                            let should_be_zero = FpVar::conditionally_select(
+                                &is_valid,
+                                &zero_var,
+                                &sm_vars.exp_total[b][h][row][col],
+                            )?;
+                            should_be_zero.enforce_equal(&zero_var)?;
+                        }
+                    }
+                }
 
                 // [4] P * V: CHANGED: enforce_freivald → enforce_naive_matmul
                 let mut h_x_lows  = Vec::new();
@@ -337,14 +338,16 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
         // Populate d1 committed_vars
         {
             let mut final_vars = inner.committed_vars.borrow_mut();
-            for seg in 0..5 {
-                final_vars.extend(global_sm_idx[seg].clone());
-            }
+
+            // === Softmax index lookup vars (C=1, single pool) ===
+            final_vars.extend(global_sm_idx);
+
+            // === 26-bit remainders (C=2: 16+10) ===
+            // Order must match run_all_bert_remainders_with_link target_26bit
+            // QK^T matmul remainder splits
             final_vars.extend(global_attn_lows);
             final_vars.extend(global_attn_highs);
-            for k in 0..2 {
-                final_vars.extend(global_sm_r_sm[k].clone());
-            }
+            // P*V matmul remainder splits
             final_vars.extend(global_x_lows);
             final_vars.extend(global_x_highs);
             // Projection remainders
@@ -355,8 +358,15 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
             // Scaling remainders
             final_vars.extend(global_scale_q_lows); final_vars.extend(global_scale_q_highs);
             final_vars.extend(global_scale_k_lows); final_vars.extend(global_scale_k_highs);
-            final_vars.extend(r2_pool);
-            final_vars.extend(r3_pool);
+
+            // === 52-bit r_sm (C=4: 16+16+16+4) ===
+            for k in 0..4 {
+                final_vars.extend(global_sm_r_sm[k].clone());
+            }
+
+            // === R_div per-softmax (26-bit C=2: 16+10) ===
+            final_vars.extend(r_div_lows);
+            final_vars.extend(r_div_highs);
         }
 
         // === Poseidon hash of x_input → public input ===

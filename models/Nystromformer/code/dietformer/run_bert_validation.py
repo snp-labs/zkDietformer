@@ -340,7 +340,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
         if os.path.exists(debug_path):
             # Attention witness
             witness_path = debug_path.replace(".npz", ".witness.npz")
-            process_standard_attn_debug_npz(debug_path, witness_path, k_bits=22)
+            process_standard_attn_debug_npz(debug_path, witness_path, k_bits=26)
             print(f"[BERT Batch {batch_idx}] Generated Standard Attention Witness: {witness_path}")
 
             # Normalization witness: 어텐션 모듈명에서 레이어 인덱스 추출하여 매핑
@@ -355,7 +355,7 @@ def _capture_and_process_bert_intermediates(model, current_batch, batch_idx, sav
                     norm_witness_path = norm_debug_path.replace(".norm_debug.npz", ".norm.witness.npz")
                     process_standard_normalization_debug_npz(
                         norm_debug_path, norm_witness_path,
-                        k_bits=22, eps=EPS_BERT, table_dir=output_dir_abs,
+                        k_bits=26, eps=EPS_BERT, table_dir=output_dir_abs,
                     )
                     print(f"[BERT Batch {batch_idx}] Generated Normalization Witness: {norm_witness_path}")
 

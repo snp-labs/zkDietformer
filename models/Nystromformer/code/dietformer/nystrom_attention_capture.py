@@ -166,6 +166,9 @@ def _patched_forward(self, hidden_states, attention_mask=None, output_attentions
     capture["W_o"] = self._output_dense.weight.data.cpu().numpy()  # [H*D, H*D]
     capture["b_o"] = self._output_dense.bias.data.cpu().numpy() if self._output_dense.bias is not None else None
 
+    if self.conv_kernel_size is not None:
+        capture["W_conv"] = self.conv.weight.data.cpu().numpy()  # [H, 1, K_conv, 1]
+
     # Q/K/V projection + view + transpose (HF 원본 그대로)
     query_layer = (
         self.query(hidden_states)

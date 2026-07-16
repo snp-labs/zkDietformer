@@ -6,7 +6,7 @@ import torch
 import hashlib
 import argparse
 
-def get_quantization_params(data, bits=8):
+def get_quantization_params(data, bits=12):
     data_min = np.min(data)
     data_max = np.max(data)
     # nudge
@@ -35,7 +35,7 @@ def get_quantization_params(data, bits=8):
     return float(scale), int(nudged_zero_point)
 
 
-def quantize_tensor(data, scale, zero_point, bits=8):
+def quantize_tensor(data, scale, zero_point, bits=12):
     # positive check
     assert scale > 0, f"Scale must be positive, got {scale}"
     assert zero_point >= 0, f"Zero-point must be non-negative, got {zero_point}"
@@ -55,7 +55,7 @@ def get_m_constant(s_w, s_x, s_y, k=22):
     return M
 
 
-def sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits=22):
+def sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits=26):
     # positive check
     assert M > 0, f"Multiplier M must be positive for matmul rescaling, got {M}"
     assert z_w >= 0 and z_x >= 0 and z_y >= 0, f"Zero-points must be non-negative: z_w={z_w}, z_x={z_x}, z_y={z_y}"
@@ -78,7 +78,7 @@ def sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits=22):
     return Q_y_sim.astype(np.int32), R.astype(np.int64), M_prime
 
 
-def get_softmax_index_multiplier(s_q, s_k, k_bits=22):
+def get_softmax_index_multiplier(s_q, s_k, k_bits=26):
     # positive check
     assert s_q > 0 and s_k > 0, f"Scales must be positive: s_q={s_q}, s_k={s_k}"
     
@@ -88,7 +88,7 @@ def get_softmax_index_multiplier(s_q, s_k, k_bits=22):
     assert multiplier >= 0, f"Softmax multiplier must be non-negative, got {multiplier}"
     return multiplier
 
-def get_rms_index_multiplier(s_ms, k_bits=22):
+def get_rms_index_multiplier(s_ms, k_bits=26):
     # positive check
     assert s_ms > 0, f"Scales must be positive: s_ri={s_ms}"
 
@@ -96,7 +96,7 @@ def get_rms_index_multiplier(s_ms, k_bits=22):
     assert multiplier >= 0, f"Softmax multiplier must be non-negative, got {multiplier}"
     return multiplier
 
-def get_gelu_index_multiplier(s_in, k_bits=22):
+def get_gelu_index_multiplier(s_in, k_bits=26):
     # GELU_INDEX_SCALE은 gelu_table.py와 동일한 1/512 사용
     GELU_INDEX_SCALE = 1.0 / (1 << 9)
     # M = (s_in / GELU_INDEX_SCALE) * 2^k

@@ -39,7 +39,7 @@ def verify_matmul_zen(W, X, Y_sim, R_mat, M, M_prime, z_w, z_x, k_bits):
             return False
     return True
 
-def debug_bert_witness(npz_path, k_bits=22, frac_bits=16):
+def debug_bert_witness(npz_path, k_bits=26, frac_bits=16):
     print(f"=== 🔍 BERT Attention Circuit Debugging: {os.path.basename(npz_path)} ===")
     data = np.load(npz_path)
     
