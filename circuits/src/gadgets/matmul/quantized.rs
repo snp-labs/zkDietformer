@@ -176,8 +176,7 @@ pub fn compute_grouped_rhs<F: PrimeField>(
     r_vec: &[FpVar<F>]          
 ) -> Result<Vec<FpVar<F>>, SynthesisError> {
     let n_dim = FpVar::Constant(F::from(q_w[0].len() as u64));
-    let two_k = FpVar::Constant(F::from(1u64 << 22));
-    
+
     // constant_term = (n * zq * zk) + M'
     let constant_term = (&n_dim * z_q * z_k) + m_prime_var;
 

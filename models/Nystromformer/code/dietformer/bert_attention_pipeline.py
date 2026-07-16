@@ -117,7 +117,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
             Q_b_diff = np.round(b / s_b).astype(np.int64)  # [HD]
             numerator = Q_raw_flat.astype(np.int64) * (1 << k_bits) + R_flat.astype(np.int64)
             numerator = numerator + M_proj * Q_b_diff
-            Q_raw_flat = (numerator >> k_bits).astype(np.int32)
+            Q_raw_flat = (numerator >> k_bits).astype(np.int64)
             R_flat = (numerator % (1 << k_bits)).astype(np.int64)
         else:
             Q_b_diff = np.zeros(HD, dtype=np.int64)
@@ -153,7 +153,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
 
             inner_scale = (Q_raw_4d - z_raw).astype(np.int64)
             numerator_scale = M_scale * (inner_scale + M_prime_scale)
-            Q_scaled = (numerator_scale >> k_bits).astype(np.int32)
+            Q_scaled = (numerator_scale >> k_bits).astype(np.int64)
             R_scale = (numerator_scale % (1 << k_bits)).astype(np.int64)
 
             proj_witness[f"Q_scaled_{name}"] = Q_scaled.astype(np.int64)
@@ -251,7 +251,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
         Q_b_diff_o = np.round(b_o / s_b_o).astype(np.int64)     # [HD]
         numerator_o = Q_o_flat.astype(np.int64) * (1 << k_bits) + R_o_flat.astype(np.int64)
         numerator_o = numerator_o + M_proj_o * Q_b_diff_o
-        Q_o_flat = (numerator_o >> k_bits).astype(np.int32)
+        Q_o_flat = (numerator_o >> k_bits).astype(np.int64)
         R_o_flat = (numerator_o % (1 << k_bits)).astype(np.int64)
     else:
         Q_b_diff_o = np.zeros(HD, dtype=np.int64)

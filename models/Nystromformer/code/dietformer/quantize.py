@@ -72,10 +72,15 @@ def sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits=26):
     inner_val = (G1 + constant_term + M_prime - G2 - G3)
     numerator = M * inner_val
     
-    Q_y_sim = (numerator >> k_bits) 
-    R = numerator % (1 << k_bits) 
-    
-    return Q_y_sim.astype(np.int32), R.astype(np.int64), M_prime
+    Q_y_sim = (numerator >> k_bits)
+    R = numerator % (1 << k_bits)
+
+    # Overflow guard: detect values that would have been truncated by int32
+    max_abs = np.max(np.abs(Q_y_sim))
+    if max_abs > np.iinfo(np.int32).max:
+        print(f"[WARN] Q_y_sim exceeds int32 range: max_abs={max_abs}, shape={Q_y_sim.shape}")
+
+    return Q_y_sim.astype(np.int64), R.astype(np.int64), M_prime
 
 
 def get_softmax_index_multiplier(s_q, s_k, k_bits=26):

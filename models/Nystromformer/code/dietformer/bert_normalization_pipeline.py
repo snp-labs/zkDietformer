@@ -190,7 +190,7 @@ def process_standard_normalization_debug_npz(
     M_lin1 = get_m_constant(s_w_lin1, s_in_lin1, s_out_lin1, k=k_bits)
     M_prime_lin1 = int(np.floor((z_out_lin1 * (1 << k_bits)) / M_lin1))
     numerator_lin1 = M_lin1 * (acc1 + M_prime_lin1)
-    Q_out_sim_lin1 = (numerator_lin1 >> k_bits).astype(np.int32)
+    Q_out_sim_lin1 = (numerator_lin1 >> k_bits).astype(np.int64)
     R_out_lin1 = (numerator_lin1 % (1 << k_bits)).astype(np.int64)
 
     check_neg_torch(numerator_lin1, "numerator_lin1")
@@ -237,7 +237,7 @@ def process_standard_normalization_debug_npz(
     M_lin2 = get_m_constant(s_w_lin2, s_gelu_out, s_out_lin2, k=k_bits)
     M_prime_lin2 = int(np.floor((z_out_lin2 * (1 << k_bits)) / M_lin2))
     numerator_lin2 = M_lin2 * (acc2 + M_prime_lin2)
-    Q_out_sim_lin2 = (numerator_lin2 >> k_bits).astype(np.int32)
+    Q_out_sim_lin2 = (numerator_lin2 >> k_bits).astype(np.int64)
     R_out_lin2 = (numerator_lin2 % (1 << k_bits)).astype(np.int64)
 
     check_neg_torch(numerator_lin2, "numerator_lin2")

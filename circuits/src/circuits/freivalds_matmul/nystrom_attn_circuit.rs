@@ -230,10 +230,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
         for b in 0..scale_q_out.len() {
             // 해당 배치의 Landmarks 계산
+            let _nc_pre_lm = cs.num_constraints();
             let k_landmarks = compute_circuit_landmarks(cs.clone(), &scale_k_out[b], &r_mean_k1[b], self.seg_size)?;
             let q_landmarks = compute_circuit_landmarks(cs.clone(), &scale_q_out[b], &r_mean_k2[b], self.seg_size)?;
+            eprintln!("[CCOUNT] b={} after landmarks: {} (delta={})", b, cs.num_constraints(), cs.num_constraints() - _nc_pre_lm);
 
             for h in 0..scale_q_out[b].len() {
+                let _nc_h_start = cs.num_constraints();
                 // === Q/K/V Projection + Q/K Scaling constraints ===
 
                 // Q Projection: Q_raw_q = X_input @ W_q_h^T + b_q_h
@@ -330,9 +333,11 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     )?;
                 }
 
+                eprintln!("[CCOUNT] b={} h={} after proj+scale: {} (delta={})", b, h, cs.num_constraints(), cs.num_constraints() - _nc_h_start);
+
                 let k_l_t = transpose_matrix(&k_landmarks[h]);
                 let r_pows_k1 = gen_challenge_vector(&r_var, k1_data.q_sim[b][h][0].len());
-                
+
                 // Kernel 1
                 let mut h_k1_lows = Vec::new(); 
                 let mut h_k1_highs = Vec::new();
@@ -350,8 +355,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_k1_lows.extend(h_k1_lows); global_k1_highs.extend(h_k1_highs);
+                eprintln!("[CCOUNT] b={} h={} after K1: {}", b, h, cs.num_constraints());
 
-                
                 // Kernel 2
                 let mut h_k2_lows = Vec::new(); 
                 let mut h_k2_highs = Vec::new();
@@ -392,9 +397,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_k3_lows.extend(h_k3_lows); global_k3_highs.extend(h_k3_highs);
-                
+                eprintln!("[CCOUNT] b={} h={} after K2+K3: {}", b, h, cs.num_constraints());
+
                 // Softmax 1 (v3)
-                let _nc0 = cs.num_constraints();
                 enforce_softmax(
                     cs.clone(),
                     &k1_data.q_sim[b][h],
@@ -413,10 +418,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &mut r_div_k1_lows,
                     &mut r_div_k1_highs,
                 )?;
-                if b == 0 && h == 0 { println!("[DEBUG] sm1 constraints: {}..{}", _nc0, cs.num_constraints()); }
+
+                eprintln!("[CCOUNT] b={} h={} after SM1: {}", b, h, cs.num_constraints());
 
                 // Softmax 2 (v3)
-                let _nc1 = cs.num_constraints();
                 enforce_softmax(
                     cs.clone(),
                     &k2_data.q_sim[b][h],
@@ -436,10 +441,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     &mut r_div_k2_highs,
                 )?;
 
-                if b == 0 && h == 0 { println!("[DEBUG] sm2 constraints: {}..{}", _nc1, cs.num_constraints()); }
+
+                eprintln!("[CCOUNT] b={} h={} after SM2: {}", b, h, cs.num_constraints());
 
                 // Softmax 3 (v3) — mask applied to exp_total (not q_sim)
-                let _nc2 = cs.num_constraints();
                 let zero_var = FpVar::zero();
 
                 // v3: enforce softmax without masking q_sim
@@ -480,9 +485,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     }
                 }
 
-                if b == 0 && h == 0 { println!("[DEBUG] sm3+mask constraints: {}..{}", _nc2, cs.num_constraints()); }
 
-                let _nc_pinv_start = cs.num_constraints();
+                eprintln!("[CCOUNT] b={} h={} after SM3+mask: {}", b, h, cs.num_constraints());
+
                 // moore-penrose
                 let q_inv_var = new_matrix_witness_4d(cs.clone(), &self.pseudo_inv.q_inv);
                 let q_y_vars = self.pseudo_inv.q_y_intermediates.iter()
@@ -535,7 +540,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv0_lows.extend(h_inv0_lows); global_inv0_highs.extend(h_inv0_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] inv0 constraints: {}..{}", _nc_pinv_start, cs.num_constraints()); }
 
                 // Step 2: Q_y1 * P_k2 = P_k2
                 let mut h_inv1_lows = Vec::new(); 
@@ -554,7 +558,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv1_lows.extend(h_inv1_lows); global_inv1_highs.extend(h_inv1_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] inv1 end: {}", cs.num_constraints()); }
 
                 // A_inv * A * A_inv = A_inv
                 // Step 2-1: Q_inv (A+) * P_k2 (A) = Q_y3
@@ -574,7 +577,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv2_lows.extend(h_inv2_lows); global_inv2_highs.extend(h_inv2_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] inv2 end: {}", cs.num_constraints()); }
 
                 // Step 2-2: Q_y3 * Q_inv (A+) = Q_y4
                 let mut h_inv3_lows = Vec::new(); 
@@ -593,7 +595,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_inv3_lows.extend(h_inv3_lows); global_inv3_highs.extend(h_inv3_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] inv3 end (pseudo_inv done): {}", cs.num_constraints()); }
+                eprintln!("[CCOUNT] b={} h={} after pseudo-inv: {}", b, h, cs.num_constraints());
 
                 // temp
                 let mut h_temp_lows = Vec::new(); 
@@ -613,7 +615,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_temp_lows.extend(h_temp_lows); global_temp_highs.extend(h_temp_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] matmul_temp end: {}", cs.num_constraints()); }
 
                 // mid
                 let mut h_mid_lows = Vec::new(); 
@@ -633,7 +634,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_mid_lows.extend(h_mid_lows); global_mid_highs.extend(h_mid_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] matmul_mid end: {}", cs.num_constraints()); }
 
                 // X
                 let mut h_x_lows = Vec::new(); 
@@ -653,7 +653,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     None,
                 )?;
                 global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
-                if b == 0 && h == 0 { println!("[DEBUG] matmul_x end: {}", cs.num_constraints()); }
+                eprintln!("[CCOUNT] b={} h={} after temp/mid/x: {}", b, h, cs.num_constraints());
 
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
                 // Use q_attn_output [B][S][HD] (post-conv if conv exists, else same as x_data.q_sim)
@@ -683,8 +683,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                         Some(&self.proj_o.q_b_diff[h]),
                     )?;
                 }
-                if b == 0 && h == 0 { println!("[DEBUG] O-proj end (head 0): {}", cs.num_constraints()); }
-                if b == 0 && h == 1 { println!("[DEBUG] head 1 end: {}", cs.num_constraints()); }
+                eprintln!("[CCOUNT] b={} h={} after O-proj: {} (h_total={})", b, h, cs.num_constraints(), cs.num_constraints() - _nc_h_start);
             }
         }
 
@@ -733,8 +732,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             final_vars.extend(r_div_k3_lows);
             final_vars.extend(r_div_k3_highs);
         }
-
-        println!("[DEBUG] Before Poseidon: {} constraints", cs.num_constraints());
 
         // === Poseidon hash of x_input → public input ===
         {
@@ -1069,7 +1066,7 @@ where
             ..sample_circuit.clone()
         };
 
-        // ── DEBUG: R1CS constraint satisfaction check (with correct hashes) ──
+        // R1CS constraint satisfaction check (with correct hashes)
         {
             let cs_check = ConstraintSystem::<Fr>::new_ref();
             final_circuit.clone().generate_constraints(cs_check.clone())?;
