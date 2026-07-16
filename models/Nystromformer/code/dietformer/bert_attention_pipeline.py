@@ -3,7 +3,8 @@ import numpy as np
 import os
 from quantize import (
     get_quantization_params, quantize_tensor,
-    get_m_constant, sign_bit_grouping_matmul, check_neg_torch
+    get_m_constant, sign_bit_grouping_matmul, check_neg_torch,
+    ensure_nonneg_matmul,
 )
 from softmax_table import (
     FRAC_BITS, TABLE_FRAC_BITS,
@@ -187,13 +188,10 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
     Y_real = Y_int_prelim.astype(np.float64) * s_q * s_k
 
     s_y, z_y = get_quantization_params(Y_real)
-    z_y += 10
 
-    M_attn_scores = get_m_constant(s_q, s_k, s_y, k=k_bits)
-
-    # Pass 2: 올바른 M, z_y 로 ZEN Matmul 적용 (Sign-bit grouping)
-    Q_score_sim, R_matmul_score, M_prime_score = sign_bit_grouping_matmul(
-        Q_q, z_q, K_T, z_k, z_y, M_attn_scores, k_bits
+    # Pass 2: 올바른 M, z_y 로 ZEN Matmul 적용 (dynamic z_y for non-negative Q_sim)
+    Q_score_sim, R_matmul_score, M_prime_score, M_attn_scores, z_y = ensure_nonneg_matmul(
+        Q_q, z_q, K_T, z_k, s_q, s_k, s_y, z_y, k_bits
     )
     assert Q_score_sim.shape == Y_real.shape, \
         f"Q_score_sim shape {Q_score_sim.shape} != Y_real shape {Y_real.shape}"

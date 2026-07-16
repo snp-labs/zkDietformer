@@ -107,6 +107,24 @@ def get_gelu_index_multiplier(s_in, k_bits=26):
     # M = (s_in / GELU_INDEX_SCALE) * 2^k
     return int(np.floor((s_in / GELU_INDEX_SCALE) * (1 << k_bits)))
 
+def ensure_nonneg_matmul(Q_w, z_w, Q_x, z_x, s_w, s_x, s_y, z_y, k_bits=26):
+    """ZEN matmul with dynamic z_y adjustment to ensure Q_y_sim >= 0.
+    Required for inputs to softmax, where negative Q_sim breaks the
+    scaling identity (np.clip on table_idx violates the constraint).
+    """
+    M = get_m_constant(s_w, s_x, s_y, k=k_bits)
+    Q_y_sim, R, M_prime = sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits)
+    min_val = int(np.min(Q_y_sim))
+    if min_val < 0:
+        z_y += (-min_val + 1)
+        Q_y_sim, R, M_prime = sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits)
+        while np.min(Q_y_sim) < 0:
+            z_y += 1
+            Q_y_sim, R, M_prime = sign_bit_grouping_matmul(Q_w, z_w, Q_x, z_x, z_y, M, k_bits)
+        print(f"  [INFO] z_y adjusted to {z_y} to ensure Q_sim >= 0 (was min={min_val})")
+    return Q_y_sim, R, M_prime, M, z_y
+
+
 def check_neg_torch(tensor, label="Tensor"):
     neg_mask = tensor < 0
     count = neg_mask.sum().item()

@@ -4,7 +4,8 @@ import os
 import numpy as np
 from quantize import (
     get_quantization_params, quantize_tensor,
-    get_m_constant, sign_bit_grouping_matmul, check_neg_torch
+    get_m_constant, sign_bit_grouping_matmul, check_neg_torch,
+    ensure_nonneg_matmul,
 )
 from softmax_table import (
     FRAC_BITS, TABLE_FRAC_BITS,
@@ -164,14 +165,11 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
 
     Y_real = debug['kernel_1_scores']
     s_y1, z_y1 = get_quantization_params(Y_real)
-    z_y1 += 10  # 안전 마진
 
     K_landmarks_T = np.swapaxes(K_landmarks_q, -1, -2)
-    
-    M_k1 = get_m_constant(s_q, s_k, s_y1, k=k_bits)
-    
-    Q_y1_sim, R_matmul_k1, M_prime_k1= sign_bit_grouping_matmul(
-        Q_q, z_q, K_landmarks_T, z_k, z_y1, M_k1, k_bits
+
+    Q_y1_sim, R_matmul_k1, M_prime_k1, M_k1, z_y1 = ensure_nonneg_matmul(
+        Q_q, z_q, K_landmarks_T, z_k, s_q, s_k, s_y1, z_y1, k_bits
     )
 
     ### kernel 2
@@ -181,26 +179,21 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
 
     Y2_real = debug['kernel_2_scores']
     s_y2, z_y2 = get_quantization_params(Y2_real)
-    z_y2 += 10  # 안전 마진
-    
+
     K_landmarks_T = np.swapaxes(K_landmarks_q, -1, -2)
-    M_k2 = get_m_constant(s_q, s_k, s_y2, k=k_bits)
-    
-    Q_y2_sim, R_matmul_k2, M_prime_k2 = sign_bit_grouping_matmul(
-        Q_landmarks_q, z_q, K_landmarks_T, z_k, z_y2, M_k2, k_bits
+
+    Q_y2_sim, R_matmul_k2, M_prime_k2, M_k2, z_y2 = ensure_nonneg_matmul(
+        Q_landmarks_q, z_q, K_landmarks_T, z_k, s_q, s_k, s_y2, z_y2, k_bits
     )
 
     ### kernel 3
     Y3_real = debug['kernel_3_scores']
     s_y3, z_y3 = get_quantization_params(Y3_real)
-    z_y3 += 10  # 안전 마진
 
     K_T = np.swapaxes(Q_k, -1, -2)
-    
-    M_k3 = get_m_constant(s_q, s_k, s_y3, k=k_bits)
-    
-    Q_sim_k3, R_matmul_k3, M_prime_k3 = sign_bit_grouping_matmul(
-        Q_landmarks_q, z_q, K_T, z_k, z_y3, M_k3, k_bits
+
+    Q_sim_k3, R_matmul_k3, M_prime_k3, M_k3, z_y3 = ensure_nonneg_matmul(
+        Q_landmarks_q, z_q, K_T, z_k, s_q, s_k, s_y3, z_y3, k_bits
     )
 
     ### softmax v3 (single table, table_frac_bits=10)
