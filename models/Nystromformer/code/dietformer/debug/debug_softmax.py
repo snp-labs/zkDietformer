@@ -3,15 +3,6 @@ import os
 
 
 def _debug_softmax_kernel(data, keys, label, k_bits, frac_bits, k_segments):
-    """Single softmax kernel verification.
-
-    Args:
-        data: loaded npz dict.
-        keys: dict mapping canonical names to actual npz key names.
-              Required: Q_sim, R_matmul, r_sm, limbs, exp_limbs,
-                        Q_exp, R_exp, exp_total, exp_sum, P, R_div.
-        label: display label (e.g. "BERT attn", "Nystrom k1").
-    """
     print(f"\n--- Softmax Kernel: {label} ---")
 
     # [Step 1] Scaling & limb reconstruction

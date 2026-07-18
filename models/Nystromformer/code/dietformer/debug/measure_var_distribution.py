@@ -1,17 +1,3 @@
-#!/usr/bin/env python3
-"""
-BERT-base-uncased 와 uw-madison/nystromformer-512 의 LayerNorm 입력 var 분포 측정.
-
-사용법:
-    cd <some workdir>  # outputs 가 만들어져도 무관한 위치
-    python measure_var_distribution.py                      # 둘 다 측정 + JSON/MD 저장
-    python measure_var_distribution.py --model bert-only    # BERT 만
-    python measure_var_distribution.py --model nystrom-only # Nystrom 만
-    python measure_var_distribution.py --json out.json --md out.md
-    python measure_var_distribution.py --max-length 64       # 짧게
-
-요구 환경: torch + transformers + numpy. 첫 실행 시 HF Hub에서 모델 다운로드.
-"""
 from __future__ import annotations
 
 import argparse

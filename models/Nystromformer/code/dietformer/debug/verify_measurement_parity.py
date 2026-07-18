@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-"""
-확인해야할 항목:
-- 같아야 하는값: (hidden_size, num_layers, num_heads, MAX_SEQ_LEN, GELU swap, eval mode)
-- 다를수 있는값: (layer_norm_eps, vocab_size, max_position_embeddings, hidden_act)
-- Nystromformer 전용 (monkey-patch 적용, num_landmarks override, Nyström 분기 활성)
-"""
 from __future__ import annotations
 
 import json

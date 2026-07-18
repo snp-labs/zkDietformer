@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-gelu_swap.py 정합성 검증 — dietformer env (transformers 4.57.3, torch 2.9.1) 에서 실행.
-
-검증 항목:
-1. SigmoidGELU 클래스 numerical 정확성 (max_abs_diff == 0)
-2. BERT 모델: 교체 전/후 타입, 12 layer 모두 swap 확인
-3. Nystromformer 모델: 같음
-4. 잘못된 model_type → ValueError
-5. dtype 보존
-"""
 from __future__ import annotations
 
 import os

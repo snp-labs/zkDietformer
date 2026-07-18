@@ -108,5 +108,5 @@ def debug_bert_witness(npz_path, k_bits=26, frac_bits=16):
         print("  - Division Consistency: ❌ FAIL")
 
 if __name__ == "__main__":
-    # 생성된 BERT NPZ 파일 경로를 넣으세요
+    # 생성된 BERT NPZ 파일 경로
     debug_bert_witness("../outputs_bert/outputs_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz")

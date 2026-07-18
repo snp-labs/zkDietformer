@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-monkey-patch 의 numerical 정합성 확인:
-- HF original (config override + native forward) vs patched (apply_monkey_patch)
-- 같은 입력에 대해 출력이 정확히 일치하는지 (max_abs_diff < 1e-5)
-- 1차 (m=64, seed=42), 2차 (m=64, seed=123), 3차 sweep (m ∈ {32, 64, 112})
-
-결과 보는곳:
-- docs/migration/18-monkey-patch-validation.md (결과 보고서)
-- 콘솔 출력 (실시간 진행 상황)
-"""
 from __future__ import annotations
 
 import os
