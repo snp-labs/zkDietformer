@@ -112,7 +112,7 @@ def debug_bert_normalization(witness_path, k_bits=26, frac_bits=16):
         print(f"  - GeLU Lookup & Rescale:              {'PASS' if ok_gelu else 'FAIL'}")
 
 if __name__ == "__main__":
-    witness_file = "../outputs_bert/outputs_bert-batch0-bert.encoder.layer.1.attention.self.norm.witness.npz"
+    witness_file = "/Users/minhae/Projects/fin_zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n128_L2_h128_bert/outputs_n128_L2_h128_bert-batch0-bert.encoder.layer.0.attention.self.norm.witness.npz"
     if os.path.exists(witness_file):
         debug_bert_normalization(witness_file)
     else:

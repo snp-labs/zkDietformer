@@ -332,7 +332,7 @@ def write_markdown(data: dict, passes: list, fails: list, md_path: Path) -> None
     L.append("| Phase 4 | lookup table SCALE=1000 | layernorm_table.py:VAR_SCALE |")
     L.append("| 2A | monkey-patch 작성 | nystrom_attention_capture.py |")
     L.append("| 2B | numerical 정합 검증 | max_abs_diff = 0.0 (5 test PASS) |")
-    L.append("| 2C | normalization pipeline 일반화 | bert_normalization_pipeline.py table_dir 인자 |")
+    L.append("| 2C | normalization pipeline 일반화 | normalization_pipeline.py table_dir 인자 |")
     L.append("| 2D | run_validation.py 재작성 | HF 통합 + sweep 지원 |")
     L.append("| 2E | 측정 환경 검증 (본 보고서) | docs/migration/08-measurement-environment.md |")
     L.append("")

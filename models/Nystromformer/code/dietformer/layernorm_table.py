@@ -25,10 +25,7 @@ EPS_DEFAULT = EPS_BERT
 def generate_layernorm_tables(out_dir, k_bits=26, frac_bits=8, eps=EPS_DEFAULT, var_scale=VAR_SCALE):
     """
     1/√(real_var + eps) 값을 fixed-point uint64로 표 작성.
-
     real_var[i] = i / var_scale   (i = 0, 1, ..., TABLE_SIZE-1)
-    이 매핑이 핵심 변경점. 기존(Phase 2)에서는 real_var[i] = i 였음.
-
     out_dir / 'layernorm_tables.npz' 에 저장. var_scale 도 메타로 함께 저장
     되어 회로 측이 동일한 scaling을 사용하는지 확인 가능.
     """
@@ -53,7 +50,7 @@ def generate_layernorm_tables(out_dir, k_bits=26, frac_bits=8, eps=EPS_DEFAULT, 
 
 def get_layernorm_index_multiplier(s_var, k_bits=26, var_scale=VAR_SCALE):
     """
-    bert_normalization_pipeline.py 가 호출. 
+    normalization_pipeline.py 가 호출. 
     VAR_SCALE 을 곱해서 인덱스가 var_real · VAR_SCALE 형태로 떨어지게 한다. 
     > 양자화된 분산 값을 테이블 인덱스로 변환하기 위한 숫자 M_ln을 구하는 함수
 

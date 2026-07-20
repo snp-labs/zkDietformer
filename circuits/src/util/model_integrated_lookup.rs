@@ -607,7 +607,7 @@ fn prove_lasso_for_gelu_integrated(
                     - (bundle.z_in.into_bigint().as_ref()[0] as i128);
                 let r_in = r_in_lin[b][s][d].into_bigint().as_ref()[0] as i128;
                 let x_diff_full = (q_in_diff << k_bits) + r_in;
-                let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> k_bits;
+                let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> (2 * k_bits);
                 let mut idx = scaled_diff + offset as i128;
                 if idx < 0 { idx = 0; }
                 if idx >= GELU_M as i128 { idx = (GELU_M - 1) as i128; }

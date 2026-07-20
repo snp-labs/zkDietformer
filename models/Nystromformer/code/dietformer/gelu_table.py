@@ -5,7 +5,7 @@ TABLE_SIZE = 1 << 16  # 65536
 FRAC_BITS = 8
 GELU_INDEX_SCALE = 1.0 / (1 << 9)
 
-def generate_gelu_sigmoid_tables(out_dir, k_bits=26, frac_bits=16):
+def generate_gelu_sigmoid_tables(out_dir, k_bits=26, frac_bits=FRAC_BITS):
     os.makedirs(out_dir, exist_ok=True)
     
     indices = np.arange(TABLE_SIZE, dtype=np.float64)
@@ -28,7 +28,7 @@ def generate_gelu_sigmoid_tables(out_dir, k_bits=26, frac_bits=16):
 def extract_gelu_sigmoid_single(Q_sim, R_mat, z_in, gelu_table, M_gelu_idx, k_bits):
     X_diff = (Q_sim.astype(object) - int(z_in)) * (1 << k_bits) + R_mat.astype(object)
     
-    scaled_diff = (X_diff * M_gelu_idx) >> k_bits
+    scaled_diff = (X_diff * M_gelu_idx) >> (2 * k_bits)
     index = scaled_diff + (TABLE_SIZE // 2)
     # cliping
     index_clipped = np.clip(index, 0, TABLE_SIZE - 1)

@@ -184,12 +184,21 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             }).collect()
         }).collect();
 
-        // d2: commit W_Q, W_K, W_V weights
+        let w_o_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = self.proj_o.q_w_diff[h].len();
+            let hd_dim = self.proj_o.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(self.proj_o.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+
+        // d2: commit W_Q, W_K, W_V, W_O weights
         {
             let mut vars_2 = self.committed_vars_2.borrow_mut();
             for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+            for h_w in &w_o_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         }
 
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &self.proj_o.q_out_proj);
@@ -660,11 +669,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 {
                     let o_input = &attn_output_vars[b];
 
+                    let w_o_h_t = &w_o_vars[h];
                     let d_dim = self.proj_o.q_w_diff[h].len();
-                    let hd_dim = self.proj_o.q_w_diff[h][0].len();
-                    let w_o_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                        .map(|hd| (0..d_dim).map(|d| FpVar::Constant(self.proj_o.q_w_diff[h][d][hd])).collect())
-                        .collect();
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(self.proj_o.m_proj),
                         m_prime: FpVar::Constant(self.proj_o.m_prime_proj),
@@ -675,7 +681,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                     };
                     let r_pows_po = gen_challenge_vector(&r_var, d_dim);
                     enforce_freivalds(
-                        cs.clone(), &o_input, &w_o_h_t,
+                        cs.clone(), &o_input, w_o_h_t,
                         &proj_o_out[b][h], &proj_o_r[b][h],
                         &self.proj_o.r_out_proj[b][h],
                         &proj_o_params, &r_pows_po,

@@ -63,7 +63,7 @@ use crate::{
     util::{
         load::{
             read_array_i64, to_field_1d_i64, to_field_2d_i32, to_field_2d_i64,
-            to_field_3d_i32, to_field_3d_i64, to_field_3d_u64,
+            to_field_3d_i64, to_field_3d_u64,
             to_field_4d_i64, to_field_4d_u64, to_field_5d_i64,
         },
         norm_detect::{NormType, detect_norm_type},
@@ -553,7 +553,7 @@ where
             q_b_diff: to_field_1d_i64(&npz.by_name::<_, Ix1>(&format!("Q_b_diff_{}.npy", prefix))?.into_dimensionality()?),
             m_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
             m_prime_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
-            q_out_sim: to_field_3d_i32(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
+            q_out_sim: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
             r_out_lin: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_out_{}.npy", prefix))?.into_dimensionality()?),
         })
     };
@@ -654,12 +654,21 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         }).collect()
     }).collect();
 
-    // d2: commit W_Q, W_K, W_V weights
+    let w_o_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_o.q_w_diff[h].len();
+        let hd_dim = w.proj_o.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_o.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+
+    // d2: commit W_Q, W_K, W_V, W_O weights
     {
         let mut vars_2 = committed_vars_2.borrow_mut();
         for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        for h_w in &w_o_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
     }
 
     let (temp_data, params_temp) = w.matmul_temp.alloc_and_setup(cs.clone(), F::zero(), w.z_v, two_k_var);
@@ -878,11 +887,8 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                     (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
                 }).collect();
 
+                let w_o_h_t = &w_o_vars[h];
                 let d_dim = w.proj_o.q_w_diff[h].len();
-                let hd_dim = w.proj_o.q_w_diff[h][0].len();
-                let w_o_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_o.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_o_params = ZenParams {
                     m: FpVar::Constant(w.proj_o.m_proj),
                     m_prime: FpVar::Constant(w.proj_o.m_prime_proj),
@@ -892,7 +898,7 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                     two_k: two_k_var.clone(),
                 };
                 let r_pows_po = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &o_input, &w_o_h_t, &proj_o_out[b][h], &proj_o_r[b][h], &w.proj_o.r_out_proj[b][h], &proj_o_params, &r_pows_po, &mut global_proj_o_lows, &mut global_proj_o_highs, Some(&w.proj_o.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &o_input, w_o_h_t, &proj_o_out[b][h], &proj_o_r[b][h], &w.proj_o.r_out_proj[b][h], &proj_o_params, &r_pows_po, &mut global_proj_o_lows, &mut global_proj_o_highs, Some(&w.proj_o.q_b_diff[h]))?;
             }
         }
     }
@@ -1044,12 +1050,21 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
         }).collect()
     }).collect();
 
-    // d2: commit W_Q, W_K, W_V weights
+    let w_o_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+        let d_dim = w.proj_o.q_w_diff[h].len();
+        let hd_dim = w.proj_o.q_w_diff[h][0].len();
+        (0..hd_dim).map(|hd| {
+            (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(w.proj_o.q_w_diff[h][d][hd])).unwrap()).collect()
+        }).collect()
+    }).collect();
+
+    // d2: commit W_Q, W_K, W_V, W_O weights
     {
         let mut vars_2 = committed_vars_2.borrow_mut();
         for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        for h_w in &w_o_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
     }
 
     let (attn_data, params_attn) = w.matmul_attn.alloc_and_setup(cs.clone(), w.z_q, w.z_k, two_k_var);
@@ -1157,17 +1172,14 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
                     (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
                 }).collect();
 
+                let w_o_h_t = &w_o_vars[h];
                 let d_dim = w.proj_o.q_w_diff[h].len();
-                let hd_dim = w.proj_o.q_w_diff[h][0].len();
-                let w_o_h_t: Vec<Vec<FpVar<F>>> = (0..hd_dim)
-                    .map(|hd| (0..d_dim).map(|d| FpVar::Constant(w.proj_o.q_w_diff[h][d][hd])).collect())
-                    .collect();
                 let proj_o_params = ZenParams {
                     m: FpVar::Constant(w.proj_o.m_proj), m_prime: FpVar::Constant(w.proj_o.m_prime_proj),
                     z_w: FpVar::Constant(w.z_attn_output), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
                 };
                 let r_pows_po = gen_challenge_vector(r_var, d_dim);
-                enforce_freivalds(cs.clone(), &o_input, &w_o_h_t, &proj_o_out[b][h], &proj_o_r[b][h], &w.proj_o.r_out_proj[b][h], &proj_o_params, &r_pows_po, &mut global_proj_o_lows, &mut global_proj_o_highs, Some(&w.proj_o.q_b_diff[h]))?;
+                enforce_freivalds(cs.clone(), &o_input, w_o_h_t, &proj_o_out[b][h], &proj_o_r[b][h], &w.proj_o.r_out_proj[b][h], &proj_o_params, &r_pows_po, &mut global_proj_o_lows, &mut global_proj_o_highs, Some(&w.proj_o.q_b_diff[h]))?;
             }
         }
     }

@@ -4,7 +4,7 @@ import glob
 
 # gelu_table.py의 설정과 동기화
 TABLE_SIZE = 1 << 16  # 65536
-FRAC_BITS = 16
+FRAC_BITS = 8
 
 def debug_gelu_constraints(output_dir="outputs_bert"):
     witness_files = glob.glob(os.path.join(output_dir, "*.norm.witness.npz"))
@@ -35,7 +35,7 @@ def debug_gelu_constraints(output_dir="outputs_bert"):
         q_in_diff = (sim['Q_out_sim_lin1'].astype(object) - sim['z_in_gelu'].astype(object))
         x_diff_full = (q_in_diff << k) + sim['R_out_lin1'].astype(object)
         
-        scaled_diff = (x_diff_full * sim['M_gelu_idx'].astype(object)) >> k
+        scaled_diff = (x_diff_full * sim['M_gelu_idx'].astype(object)) >> (2 * k)
         calculated_idx = (scaled_diff + (TABLE_SIZE // 2)).astype(np.int64)
         clipped_idx = np.clip(calculated_idx, 0, TABLE_SIZE - 1)
         

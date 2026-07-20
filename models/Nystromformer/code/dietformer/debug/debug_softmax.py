@@ -2,53 +2,40 @@ import numpy as np
 import os
 
 
-def _debug_softmax_kernel(data, keys, label, k_bits, frac_bits, k_segments):
-    print(f"\n--- Softmax Kernel: {label} ---")
+def _debug_softmax_kernel_v3(data, keys, label, k_bits):
+    print(f"\n--- Softmax Kernel (v3): {label} ---")
+    frac_bits = int(data['frac_bits'])
 
-    # [Step 1] Scaling & limb reconstruction
-    X_recovered = (data[keys['Q_sim']].astype(object) << k_bits) + data[keys['R_matmul']].astype(object)
-    M_sm = data['M_sm'].astype(object)
+    # [Step 1] Scaling: (Q_sim << k_bits + R_matmul) * M_sm == table_idx * 2^(2*k_bits) + r_sm
+    Q_sim = data[keys['Q_sim']].astype(object)
+    R_matmul = data[keys['R_matmul']].astype(object)
+    M_sm = int(data[keys['M_sm']])
+    table_idx = data[keys['table_idx']].astype(object)
     r_sm = data[keys['r_sm']].astype(object)
 
-    limbs = data[keys['limbs']]
-    scaled_x_recovered = np.zeros_like(limbs[0], dtype=object)
-    limb_bits = int(data['limb_bits'])
-    for i in range(k_segments):
-        scaled_x_recovered += limbs[i].astype(object) << (limb_bits * i)
+    X = (Q_sim << k_bits) + R_matmul
+    lhs = X * M_sm
+    rhs = (table_idx << (2 * k_bits)) + r_sm
+    ok_scale = np.array_equal(lhs, rhs)
+    if not ok_scale:
+        mismatch = np.argwhere(lhs != rhs)
+        print(f"  [1] Scaling:    FAIL  ({len(mismatch)} mismatches, first: {mismatch[0].tolist()})")
+        idx = tuple(mismatch[0])
+        print(f"      Q_sim={Q_sim[idx]}, table_idx={table_idx[idx]}, r_sm={r_sm[idx]}")
+        print(f"      LHS={lhs[idx]}, RHS={rhs[idx]}")
+    else:
+        print(f"  [1] Scaling:    PASS")
 
-    lhs_scale = X_recovered * M_sm
-    rhs_scale = (scaled_x_recovered << k_bits) + r_sm
-    ok_scale = np.array_equal(lhs_scale, rhs_scale)
-    print(f"  [1] Scaling & Remainder:              {'PASS' if ok_scale else 'FAIL'}")
+    # [Step 2] Non-negative checks
+    ok_nonneg_qsim = np.all(Q_sim >= 0)
+    ok_nonneg_tidx = np.all(table_idx >= 0)
+    ok_nonneg_rsm = np.all(r_sm >= 0)
+    print(f"  [2] Q_sim >= 0: {'PASS' if ok_nonneg_qsim else 'FAIL (min=' + str(np.min(Q_sim)) + ')'}")
+    print(f"      tidx >= 0:  {'PASS' if ok_nonneg_tidx else 'FAIL (min=' + str(np.min(table_idx)) + ')'}")
+    print(f"      r_sm >= 0:  {'PASS' if ok_nonneg_rsm else 'FAIL (min=' + str(np.min(r_sm)) + ')'}")
 
-    # [Step 2] Exponential chain multiplication
-    exp_limbs = data[keys['exp_limbs']]
-    Q_exp = data[keys['Q_exp']]
-    R_exp = data[keys['R_exp']]
+    # [Step 3] Division: exp_total << frac_bits == P * exp_sum + R_div
     exp_total = data[keys['exp_total']].astype(object)
-
-    current_acc = exp_limbs[0].astype(object)
-    all_step_ok = True
-    for k in range(k_segments - 1):
-        multiplier = exp_limbs[k + 1].astype(object)
-        lhs_mult = current_acc * multiplier
-
-        if k == k_segments - 2:
-            target_q = exp_total
-        else:
-            target_q = Q_exp[k].astype(object)
-
-        rhs_mult = (target_q << frac_bits) + R_exp[k].astype(object)
-        if not np.array_equal(lhs_mult, rhs_mult):
-            all_step_ok = False
-            print(f"  [2] Exp Chain Step {k}:                FAIL")
-            break
-        current_acc = target_q
-
-    if all_step_ok:
-        print(f"  [2] Exp Chain Multiplication:         PASS")
-
-    # [Step 3] Softmax division: P * exp_sum + R_div == exp_total << frac_bits
     exp_sum = data[keys['exp_sum']].astype(object)
     P = data[keys['P']].astype(object)
     R_div = data[keys['R_div']].astype(object)
@@ -56,23 +43,24 @@ def _debug_softmax_kernel(data, keys, label, k_bits, frac_bits, k_segments):
     numerator = exp_total << frac_bits
     div_check = P * exp_sum + R_div
     ok_div = np.array_equal(numerator, div_check)
-    print(f"  [3] Softmax Division (P*sum + R):     {'PASS' if ok_div else 'FAIL'}")
+    if not ok_div:
+        mismatch = np.argwhere(numerator != div_check)
+        print(f"  [3] Division:   FAIL  ({len(mismatch)} mismatches, first: {mismatch[0].tolist()})")
+    else:
+        print(f"  [3] Division:   PASS")
 
-    return ok_scale and all_step_ok and ok_div
+    return ok_scale and ok_nonneg_qsim and ok_nonneg_tidx and ok_nonneg_rsm and ok_div
 
 
-def debug_softmax_witness(npz_path):
-    print(f"=== Softmax Debugging: {os.path.basename(npz_path)} ===")
+def debug_softmax_witness_v3(npz_path):
+    print(f"=== Softmax v3 Debugging: {os.path.basename(npz_path)} ===")
     if not os.path.exists(npz_path):
         print("File not found.")
         return
 
     data = np.load(npz_path)
     k_bits = int(data['k_bits'])
-    frac_bits = int(data['frac_bits'])
-    k_segments = int(data['k_segments'])
 
-    # Auto-detect: BERT (Q_sim_attn) vs Nystrom (Q_sim_k1)
     is_bert = 'Q_sim_attn' in data
     is_nystrom = 'Q_sim_k1' in data
 
@@ -85,38 +73,41 @@ def debug_softmax_witness(npz_path):
     if is_bert:
         keys = {
             'Q_sim': 'Q_sim_attn', 'R_matmul': 'R_matmul_attn',
-            'r_sm': 'r_sm', 'limbs': 'limbs', 'exp_limbs': 'exp_limbs',
-            'Q_exp': 'Q_exp', 'R_exp': 'R_exp', 'exp_total': 'exp_total',
-            'exp_sum': 'exp_sum', 'P': 'P_attn', 'R_div': 'R_div_attn',
+            'M_sm': 'M_sm', 'table_idx': 'table_idx', 'r_sm': 'r_sm',
+            'exp_total': 'exp_total', 'exp_sum': 'exp_sum',
+            'P': 'P_attn', 'R_div': 'R_div_attn',
         }
-        ok = _debug_softmax_kernel(data, keys, "BERT full-attention", k_bits, frac_bits, k_segments)
+        ok = _debug_softmax_kernel_v3(data, keys, "BERT full-attention", k_bits)
         all_ok = all_ok and ok
 
     if is_nystrom:
         for ki in range(1, 4):
-            suffix = f"_k{ki}"
             keys = {
                 'Q_sim': f'Q_sim_k{ki}', 'R_matmul': f'R_matmul_k{ki}',
-                'r_sm': f'r_sm_k{ki}', 'limbs': f'limbs_k{ki}',
-                'exp_limbs': f'exp_limbs_k{ki}',
-                'Q_exp': f'Q_exp_k{ki}', 'R_exp': f'R_exp_k{ki}',
+                'M_sm': f'M_sm_k{ki}', 'table_idx': f'table_idx_k{ki}',
+                'r_sm': f'r_sm_k{ki}',
                 'exp_total': f'exp_total_k{ki}', 'exp_sum': f'exp_sum_k{ki}',
                 'P': f'P_k{ki}', 'R_div': f'R_div_k{ki}',
             }
-            ok = _debug_softmax_kernel(data, keys, f"Nystrom kernel {ki}", k_bits, frac_bits, k_segments)
+            ok = _debug_softmax_kernel_v3(data, keys, f"Nystrom kernel {ki}", k_bits)
             all_ok = all_ok and ok
 
-    print(f"\n{'=== ALL SOFTMAX CHECKS PASSED ===' if all_ok else '=== SOME CHECKS FAILED ==='}")
+    print(f"\n{'=== ALL SOFTMAX V3 CHECKS PASSED ===' if all_ok else '=== SOME CHECKS FAILED ==='}")
 
 
 if __name__ == "__main__":
-    # BERT
-    bert_witness = "../outputs_bert/outputs_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz"
-    if os.path.exists(bert_witness):
-        debug_softmax_witness(bert_witness)
+    import glob, sys
 
-    # Nystrom
-    nystrom_witness = "../outputs_m64/outputs_m64-batch0-nystromformer.encoder.layer.0.attention.self.witness.npz"
-    if os.path.exists(nystrom_witness):
-        print("\n")
-        debug_softmax_witness(nystrom_witness)
+    if len(sys.argv) > 1:
+        for path in sys.argv[1:]:
+            debug_softmax_witness_v3(path)
+    else:
+        # Auto-detect witness files
+        for pattern in [
+            "../outputs_bert/*attention.self.witness.npz",
+            "../outputs_n*_m*_*nystrom/*attention.self.witness.npz",
+            "../outputs_m*/*attention.self.witness.npz",
+        ]:
+            for f in sorted(glob.glob(pattern)):
+                debug_softmax_witness_v3(f)
+                print()

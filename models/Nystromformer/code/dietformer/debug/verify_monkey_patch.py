@@ -249,7 +249,7 @@ def write_markdown_report(results: list[dict], md_path: Path) -> None:
     lines.append("## 5. 후속 조치")
     lines.append("")
     if all_pass:
-        lines.append("**✅ 모든 검증 PASS** → 작업 2C (`bert_normalization_pipeline.py` table_dir 인자 추가) 진입.")
+        lines.append("**✅ 모든 검증 PASS** → 작업 2C (`normalization_pipeline.py` table_dir 인자 추가) 진입.")
         lines.append("")
         lines.append("후속 단계 권장 순서:")
         lines.append("1. 작업 2C — pipeline 함수 일반화")

@@ -21,7 +21,7 @@ from nystrom_attention_capture import (
     valid_landmark_choices,
 )
 from attention_pipeline import process_attn_debug_npz
-from bert_normalization_pipeline import process_standard_normalization_debug_npz
+from normalization_pipeline import process_standard_normalization_debug_npz
 from layernorm_table import EPS_NYSTROMFORMER
 
 

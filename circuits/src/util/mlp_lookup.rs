@@ -129,7 +129,7 @@ pub fn run_lasso_for_gelu(
                 let r_in = r_in_lin[b][s][d].into_bigint().as_ref()[0] as i128;
 
                 let x_diff_full = (q_in_diff << k_bits) + r_in;
-                let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> k_bits;
+                let scaled_diff = (x_diff_full * m_gelu_idx as i128) >> (2 * k_bits);
                 let mut idx = scaled_diff + offset as i128;
 
                 if idx < 0 { idx = 0; }

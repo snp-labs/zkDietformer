@@ -105,12 +105,21 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
             }).collect()
         }).collect();
 
-        // d2: commit W_Q, W_K, W_V weights
+        let w_o_vars: Vec<Vec<Vec<FpVar<F>>>> = (0..num_heads).map(|h| {
+            let d_dim = inner.proj_o.q_w_diff[h].len();
+            let hd_dim = inner.proj_o.q_w_diff[h][0].len();
+            (0..hd_dim).map(|hd| {
+                (0..d_dim).map(|d| FpVar::new_witness(cs.clone(), || Ok(inner.proj_o.q_w_diff[h][d][hd])).unwrap()).collect()
+            }).collect()
+        }).collect();
+
+        // d2: commit W_Q, W_K, W_V, W_O weights
         {
             let mut vars_2 = inner.committed_vars_2.borrow_mut();
             for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+            for h_w in &w_o_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
         }
 
         // === Projection input allocation (witness) ===

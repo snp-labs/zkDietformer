@@ -39,7 +39,7 @@ use crate::{
         utils::random::RandomTape,
     },
     util::{
-        load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i32, to_field_3d_i64, to_field_3d_u64},
+        load::{to_field_1d_i64, to_field_2d_i32, to_field_3d_i64, to_field_3d_u64},
         mlp_lookup::{
             run_lasso_for_gelu, run_lasso_for_layernorm, run_lasso_for_rmsnorm,
             run_mlp_remainders, run_mlp_remainders_layernorm,
@@ -136,13 +136,13 @@ where
             m_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_{}.npy", prefix))?.into_scalar()),
             m_prime_lin: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", prefix))?.into_scalar()),
             
-            q_out_sim: to_field_3d_i32(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
+            q_out_sim: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?.into_dimensionality()?),
             r_out_lin: to_field_3d_i64(&npz.by_name::<_, Ix3>(&format!("R_out_{}.npy", prefix))?.into_dimensionality()?),
         })
     };
 
     let ff1 = load_linear(&mut npz, "lin1")?;
-        
+
     let load_gelu = |npz: &mut NpzReader<File>, prefix: &str| -> Result<GeLUBundle<E::ScalarField>> {
         Ok(GeLUBundle {
             z_in: E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("z_in_{}.npy", prefix))?.into_scalar()),
@@ -468,7 +468,7 @@ where
                 npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>(&format!("M_prime_{}.npy", prefix))?
                     .into_scalar(),
             ),
-            q_out_sim: to_field_3d_i32(
+            q_out_sim: to_field_3d_i64(
                 &npz.by_name::<_, Ix3>(&format!("Q_out_sim_{}.npy", prefix))?
                     .into_dimensionality()?,
             ),

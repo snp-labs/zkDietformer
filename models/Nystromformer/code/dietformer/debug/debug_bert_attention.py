@@ -55,58 +55,49 @@ def debug_bert_witness(npz_path, k_bits=26, frac_bits=16):
     )
     print(f"  - Matmul Consistency: {'✅ PASS' if ok_matmul else '❌ FAIL'}")
 
-    # [2] Softmax Scaling 검증: Q_sim * M_sm = Index_Limbs
-    print("\n[Step 2] Softmax Index Scaling:")
+    # [2] Softmax v3 Scaling 검증: (Q_sim << k + R_matmul) * M_sm == table_idx * 2^(2k) + r_sm
+    print("\n[Step 2] Softmax v3 Scaling:")
     Q_sim = data['Q_sim_attn'].astype(object)
+    R_matmul = data['R_matmul_attn'].astype(object)
     M_sm = int(data['M_sm'])
+    table_idx = data['table_idx'].astype(object)
     r_sm = data['r_sm'].astype(object)
-    limbs = data['limbs'].astype(object) # (5, B, H, S, S)
-    
-    # 분해된 limb들을 다시 합침
-    limb_bits = 16 # 고정값
-    recovered_idx = sum(limbs[i] << (limb_bits * i) for i in range(5))
-    
-    lhs_sm = Q_sim * M_sm
-    rhs_sm = (recovered_idx << k_bits) + r_sm
-    
-    if np.array_equal(lhs_sm, rhs_sm):
-        print("  - Scaling & Limb Extraction: ✅ PASS")
-    else:
-        print("  - Scaling & Limb Extraction: ❌ FAIL")
 
-    # [3] Softmax Exponential Chain 검증
-    print("\n[Step 3] Softmax Exponential Chain (exp_total):")
-    exp_limbs = data['exp_limbs'].astype(object) # (5, B, H, S, S)
-    Q_exp = data['Q_exp'].astype(object)
-    R_exp = data['R_exp'].astype(object)
-    exp_total = data['exp_total'].astype(object)
-    
-    chain_ok = True
-    current_acc = exp_limbs[0]
-    for i in range(4): # 5-segment 이므로 4번의 곱셈
-        target = exp_total if i == 3 else Q_exp[i]
-        lhs_chain = current_acc * exp_limbs[i+1]
-        rhs_chain = (target << frac_bits) + R_exp[i]
-        if not np.array_equal(lhs_chain, rhs_chain):
-            chain_ok = False
-            break
-        current_acc = target
-    print(f"  - Exp Chain Multiplication: {'✅ PASS' if chain_ok else '❌ FAIL'}")
+    X = (Q_sim << k_bits) + R_matmul
+    lhs_sm = X * M_sm
+    rhs_sm = (table_idx << (2 * k_bits)) + r_sm
+    ok_scale = np.array_equal(lhs_sm, rhs_sm)
+    if not ok_scale:
+        mismatch = np.argwhere(lhs_sm != rhs_sm)
+        print(f"  - Scaling: FAIL  ({len(mismatch)} mismatches, first: {mismatch[0].tolist()})")
+    else:
+        print(f"  - Scaling: PASS")
+
+    # [3] Non-negative checks
+    print("\n[Step 3] Non-negative checks:")
+    ok_qsim = np.all(Q_sim >= 0)
+    ok_tidx = np.all(table_idx >= 0)
+    ok_rsm = np.all(r_sm >= 0)
+    print(f"  - Q_sim >= 0:      {'PASS' if ok_qsim else 'FAIL (min=' + str(np.min(Q_sim)) + ')'}")
+    print(f"  - table_idx >= 0:  {'PASS' if ok_tidx else 'FAIL (min=' + str(np.min(table_idx)) + ')'}")
+    print(f"  - r_sm >= 0:       {'PASS' if ok_rsm else 'FAIL (min=' + str(np.min(r_sm)) + ')'}")
 
     # [4] Softmax Division (Normalization) 검증
     print("\n[Step 4] Softmax Normalization (P = exp / sum):")
+    exp_total = data['exp_total'].astype(object)
     exp_sum = data['exp_sum'].astype(object)
     P = data['P_attn'].astype(object)
     R_div = data['R_div_attn'].astype(object)
-    
+
     lhs_div = exp_total << frac_bits
     rhs_div = P * exp_sum + R_div
-    
-    if np.array_equal(lhs_div, rhs_div):
-        print("  - Division Consistency: ✅ PASS")
+    ok_div = np.array_equal(lhs_div, rhs_div)
+    if ok_div:
+        print("  - Division Consistency: PASS")
     else:
-        print("  - Division Consistency: ❌ FAIL")
+        mismatch = np.argwhere(lhs_div != rhs_div)
+        print(f"  - Division Consistency: FAIL  ({len(mismatch)} mismatches)")
 
 if __name__ == "__main__":
     # 생성된 BERT NPZ 파일 경로
-    debug_bert_witness("../outputs_bert/outputs_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz")
+    debug_bert_witness("/Users/minhae/Projects/fin_zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n128_L2_h128_bert/outputs_n128_L2_h128_bert-batch0-bert.encoder.layer.0.attention.self.witness.npz")

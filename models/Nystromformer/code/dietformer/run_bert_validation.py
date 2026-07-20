@@ -18,7 +18,7 @@ from evaluation_fixtures import (
 )
 from gelu_swap import replace_activation_with_sigmoid_gelu, SigmoidGELU
 from bert_attention_pipeline import process_standard_attn_debug_npz, load_small_bert
-from bert_normalization_pipeline import process_standard_normalization_debug_npz
+from normalization_pipeline import process_standard_normalization_debug_npz
 from layernorm_table import EPS_BERT
 
 

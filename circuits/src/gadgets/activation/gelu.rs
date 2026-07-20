@@ -92,7 +92,7 @@ pub fn enforce_gelu<F: PrimeField>(
 
                     let diff = q_in_val - z_in_i128;
                     let x_diff_full = (diff << k_bits) + r_in_val;
-                    let scaled_diff = (x_diff_full * m_gelu_idx_u128 as i128) >> k_bits;
+                    let scaled_diff = (x_diff_full * m_gelu_idx_u128 as i128) >> (2 * k_bits);
                     let mut idx = scaled_diff + offset;
 
                     // Clipping

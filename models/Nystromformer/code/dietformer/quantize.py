@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import hashlib
 import argparse
+from gelu_table import GELU_INDEX_SCALE
 
 def get_quantization_params(data, bits=12):
     data_min = np.min(data)
@@ -101,15 +102,8 @@ def get_rms_index_multiplier(s_ms, k_bits=26):
     assert multiplier >= 0, f"Softmax multiplier must be non-negative, got {multiplier}"
     return multiplier
 
-# x는 zero_point가 0인, GELU의 입력 실수값.
-# x를 양자화하면 q = round(x / s_in)
-# lookup 인덱스는 index ≈ q * (s_in / (1/512)) = x * 512
-# table[index]에는 x = index / 512에서의 GELU 값을 양자화한 값이 저장되어 있다.
 def get_gelu_index_multiplier(s_in, k_bits=26):
-    # GELU_INDEX_SCALE은 gelu_table.py와 동일한 1/512 사용
-    GELU_INDEX_SCALE = 1.0 / (1 << 9)
-    # (s_in / (1/512))를 고정소수점 multiplier로 변환.
-    # 실제 index 계산 시에는 q를 곱한 뒤 2^k_bits로 나눈다.
+    # (s_in / GELU_INDEX_SCALE)를 고정소수점 multiplier로 변환.
     return int(np.floor((s_in / GELU_INDEX_SCALE) * (1 << k_bits)))
 
 def ensure_nonneg_matmul(Q_w, z_w, Q_x, z_x, s_w, s_x, s_y, z_y, k_bits=26):
