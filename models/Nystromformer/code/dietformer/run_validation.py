@@ -1,28 +1,3 @@
-#!/usr/bin/env python3
-"""
-Nystromformer evaluation — HF `uw-madison/nystromformer-512` 통합.
-
-작업 2D 결과물. 자체학습 모델 → HF 사전학습 모델 교체 + monkey-patch 통한
-중간값 캡처 + LayerNorm hook (Step C 패턴 재사용) + num_landmarks sweep 지원.
-
-이전 단계와의 정렬:
-- Step B: BERT baseline (`run_bert_validation.py`) HF 교체 완료
-- Step C: BERT LayerNorm 전환 (ln_* 키 컨벤션)
-- Phase 4: layernorm_table.py VAR_SCALE=1000
-- 작업 2A: nystrom_attention_capture.py — monkey-patch
-- 작업 2B: monkey-patch numerical 검증 (max_abs_diff=0 PASS)
-- 작업 2C: bert_normalization_pipeline.py 일반화 (table_dir + eps 인자)
-- 본 단계 (2D): Nystromformer 측 통합
-
-핵심 동작:
-- num_landmarks sweep 변수 (default 64) — §7 contribution 입증용
-- output_dir 자동 분기 — `--save_attn_npz` 미지정 시 `outputs_m{N}/`
-- forward 2회 / batch (1 capture + 1 perf) — BERT 측과 정렬
-- 모든 12 layer × 17 attention 키 + 12 norm 키를 단일 forward 로 캡처
-
-회로 verify 는 Phase 5 (Rust 가젯 enforce_layernorm + VAR_SCALE 인지) 후에야
-가능. 본 단계는 Python 측 정합성 + 측정 환경 통일까지가 목표.
-"""
 import argparse
 import json
 import os

@@ -82,30 +82,17 @@ SAMPLES: Tuple[EvalSample, ...] = (
     ),
 )
 
-# ── 편의 export ────────────────────────────────────────────────────────────
+
 SAMPLE_TEXTS: Tuple[str, ...] = tuple(s.text for s in SAMPLES)
 """text 만 추출한 튜플. 두 evaluation 스크립트가 import 해서 사용."""
 
 NUM_SAMPLES: int = len(SAMPLES)
 """고정 sample 수 (현재 10)."""
 
-# 측정 환경에서의 통일 max_seq_len.
-#
-# 변경 (2026-04-28, Step 2A 후): 510 → 448.
-# 사유: HF Nystromformer 의 num_landmarks=64 sweep 점이 사전학습 config 정합
-# (segment_means_seq_len=64, num_landmarks=64) 의 자연스러운 후보인데, 이를
-# Nyström 분기 활성화 조건 (num_landmarks ≠ seq_len) + reshape 호환 조건
-# (seq_len % num_landmarks == 0) 모두 만족시키려면 seq_len 이 64 의 배수여야 함.
-# 510 의 약수에 64 없음. 448 = 64 × 7 → num_landmarks=64 valid.
-#
-# 448 의 sweep 후보 (4:1 비율 이상): {14, 16, 28, 32, 56, 64, 112}.
-# fixture 의 max 토큰 길이는 21 (사용자 측정) — 448 padding 충분.
 MAX_SEQ_LEN: int = 128
-"""양 모델 공통 truncation 한계. 448 = 64 × 7 — num_landmarks ∈ {14, 16, 28, 32, 56, 64, 112} sweep 호환."""
 
 
 def assert_fixture_invariants() -> None:
-    """가벼운 self-check. evaluation 스크립트 import 후 한 번 호출 권장."""
     assert len(SAMPLES) == NUM_SAMPLES
     assert all(isinstance(s, EvalSample) for s in SAMPLES)
     assert all(s.bert_token_len <= MAX_SEQ_LEN for s in SAMPLES), \

@@ -32,13 +32,6 @@ def load_small_bert(
     seq_len: int = 128,
     vocab_size: int = 30522,
 ) -> BertForMaskedLM:
-    """
-    Random init BERT — 회로 비용 측정 전용.
-
-    pretrained 가중치 없이 config 만으로 모델 생성.
-    회로 constraint 수 / prove time 은 architecture 만 의존하므로
-    가중치가 random 이어도 측정 결과 동일.
-    """
     if hidden_size % num_attention_heads != 0:
         raise ValueError(
             f"hidden_size ({hidden_size}) must be divisible by "
@@ -62,7 +55,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
 
     debug = np.load(debug_npz_path, allow_pickle=True)
 
-    # ── Phase 0: Linear Projection Witness ──────────────────────────────────
+    # ── 0: Linear Projection Witness ──
     # Q/K/V projection: Y = X @ W^T + b, then Q/K scaling by 1/sqrt⁴(D)
     # O projection: O = attn_output @ W_o^T + b_o
 
@@ -174,8 +167,6 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
             Q_v = Q_raw_4d.astype(np.int64)
             s_v, z_v = s_raw, z_raw
 
-    # ── Phase 0 완료 (Output Projection은 kernel chain 이후 계산) ──────────
-
     # 2. Score 행렬곱 (Q * K^T) - O(S^2)
     # sign_bit_grouping_matmul 전용으로 처리. np.matmul 미사용.
     K_T = np.swapaxes(Q_k, -1, -2)
@@ -220,7 +211,7 @@ def process_standard_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
         P_attn.astype(np.int64), z_p, Q_v, z_v, z_sim_x, M_final, k_bits
     )
 
-    # ── Output Projection: O = Q_sim_x @ W_O^T + b_O ─────────────────────
+    # ── Output Projection: O = Q_sim_x @ W_O^T + b_O ───
     # Q_sim_x [B,H,S,D] → [B,S,HD] reshape 후 sign_bit_grouping_matmul
     Q_sim_x_flat = Q_sim_x.transpose(0, 2, 1, 3).reshape(B, S, HD)
 

@@ -30,11 +30,11 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
 
     debug = np.load(debug_npz_path, allow_pickle=True)
 
-    # ── Phase 0: Linear Projection Witness ──────────────────────────────────
+    ### ── Phase 0: Linear Projection Witness ──
     # Q/K/V projection: Y = X @ W^T + b, then Q/K scaling by 1/sqrt⁴(D)
     # O projection: O = attn_output @ W_o^T + b_o
 
-    hidden_states = debug['hidden_states']       # [B, S, HD] float
+    hidden_states = debug['hidden_states']       # [B, S, HD] float 입력값 X
     W_q, W_k, W_v = debug['W_q'], debug['W_k'], debug['W_v']
     b_q = _load_optional_array(debug, 'b_q')
     b_k = _load_optional_array(debug, 'b_k')
@@ -43,7 +43,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
     b_o = _load_optional_array(debug, 'b_o')
     attn_output_for_proj = debug['attn_output_for_proj']  # [B, S, HD]
 
-    Q_proc_real = debug['Q_proc']  # [B, H, S, D]
+    Q_proc_real = debug['Q_proc']  # [B, H, S, D] 그냥 D만 알아내려고 뽑아옴. 그 외 쓰는 곳 없음
     B_proj, H, S_proj, D = Q_proc_real.shape
     HD = H * D
     scale_factor = math.sqrt(math.sqrt(D))
@@ -53,7 +53,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
     Q_x_input = quantize_tensor(hidden_states, s_x_input, z_x_input)
 
     proj_witness = {
-        "Q_x_input": Q_x_input.astype(np.int64),     # [B, S, HD]
+        "Q_x_input": Q_x_input.astype(np.int64),     # [B, S, HD] 양자화한 입력값 X
         "z_x_input": np.uint64(z_x_input),
     }
 
@@ -101,7 +101,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
 
         proj_witness[f"Q_raw_proj_{name}"] = Q_raw_4d.astype(np.int64)
         proj_witness[f"R_proj_{name}"] = R_proj_4d.astype(np.int64)
-        proj_witness[f"Q_w_diff_{name}"] = Q_w_diff.astype(np.int64)
+        proj_witness[f"Q_w_diff_{name}"] = Q_w_diff.astype(np.int64) # 가중치와 가중치에 대한 제로포인트의 차
         proj_witness[f"Q_b_diff_{name}"] = Q_b_diff_per_head.astype(np.int64)
         proj_witness[f"z_w_{name}"] = np.uint64(z_w)
         proj_witness[f"M_proj_{name}"] = np.uint64(M_proj)
@@ -142,18 +142,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
             Q_v = Q_raw_4d.astype(np.int64)
             s_v, z_v = s_raw, z_raw
 
-    #기존 코드
-    #Q_proc_real = debug['Q_proc']
-    #s_q, z_q = get_quantization_params(Q_proc_real)
-    #Q_q = quantize_tensor(Q_proc_real, s_q, z_q)
-    
-    #K_proc_real = debug['K_proc']
-    #s_k, z_k = get_quantization_params(K_proc_real)
-    #Q_k = quantize_tensor(K_proc_real, s_k, z_k)
-
-
-    # ── Phase 0 완료 (Output Projection은 kernel chain 이후 계산) ──────────
-
+    ### ── Phase 1: Attention Computation ──
     ### kernel 1
     B, H, S, D = Q_q.shape
     L = debug['Q_landmarks'].shape[2] 
@@ -251,10 +240,6 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
         Q_y3, z_inv, Q_inv_k2, z_inv, z_inv, M_inv4, k_bits
     )
 
-    #V_real = debug['V']
-    #s_v, z_v = get_quantization_params(V_real)
-    #Q_v = quantize_tensor(V_real, s_v, z_v)
-    ### temp (Q_v는 Phase 0 projection chain에서 이미 설정됨)
     temp_real = debug['temp']
     s_sim_temp, z_sim_temp = get_quantization_params(temp_real)
     
@@ -303,7 +288,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
     Q_sim_x_matmul = Q_sim_x.copy()  # pre-conv: for matmul_x constraint
     z_sim_x_matmul = z_sim_x          # pre-conv: for matmul_x constraint
 
-    # ── Conv: Toeplitz(W_conv) @ V ───────────────────────────────────────
+    ### ── Phase 2: Conv: Toeplitz(W_conv) @ V ──
     W_conv = _load_optional_array(debug, 'W_conv')  # [H, 1, K_conv, 1]
     conv_term_real = _load_optional_array(debug, 'conv_term')  # [B, H, S, D]
 
@@ -383,7 +368,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
     else:
         conv_witness = {}
 
-    # ── Output Projection: O = Q_sim_x @ W_O^T + b_O ─────────────────────
+    # ── Phase 3. Output Projection: O = Q_sim_x @ W_O^T + b_O ───
     # Q_sim_x [B,H,S,D] → [B,S,HD] reshape 후 sign_bit_grouping_matmul
     Q_sim_x_flat = Q_sim_x.transpose(0, 2, 1, 3).reshape(B, S, HD)
 
@@ -421,7 +406,7 @@ def process_attn_debug_npz(debug_npz_path, out_npz_path, k_bits=26):
     Q_o_4d = Q_o_flat.reshape(B, S, H, D).transpose(0, 2, 1, 3)
     R_o_4d = R_o_flat.reshape(B, S, H, D).transpose(0, 2, 1, 3)
 
-    # ── Quantization Error Measurement ──────────────────────────────────────
+    # ── Quantization Error Measurement ───
     o_approx = (Q_o_4d.astype(np.float64) - z_raw_o) * s_raw_o
     o_ref = o_real_4d.astype(np.float64)
     _diff = o_ref - o_approx

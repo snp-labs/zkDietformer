@@ -1,22 +1,3 @@
-#!/usr/bin/env python3
-"""
-BERT-base-uncased baseline evaluation — fixture 기반 입력 + GELU swap.
-
-작업 1C 변경:
-- CorpusDataset 의존 제거 → evaluation_fixtures.SAMPLE_TEXTS 사용
-  (이로써 RoBERTa BPE pickle vs BERT vocab 토크나이저 불일치 버그 해결)
-- BertTokenizerFast 로 on-the-fly 인코딩 (padding=max_length, max_length=510)
-- random seed 42 (torch + numpy + random)
-- replace_activation_with_sigmoid_gelu(model, "bert") — 회로 lookup 정합성
-- hook 메커니즘 / npz 키 (ln_*) 은 Step C 결과 그대로 보존
-
-이전 단계와의 정렬:
-- Step B: RoBERTa → BERT 교체 완료
-- Step C: LayerNorm 전환, ln_* 키 컨벤션
-- Phase 4: layernorm_table.py VAR_SCALE=256 (이미 적용)
-
-회로 verify 는 Phase 5 (Rust 가젯 enforce_layernorm 추가) 후에야 통과 가능.
-"""
 import argparse
 import json
 import math

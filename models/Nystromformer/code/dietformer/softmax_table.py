@@ -95,7 +95,6 @@ TABLE_FRAC_BITS = 10  # 1024 steps per unit
 
 def generate_fractional_exp_table(table_frac_bits=TABLE_FRAC_BITS, frac_bits=FRAC_BITS):
     """Single exp table: table[i] = fixed_point(exp(i / 2^table_frac_bits))
-
     table_frac_bits=10 → 1024 steps/unit, covers [0, 64), ~20480 of 65536 entries
     """
     TABLE_SIZE = 1 << 16  # 65536 entries
@@ -125,7 +124,6 @@ def save_softmax_tables_v3(out_dir, table_frac_bits=TABLE_FRAC_BITS, frac_bits=F
 def softmax_v3_lookup(Q_sim, R_mat, s_y, k_bits, frac_bits=FRAC_BITS,
                        table_frac_bits=TABLE_FRAC_BITS, exp_table=None, mask=None):
     """v3 single-table softmax lookup.
-
     Returns: P, R_div, exp_total, exp_sum, M_sm, table_idx, r_sm
     """
     if exp_table is None:
