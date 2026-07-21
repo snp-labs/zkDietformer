@@ -179,7 +179,7 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
                 for c in 0..col_dim {
                     let val_u64 = r_matrix[b][r][c].into_bigint().as_ref()[0];
                     let idx0 = (val_u64 & 0xFFFF) as usize;
-                    let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
+                    let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;
                     nz.push([idx0, idx1]);
                 }
             }
@@ -261,7 +261,7 @@ pub fn run_mlp_remainders_layernorm<F: PrimeField, G: CurveGroup<ScalarField = F
                         for v in row {
                             let val_u64 = v.into_bigint().as_ref()[0];
                             let idx0 = (val_u64 & 0xFFFF) as usize;
-                            let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
+                            let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;
                             nz.push([idx0, idx1]);
                         }
                     }
@@ -271,7 +271,7 @@ pub fn run_mlp_remainders_layernorm<F: PrimeField, G: CurveGroup<ScalarField = F
                 for v in m {
                     let val_u64 = v.into_bigint().as_ref()[0];
                     let idx0 = (val_u64 & 0xFFFF) as usize;
-                    let idx1 = ((val_u64 >> 16) & 0x3F) as usize;
+                    let idx1 = ((val_u64 >> 16) & 0x3FF) as usize;
                     nz.push([idx0, idx1]);
                 }
             }
