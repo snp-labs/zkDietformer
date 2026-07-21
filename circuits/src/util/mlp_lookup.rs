@@ -151,11 +151,11 @@ pub fn run_mlp_remainders<F: PrimeField, G: CurveGroup<ScalarField = F>>(
     circuit: &NystromMLPCircuit<F>,
     rng: &mut StdRng,
 ) -> Result<(Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>, LassoMetricsAggregate)>  {
-    println!("\n=== [MLP] Lasso Lookup Proofs: 22-bit Remainders (R) ===");
+    println!("\n=== [MLP] Lasso Lookup Proofs: 26-bit Remainders (R) ===");
     let mut all_link_results = Vec::new();
     let mut agg = LassoMetricsAggregate::default();
 
-    type Range22Lasso = RangeCheckSubtableStrategy<22>;
+    type Range26Lasso = RangeCheckSubtableStrategy<26>;
 
     let mut target_matrices = Vec::new();
 
@@ -336,7 +336,7 @@ pub fn prove_lasso_for_range(
     let mut transcript = Transcript::new(b"lasso_range");
 
     let prove_start = Instant::now();
-    let proof_lasso = SparsePolynomialEvaluationProof::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<22>>::prove(
+    let proof_lasso = SparsePolynomialEvaluationProof::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<26>>::prove(
         &mut densified,
         &r_point,
         gens,
@@ -352,7 +352,7 @@ pub fn prove_lasso_for_range(
     metrics.verify_ms = verify_start.elapsed().as_millis();
 
     // proof size report
-    let report = proof_size::compute_lasso_proof_report::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<22>>(&proof_lasso, &commitment);
+    let report = proof_size::compute_lasso_proof_report::<G1, KBITS_C, KBITS_M, RangeCheckSubtableStrategy<26>>(&proof_lasso, &commitment);
     report.print_log(std::str::from_utf8(label).unwrap_or("range"));
     metrics.proof_size_bytes = report.total;
     metrics.commitment_proof_bytes = report.oracle_bytes + report.deref_bytes;

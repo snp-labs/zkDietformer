@@ -136,7 +136,7 @@ fn run_nystrom_attn_lasso(
                 for r in 0..row_dim {
                     for c in 0..col_dim {
                         let val_u64 = r_matrix[b][h][r][c].into_bigint().as_ref()[0];
-                        nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3F) as usize]);
+                        nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3FF) as usize]);
                     }
                 }
             }
@@ -283,7 +283,7 @@ fn run_bert_attn_lasso(
                 for r in 0..row_dim {
                     for c in 0..col_dim {
                         let val_u64 = r_matrix[b][h][r][c].into_bigint().as_ref()[0];
-                        nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3F) as usize]);
+                        nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3FF) as usize]);
                     }
                 }
             }
@@ -451,7 +451,7 @@ fn run_rmsnorm_mlp_lasso(
             for r in 0..row_dim {
                 for c in 0..col_dim {
                     let val_u64 = r_matrix[b][r][c].into_bigint().as_ref()[0];
-                    nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3F) as usize]);
+                    nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3FF) as usize]);
                 }
             }
         }
@@ -551,7 +551,7 @@ fn run_layernorm_mlp_lasso(
                     for row in batch {
                         for v in row {
                             let val_u64 = v.into_bigint().as_ref()[0];
-                            nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3F) as usize]);
+                            nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3FF) as usize]);
                         }
                     }
                 }
@@ -559,7 +559,7 @@ fn run_layernorm_mlp_lasso(
             RTarget::D1(m) => {
                 for v in m {
                     let val_u64 = v.into_bigint().as_ref()[0];
-                    nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3F) as usize]);
+                    nz.push([(val_u64 & 0xFFFF) as usize, ((val_u64 >> 16) & 0x3FF) as usize]);
                 }
             }
         }
