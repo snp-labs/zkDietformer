@@ -226,6 +226,34 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             }).collect()
         }).collect();
 
+        // DEBUG: Compare chain-derived O-proj input vs Q_attn_output witness
+        {
+            let mut mismatch_count = 0usize;
+            for b in 0..attn_output_from_chain.len() {
+                for s in 0..attn_output_from_chain[b].len().min(4) {
+                    for j in 0..attn_output_from_chain[b][s].len() {
+                        let chain_val = attn_output_from_chain[b][s][j].value().unwrap_or(F::zero());
+                        let witness_val = self.q_attn_output[b][s][j];
+                        if chain_val != witness_val {
+                            if mismatch_count < 10 {
+                                eprintln!("[DEBUG O-proj mismatch] b={} s={} j={}: chain={:?} witness={:?}",
+                                    b, s, j, chain_val, witness_val);
+                            }
+                            mismatch_count += 1;
+                        }
+                    }
+                }
+            }
+            if mismatch_count > 0 {
+                eprintln!("[DEBUG] O-proj input mismatch: {} elements differ between chain and Q_attn_output", mismatch_count);
+            } else {
+                eprintln!("[DEBUG] O-proj input: chain matches Q_attn_output perfectly (checked first 4 rows per batch)");
+            }
+            // Also compare z values
+            eprintln!("[DEBUG] z_w comparison: matmul_x.z_sim={:?}, z_attn_output={:?}, equal={}",
+                self.matmul_x.z_sim, self.z_attn_output, self.matmul_x.z_sim == self.z_attn_output);
+        }
+
         let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
         let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
         let mut global_k3_lows = Vec::new(); let mut global_k3_highs = Vec::new();
@@ -274,6 +302,31 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                         z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),
                     };
+
+                    // DEBUG: Verify element-wise ZEN for Q-proj (reference check)
+                    if b == 0 && h == 0 {
+                        let s = 0; let d = 0;
+                        let q_y_val = proj_q_out[b][h][s][d].value().unwrap_or(F::zero());
+                        let r_val = proj_q_r[b][h][s][d].value().unwrap_or(F::zero());
+                        let two_k_val = two_k_var.value().unwrap_or(F::zero());
+                        let lhs_elem = q_y_val * two_k_val + r_val;
+
+                        let m_val = self.proj_q.m_proj;
+                        let m_prime_val = self.proj_q.m_prime_proj;
+                        let z_q_val = self.z_x_input;
+                        let mut inner_sum = F::zero();
+                        for j in 0..x_input_vars[b][s].len() {
+                            let x_val = x_input_vars[b][s][j].value().unwrap_or(F::zero());
+                            let w_val = w_q_vars[h][j][d].value().unwrap_or(F::zero());
+                            inner_sum += (x_val - z_q_val) * w_val;
+                        }
+                        inner_sum += m_prime_val;
+                        inner_sum += self.proj_q.q_b_diff[h][d];
+                        let rhs_elem = m_val * inner_sum;
+                        eprintln!("[DEBUG Q-proj ZEN] b=0 h=0 s=0 d=0: LHS={:?}, RHS={:?}, match={}",
+                            lhs_elem, rhs_elem, lhs_elem == rhs_elem);
+                    }
+
                     let r_pows_pq = gen_challenge_vector(&r_var, d_dim);
                     enforce_freivalds(
                         cs.clone(), &x_input_vars[b], &w_q_vars[h],
@@ -743,6 +796,45 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                         two_k: two_k_var.clone(),
                     };
                     let r_pows_po = gen_challenge_vector(&r_var, d_dim);
+
+                    // DEBUG: Verify element-wise ZEN equation for O-proj (first element)
+                    if b == 0 && h == 0 {
+                        let s = 0; let d = 0;
+                        let q_y_val = proj_o_out[b][h][s][d].value().unwrap_or(F::zero());
+                        let r_val = proj_o_r[b][h][s][d].value().unwrap_or(F::zero());
+                        let two_k_val = two_k_var.value().unwrap_or(F::zero());
+                        let lhs_elem = q_y_val * two_k_val + r_val;
+
+                        let m_val = self.proj_o.m_proj;
+                        let m_prime_val = self.proj_o.m_prime_proj;
+                        let z_q_val = self.matmul_x.z_sim;
+                        // RHS elem: M * (sum_j (o_input[s][j] - z_q) * w_diff_h[d][j] + M' + bias[d])
+                        let mut inner_sum = F::zero();
+                        for j in 0..o_input[s].len() {
+                            let x_val = o_input[s][j].value().unwrap_or(F::zero());
+                            let w_val = w_o_h_t[j][d].value().unwrap_or(F::zero());
+                            inner_sum += (x_val - z_q_val) * w_val;
+                        }
+                        inner_sum += m_prime_val;
+                        inner_sum += self.proj_o.q_b_diff[h][d];
+                        let rhs_elem = m_val * inner_sum;
+                        eprintln!("[DEBUG O-proj ZEN] b=0 h=0 s=0 d=0: LHS={:?}, RHS={:?}, match={}",
+                            lhs_elem, rhs_elem, lhs_elem == rhs_elem);
+                        eprintln!("[DEBUG O-proj ZEN] M={:?}, M'={:?}, z_q={:?}, bias[0]={:?}",
+                            m_val, m_prime_val, z_q_val, self.proj_o.q_b_diff[h][d]);
+                        // Also print a few input values
+                        eprintln!("[DEBUG O-proj input] o_input[0][0..4]: {:?} {:?} {:?} {:?}",
+                            o_input[0][0].value().unwrap_or(F::zero()),
+                            o_input[0][1].value().unwrap_or(F::zero()),
+                            o_input[0][2].value().unwrap_or(F::zero()),
+                            o_input[0][3].value().unwrap_or(F::zero()));
+                        eprintln!("[DEBUG O-proj output] q_y[0][0..4]: {:?} {:?} {:?} {:?}",
+                            q_y_val,
+                            proj_o_out[b][h][0][1].value().unwrap_or(F::zero()),
+                            proj_o_out[b][h][0][2].value().unwrap_or(F::zero()),
+                            proj_o_out[b][h][0][3].value().unwrap_or(F::zero()));
+                    }
+
                     enforce_freivalds(
                         cs.clone(), &o_input, w_o_h_t,
                         &proj_o_out[b][h], &proj_o_r[b][h],
