@@ -24,7 +24,7 @@ use crate::{
         poly::{commitments::MultiCommitGens, dense_mlpoly::{PolyCommitment, PolyCommitmentBlinds}},
     },
     util::{
-        nystrom_attn_lookup::{prove_lasso_for_softmax, prove_lasso_for_range_22, prove_lasso_for_range_52},
+        nystrom_attn_lookup::{prove_lasso_for_softmax, prove_lasso_for_range_22, prove_lasso_for_range_52, prove_mp_range_10, prove_mp_range_7, prove_mp_range_3},
         mlp_lookup::{prove_lasso_for_rmsnorm, prove_lasso_for_gelu, prove_lasso_for_range},
     },
 };
@@ -219,6 +219,95 @@ fn run_nystrom_attn_lasso(
         results.extend(link_data);
         agg.add(&metrics);
         println!("  - L{} {} verified | Count: {} | Time: {:?}", layer_idx, name, total_sparsity, start.elapsed());
+    }
+
+    // Moore-Penrose bounded-difference Lasso proofs (C=1)
+    {
+        let q_y = &w.pseudo_inv.q_y_intermediates;
+        let p_k2 = &w.sm2.p;
+        let b_dim = q_y[0].len();
+        let h_dim = q_y[0][0].len();
+        let m_dim = q_y[0][0][0].len();
+
+        // Condition 1: |Q_y2 - P_k2| < 512 → shifted ∈ [0, 1024)
+        {
+            let delta = Fr::from(512u64);
+            let total = b_dim * h_dim * m_dim * m_dim;
+            let mut nz = Vec::with_capacity(total);
+            for b in 0..b_dim {
+                for h in 0..h_dim {
+                    for i in 0..m_dim {
+                        for j in 0..q_y[1][b][h][i].len() {
+                            let shifted = q_y[1][b][h][i][j] - p_k2[b][h][i][j] + delta;
+                            nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                        }
+                    }
+                }
+            }
+            let label = make_lasso_label(layer_idx, "mp_cond1");
+            let gens = SparsePolyCommitmentGens::<G1>::new(
+                label, FRACBITS_C, total.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            );
+            let start = Instant::now();
+            let (link_data, metrics) = prove_mp_range_10(nz, &gens, rng, label)?;
+            results.push(link_data);
+            agg.add(&metrics);
+            println!("  - L{} mp_cond1 (|Q_y2-P_k2|<512) | Count: {} | Time: {:?}", layer_idx, total, start.elapsed());
+        }
+
+        // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
+        {
+            let delta = Fr::from(64u64);
+            let pairs_per_bh = m_dim * (m_dim - 1) / 2;
+            let total = b_dim * h_dim * pairs_per_bh;
+            let mut nz = Vec::with_capacity(total);
+            for b in 0..b_dim {
+                for h in 0..h_dim {
+                    for i in 0..m_dim {
+                        for j in (i+1)..m_dim {
+                            let shifted = q_y[0][b][h][i][j] - q_y[0][b][h][j][i] + delta;
+                            nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                        }
+                    }
+                }
+            }
+            let label = make_lasso_label(layer_idx, "mp_cond3");
+            let gens = SparsePolyCommitmentGens::<G1>::new(
+                label, FRACBITS_C, total.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            );
+            let start = Instant::now();
+            let (link_data, metrics) = prove_mp_range_7(nz, &gens, rng, label)?;
+            results.push(link_data);
+            agg.add(&metrics);
+            println!("  - L{} mp_cond3 (|Q_y1-Q_y1^T|<64) | Count: {} | Time: {:?}", layer_idx, total, start.elapsed());
+        }
+
+        // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
+        {
+            let delta = Fr::from(4u64);
+            let pairs_per_bh = m_dim * (m_dim - 1) / 2;
+            let total = b_dim * h_dim * pairs_per_bh;
+            let mut nz = Vec::with_capacity(total);
+            for b in 0..b_dim {
+                for h in 0..h_dim {
+                    for i in 0..m_dim {
+                        for j in (i+1)..m_dim {
+                            let shifted = q_y[2][b][h][i][j] - q_y[2][b][h][j][i] + delta;
+                            nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                        }
+                    }
+                }
+            }
+            let label = make_lasso_label(layer_idx, "mp_cond4");
+            let gens = SparsePolyCommitmentGens::<G1>::new(
+                label, FRACBITS_C, total.next_power_of_two(), FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+            );
+            let start = Instant::now();
+            let (link_data, metrics) = prove_mp_range_3(nz, &gens, rng, label)?;
+            results.push(link_data);
+            agg.add(&metrics);
+            println!("  - L{} mp_cond4 (|Q_y3-Q_y3^T|<4) | Count: {} | Time: {:?}", layer_idx, total, start.elapsed());
+        }
     }
 
     Ok((results, agg))

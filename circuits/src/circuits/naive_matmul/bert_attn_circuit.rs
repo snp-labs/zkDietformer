@@ -328,7 +328,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(inner.proj_o.m_proj),
                         m_prime: FpVar::Constant(inner.proj_o.m_prime_proj),
-                        z_w: FpVar::Constant(inner.z_attn_output),
+                        z_w: FpVar::Constant(inner.matmul_x.z_sim),
                         z_x: FpVar::zero(), z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),
                     };

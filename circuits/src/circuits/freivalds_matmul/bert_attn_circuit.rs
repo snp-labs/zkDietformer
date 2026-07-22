@@ -371,7 +371,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 global_x_highs.extend(h_x_highs);
 
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
-                // Construct [S][H*D] input directly from x_data.q_sim (no separate attn_out_vars)
+                // Chain fix: use x_data.q_sim directly (reshaped to [S][H*D])
+                // z_w uses matmul_x.z_sim for chain connectivity (== z_attn_output in witness)
                 {
                     let num_heads = x_data.q_sim[b].len();
                     let s_dim = x_data.q_sim[b][0].len();
@@ -384,7 +385,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(self.proj_o.m_proj),
                         m_prime: FpVar::Constant(self.proj_o.m_prime_proj),
-                        z_w: FpVar::Constant(self.z_attn_output),
+                        z_w: FpVar::Constant(self.matmul_x.z_sim),
                         z_x: FpVar::zero(), z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),
                     };

@@ -688,6 +688,10 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let mut global_inv1_lows = Vec::new(); let mut global_inv1_highs = Vec::new();
     let mut global_inv2_lows = Vec::new(); let mut global_inv2_highs = Vec::new();
     let mut global_inv3_lows = Vec::new(); let mut global_inv3_highs = Vec::new();
+    // Moore-Penrose bounded-difference pools (Lasso range check, C=1)
+    let mut mp_cond1_pool: Vec<FpVar<F>> = Vec::new();
+    let mut mp_cond3_pool: Vec<FpVar<F>> = Vec::new();
+    let mut mp_cond4_pool: Vec<FpVar<F>> = Vec::new();
     let mut global_temp_lows = Vec::new(); let mut global_temp_highs = Vec::new();
     let mut global_mid_lows = Vec::new(); let mut global_mid_highs = Vec::new();
     let mut global_x_lows = Vec::new(); let mut global_x_highs = Vec::new();
@@ -860,6 +864,36 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             enforce_freivalds(cs.clone(), &q_y_vars[2][b][h], &q_inv_var[b][h], &q_y_vars[3][b][h], &r_inv_vars[3][b][h], &w.pseudo_inv.r_inv_remainders[3][b][h], &inv_params[3], &r_pows_inv, &mut h_inv3_lows, &mut h_inv3_highs, None)?;
             global_inv3_lows.extend(h_inv3_lows); global_inv3_highs.extend(h_inv3_highs);
 
+            // ── Moore-Penrose condition enforcement (bounded-difference via Lasso) ──
+            let m_dim = q_y_vars[0][b][h].len();
+
+            // Condition 1: |Q_y2 - P_k2| < 512 → shifted ∈ [0, 1024)
+            for i in 0..m_dim {
+                for j in 0..q_y_vars[1][b][h][i].len() {
+                    let shifted = &q_y_vars[1][b][h][i][j] - &sm2_vars.p[b][h][i][j]
+                        + FpVar::Constant(F::from(512u64));
+                    mp_cond1_pool.push(shifted);
+                }
+            }
+
+            // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
+            for i in 0..m_dim {
+                for j in (i+1)..m_dim {
+                    let shifted = &q_y_vars[0][b][h][i][j] - &q_y_vars[0][b][h][j][i]
+                        + FpVar::Constant(F::from(64u64));
+                    mp_cond3_pool.push(shifted);
+                }
+            }
+
+            // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
+            for i in 0..m_dim {
+                for j in (i+1)..m_dim {
+                    let shifted = &q_y_vars[2][b][h][i][j] - &q_y_vars[2][b][h][j][i]
+                        + FpVar::Constant(F::from(4u64));
+                    mp_cond4_pool.push(shifted);
+                }
+            }
+
             // temp matmul
             let mut h_temp_lows = Vec::new(); let mut h_temp_highs = Vec::new();
             let r_pows_temp = gen_challenge_vector(r_var, temp_data.q_sim[b][h][0].len());
@@ -879,7 +913,8 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
             // === O Projection: O_h = attn_output @ W_o_h^T + b_o_h ===
-            // Construct [S][H*D] input directly from x_data.q_sim (no separate attn_out_vars)
+            // Chain fix: use x_data.q_sim directly (reshaped to [S][H*D])
+            // z_w uses matmul_x.z_sim for chain connectivity (== z_attn_output in witness)
             {
                 let num_heads = x_data.q_sim[b].len();
                 let s_dim = x_data.q_sim[b][0].len();
@@ -892,7 +927,7 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
                 let proj_o_params = ZenParams {
                     m: FpVar::Constant(w.proj_o.m_proj),
                     m_prime: FpVar::Constant(w.proj_o.m_prime_proj),
-                    z_w: FpVar::Constant(w.z_attn_output),
+                    z_w: FpVar::Constant(w.matmul_x.z_sim),
                     z_x: FpVar::zero(),
                     z_y: FpVar::zero(),
                     two_k: two_k_var.clone(),
@@ -947,6 +982,11 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         final_vars.extend(r_div_k2_highs);
         final_vars.extend(r_div_k3_lows);
         final_vars.extend(r_div_k3_highs);
+
+        // Moore-Penrose bounded-difference pools (C=1, Lasso range check)
+        final_vars.extend(mp_cond1_pool);
+        final_vars.extend(mp_cond3_pool);
+        final_vars.extend(mp_cond4_pool);
     }
 
     // === Poseidon hash of x_input → public input ===
@@ -1164,7 +1204,8 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
             global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
             // === O Projection ===
-            // Construct [S][H*D] input directly from x_data.q_sim (no separate attn_out_vars)
+            // Chain fix: use x_data.q_sim directly (reshaped to [S][H*D])
+            // z_w uses matmul_x.z_sim for chain connectivity (== z_attn_output in witness)
             {
                 let num_heads = x_data.q_sim[b].len();
                 let s_dim = x_data.q_sim[b][0].len();
@@ -1176,7 +1217,7 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
                 let d_dim = w.proj_o.q_w_diff[h].len();
                 let proj_o_params = ZenParams {
                     m: FpVar::Constant(w.proj_o.m_proj), m_prime: FpVar::Constant(w.proj_o.m_prime_proj),
-                    z_w: FpVar::Constant(w.z_attn_output), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
+                    z_w: FpVar::Constant(w.matmul_x.z_sim), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
                 };
                 let r_pows_po = gen_challenge_vector(r_var, d_dim);
                 enforce_freivalds(cs.clone(), &o_input, w_o_h_t, &proj_o_out[b][h], &proj_o_r[b][h], &w.proj_o.r_out_proj[b][h], &proj_o_params, &r_pows_po, &mut global_proj_o_lows, &mut global_proj_o_highs, Some(&w.proj_o.q_b_diff[h]))?;

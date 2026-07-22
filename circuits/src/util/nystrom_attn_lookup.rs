@@ -595,3 +595,180 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
 
     Ok((all_results, agg))
 }
+
+/// Generates a Lasso range-check function for MP bounded-difference (C=1, M=2^16).
+macro_rules! define_mp_range_check {
+    ($fn_name:ident, $log_r:literal) => {
+        pub fn $fn_name(
+            nz_indices: Vec<[usize; FRACBITS_C]>,
+            gens: &SparsePolyCommitmentGens<G1>,
+            rng: &mut StdRng,
+            label: &[u8],
+        ) -> Result<((PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize), LassoMetrics)> {
+            let sparsity = nz_indices.len();
+            let mut metrics = LassoMetrics::default();
+
+            let log_m = FRACBITS_M.trailing_zeros() as usize;
+            let lookup_matrix = SparseLookupMatrix::<FRACBITS_C>::new(nz_indices, log_m);
+            let mut densified = DensifiedRepresentation::<Fr, FRACBITS_C>::from(&lookup_matrix);
+
+            let commit_proof_start = Instant::now();
+            let commitment = densified.commit::<G1>(gens);
+            metrics.commit_proof_ms = commit_proof_start.elapsed().as_millis();
+
+            let log_s = sparsity.next_power_of_two().trailing_zeros() as usize;
+            let r_point: Vec<Fr> = (0..log_s).map(|_| Fr::rand(rng)).collect();
+
+            let mut random_tape = RandomTape::new(b"lasso_tape");
+            let mut transcript = Transcript::new(b"lasso_mp_range");
+
+            let prove_start = Instant::now();
+            let proof_lasso = SparsePolynomialEvaluationProof::<G1, FRACBITS_C, FRACBITS_M, RangeCheckSubtableStrategy<$log_r>>::prove(
+                &mut densified,
+                &r_point,
+                gens,
+                &mut transcript,
+                &mut random_tape,
+            );
+            metrics.prove_ms = prove_start.elapsed().as_millis();
+
+            let range_label = std::str::from_utf8(label).unwrap_or("mp_range");
+            let lasso_report = proof_size::compute_lasso_proof_report::<G1, FRACBITS_C, FRACBITS_M, RangeCheckSubtableStrategy<$log_r>>(&proof_lasso, &commitment);
+            lasso_report.print_log(range_label);
+            metrics.proof_size_bytes = lasso_report.total;
+            metrics.commitment_proof_bytes = lasso_report.oracle_bytes + lasso_report.deref_bytes;
+
+            let verify_start = Instant::now();
+            let mut verifier_transcript = Transcript::new(b"lasso_mp_range");
+            proof_lasso.verify(&commitment, &r_point, gens, &mut verifier_transcript)
+                .map_err(|_| anyhow::anyhow!("Lasso MP bounded-diff verification failed for: {:?}", std::str::from_utf8(label)))?;
+            metrics.verify_ms = verify_start.elapsed().as_millis();
+
+            println!("    -> Lasso MP proof verified for: {:?}", range_label);
+
+            // CP-Link: extract dim[0] slice (C=1 → single dimension)
+            let r_size_combined = gens.gens_combined_l_variate.gens.gens_n.n;
+            let chunks_per_poly = densified.dim[0].len() / r_size_combined;
+            assert!(chunks_per_poly > 0, "sparsity too small for CP-Link extraction");
+            let full_gens = gens.gens_combined_l_variate.gens.gens_n.clone();
+
+            let pure_cm = PolyCommitment {
+                C: commitment.l_variate_polys_commitment.C[..chunks_per_poly].to_vec(),
+            };
+            let blinds = PolyCommitmentBlinds {
+                blinds: vec![Fr::zero(); chunks_per_poly],
+            };
+            metrics.commitment_cplink_link_bytes = pure_cm.serialized_size(Compress::Yes);
+
+            Ok(((pure_cm, blinds, full_gens, sparsity), metrics))
+        }
+    };
+}
+
+// MP bounded-diff: Cond1 [0, 1024), Cond3 [0, 128), Cond4 [0, 8)
+define_mp_range_check!(prove_mp_range_10, 10);
+define_mp_range_check!(prove_mp_range_7, 7);
+define_mp_range_check!(prove_mp_range_3, 3);
+
+/// Run Moore-Penrose bounded-difference Lasso proofs for conditions 1, 3, 4.
+/// Computes shifted values from circuit struct fields and runs 3 separate Lasso proofs.
+pub fn run_mp_conditions_with_link<F: PrimeField, G: CurveGroup<ScalarField = F>>(
+    circuit: &NystromAttentionCircuit<F>,
+    rng: &mut StdRng,
+) -> Result<(Vec<(PolyCommitment<G1>, PolyCommitmentBlinds<Fr>, MultiCommitGens<G1>, usize)>, LassoMetricsAggregate)> {
+    println!("\n=== [Lasso Lookup] Moore-Penrose Bounded-Difference Range Checks ===");
+
+    let mut all_results = Vec::new();
+    let mut agg = LassoMetricsAggregate::default();
+
+    let q_y = &circuit.pseudo_inv.q_y_intermediates;
+    let p_k2 = &circuit.sm2.p;
+    let b_dim = q_y[0].len();
+    let h_dim = q_y[0][0].len();
+    let m_dim = q_y[0][0][0].len();
+
+    // Condition 1: |Q_y2 - P_k2| < 512 → shifted = Q_y2 - P_k2 + 512 ∈ [0, 1024)
+    {
+        let delta = F::from(512u64);
+        let total = b_dim * h_dim * m_dim * m_dim;
+        let mut nz = Vec::with_capacity(total);
+        for b in 0..b_dim {
+            for h in 0..h_dim {
+                for i in 0..m_dim {
+                    for j in 0..q_y[1][b][h][i].len() {
+                        let shifted = q_y[1][b][h][i][j] - p_k2[b][h][i][j] + delta;
+                        nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                    }
+                }
+            }
+        }
+        let gens = SparsePolyCommitmentGens::<G1>::new(
+            b"mp_cond1", FRACBITS_C,
+            total.next_power_of_two(),
+            FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+        );
+        let start = Instant::now();
+        let (link_data, metrics) = prove_mp_range_10(nz, &gens, rng, b"mp_cond1")?;
+        all_results.push(link_data);
+        agg.add(&metrics);
+        println!("  - mp_cond1 (|Q_y2-P_k2|<512) verified | Count: {} | Time: {:?}", total, start.elapsed());
+    }
+
+    // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
+    {
+        let delta = F::from(64u64);
+        let pairs_per_bh = m_dim * (m_dim - 1) / 2;
+        let total = b_dim * h_dim * pairs_per_bh;
+        let mut nz = Vec::with_capacity(total);
+        for b in 0..b_dim {
+            for h in 0..h_dim {
+                for i in 0..m_dim {
+                    for j in (i+1)..m_dim {
+                        let shifted = q_y[0][b][h][i][j] - q_y[0][b][h][j][i] + delta;
+                        nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                    }
+                }
+            }
+        }
+        let gens = SparsePolyCommitmentGens::<G1>::new(
+            b"mp_cond3", FRACBITS_C,
+            total.next_power_of_two(),
+            FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+        );
+        let start = Instant::now();
+        let (link_data, metrics) = prove_mp_range_7(nz, &gens, rng, b"mp_cond3")?;
+        all_results.push(link_data);
+        agg.add(&metrics);
+        println!("  - mp_cond3 (|Q_y1-Q_y1^T|<64) verified | Count: {} | Time: {:?}", total, start.elapsed());
+    }
+
+    // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
+    {
+        let delta = F::from(4u64);
+        let pairs_per_bh = m_dim * (m_dim - 1) / 2;
+        let total = b_dim * h_dim * pairs_per_bh;
+        let mut nz = Vec::with_capacity(total);
+        for b in 0..b_dim {
+            for h in 0..h_dim {
+                for i in 0..m_dim {
+                    for j in (i+1)..m_dim {
+                        let shifted = q_y[2][b][h][i][j] - q_y[2][b][h][j][i] + delta;
+                        nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                    }
+                }
+            }
+        }
+        let gens = SparsePolyCommitmentGens::<G1>::new(
+            b"mp_cond4", FRACBITS_C,
+            total.next_power_of_two(),
+            FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
+        );
+        let start = Instant::now();
+        let (link_data, metrics) = prove_mp_range_3(nz, &gens, rng, b"mp_cond4")?;
+        all_results.push(link_data);
+        agg.add(&metrics);
+        println!("  - mp_cond4 (|Q_y3-Q_y3^T|<4) verified | Count: {} | Time: {:?}", total, start.elapsed());
+    }
+
+    Ok((all_results, agg))
+}

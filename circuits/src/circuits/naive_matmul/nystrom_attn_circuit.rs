@@ -31,7 +31,7 @@ use crate::{
         softmax::constraints::enforce_softmax,
     },
     util::{
-        nystrom_attn_lookup::{run_lasso_bundle, run_all_remainders_with_link},
+        nystrom_attn_lookup::{run_lasso_bundle, run_all_remainders_with_link, run_mp_conditions_with_link},
         utils::{cm1_from_vk, hash_cm_to_field},
     },
 };
@@ -144,12 +144,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &inner.proj_o.q_out_proj);
         let proj_o_r = new_matrix_witness_4d(cs.clone(), &inner.proj_o.r_out_proj);
 
-        // O-projection input [B][S][HD] — may differ from x_data.q_sim when conv exists
-        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = inner.q_attn_output.iter().map(|batch| {
-            batch.iter().map(|seq| {
-                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
-            }).collect()
-        }).collect();
+        // O-projection input: NOT a separate witness.
+        // Instead, we reshape x_data.q_sim [B][H][S][D] → [B][S][H*D] after allocation,
+        // ensuring chain connectivity from kernel chain output to O-projection input.
+        // (attn_output_vars removed — was a soundness gap: separate unconstrained witness)
 
         let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
         let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
@@ -161,6 +159,17 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let (temp_data, params_temp) = inner.matmul_temp.alloc_and_setup(cs.clone(), F::zero(), inner.z_v, &two_k_var);
         let (mid_data, params_mid) = inner.matmul_mid.alloc_and_setup(cs.clone(), F::zero(), inner.pseudo_inv.z_inv, &two_k_var);
         let (x_data, params_x) = inner.matmul_x.alloc_and_setup(cs.clone(), inner.matmul_mid.z_sim, inner.matmul_temp.z_sim, &two_k_var);
+
+        // Chain connectivity: reshape x_data.q_sim [B][H][S][D] → [B][S][H*D]
+        let num_heads_x = x_data.q_sim[0].len();
+        let attn_output_from_chain: Vec<Vec<Vec<FpVar<F>>>> = (0..x_data.q_sim.len()).map(|b| {
+            let s_dim = x_data.q_sim[b][0].len();
+            (0..s_dim).map(|s| {
+                (0..num_heads_x).flat_map(|h| {
+                    x_data.q_sim[b][h][s].iter().cloned()
+                }).collect::<Vec<_>>()
+            }).collect()
+        }).collect();
 
         let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
         let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
@@ -177,6 +186,11 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let mut global_inv1_lows = Vec::new(); let mut global_inv1_highs = Vec::new();
         let mut global_inv2_lows = Vec::new(); let mut global_inv2_highs = Vec::new();
         let mut global_inv3_lows = Vec::new(); let mut global_inv3_highs = Vec::new();
+
+        // Moore-Penrose bounded-difference pools (Lasso range check, C=1)
+        let mut mp_cond1_pool: Vec<FpVar<F>> = Vec::new();
+        let mut mp_cond3_pool: Vec<FpVar<F>> = Vec::new();
+        let mut mp_cond4_pool: Vec<FpVar<F>> = Vec::new();
 
         let mut global_temp_lows = Vec::new(); let mut global_temp_highs = Vec::new();
         let mut global_mid_lows = Vec::new(); let mut global_mid_highs = Vec::new();
@@ -528,6 +542,37 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                 )?;
                 global_inv3_lows.extend(h_inv3_lows); global_inv3_highs.extend(h_inv3_highs);
 
+                // ── Moore-Penrose condition enforcement (bounded-difference via Lasso) ──
+                // Shifted values collected into pools for C=1 Lasso range check.
+                let m_dim = q_y_vars[0][b][h].len();
+
+                // Condition 1: |Q_y2 - P_k2| < 512 → shifted ∈ [0, 1024)
+                for i in 0..m_dim {
+                    for j in 0..q_y_vars[1][b][h][i].len() {
+                        let shifted = &q_y_vars[1][b][h][i][j] - &sm2_vars.p[b][h][i][j]
+                            + FpVar::Constant(F::from(512u64));
+                        mp_cond1_pool.push(shifted);
+                    }
+                }
+
+                // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
+                for i in 0..m_dim {
+                    for j in (i+1)..m_dim {
+                        let shifted = &q_y_vars[0][b][h][i][j] - &q_y_vars[0][b][h][j][i]
+                            + FpVar::Constant(F::from(64u64));
+                        mp_cond3_pool.push(shifted);
+                    }
+                }
+
+                // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
+                for i in 0..m_dim {
+                    for j in (i+1)..m_dim {
+                        let shifted = &q_y_vars[2][b][h][i][j] - &q_y_vars[2][b][h][j][i]
+                            + FpVar::Constant(F::from(4u64));
+                        mp_cond4_pool.push(shifted);
+                    }
+                }
+
                 // temp: P_k3 * V
                 // CHANGED: enforce_freivald → enforce_naive_matmul
                 let mut h_temp_lows = Vec::new();
@@ -583,9 +628,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                 global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
-                // Use q_attn_output [B][S][HD] (post-conv if conv exists, else same as x_data.q_sim)
+                // Chain fix: use reshaped kernel chain output (x_data.q_sim → [B][S][HD])
                 {
-                    let o_input = &attn_output_vars[b];
+                    let o_input = &attn_output_from_chain[b];
 
                     let d_dim = inner.proj_o.q_w_diff[h].len();
                     let hd_dim = inner.proj_o.q_w_diff[h][0].len();
@@ -595,7 +640,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(inner.proj_o.m_proj),
                         m_prime: FpVar::Constant(inner.proj_o.m_prime_proj),
-                        z_w: FpVar::Constant(inner.z_attn_output),
+                        z_w: FpVar::Constant(inner.matmul_x.z_sim),
                         z_x: FpVar::zero(),
                         z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),
@@ -657,6 +702,11 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
             final_vars.extend(r_div_k2_highs);
             final_vars.extend(r_div_k3_lows);
             final_vars.extend(r_div_k3_highs);
+
+            // Moore-Penrose bounded-difference pools (C=1, Lasso range check)
+            final_vars.extend(mp_cond1_pool);
+            final_vars.extend(mp_cond3_pool);
+            final_vars.extend(mp_cond4_pool);
         }
 
         // === Poseidon hash of x_input → public input ===
@@ -891,6 +941,8 @@ where
         lasso_agg.add_aggregate(&sm3_agg);
         let (lasso_remainders, rem_agg) = run_all_remainders_with_link::<Fr, G1>(&final_inner, &mut rng)?;
         lasso_agg.add_aggregate(&rem_agg);
+        let (mp_results, mp_agg) = run_mp_conditions_with_link::<Fr, G1>(&final_inner, &mut rng)?;
+        lasso_agg.add_aggregate(&mp_agg);
         let lasso_time = lasso_start.elapsed();
         lasso_agg.total_ms = lasso_time.as_millis();
 
@@ -899,6 +951,7 @@ where
         lasso_results.extend(lasso_sm2);
         lasso_results.extend(lasso_sm3);
         lasso_results.extend(lasso_remainders);
+        lasso_results.extend(mp_results);
 
         // ── [3] CP-Link ──────────────────────────────────────────────────────
         let u_padded = pad_lasso_u_values::<E>(&lasso_results, &committed_group1);
