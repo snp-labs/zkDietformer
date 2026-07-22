@@ -870,8 +870,10 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             // Condition 1: |Q_y2 - P_k2| < 512 → shifted ∈ [0, 1024)
             for i in 0..m_dim {
                 for j in 0..q_y_vars[1][b][h][i].len() {
-                    let shifted = &q_y_vars[1][b][h][i][j] - &sm2_vars.p[b][h][i][j]
+                    let shifted_expr = &q_y_vars[1][b][h][i][j] - &sm2_vars.p[b][h][i][j]
                         + FpVar::Constant(F::from(512u64));
+                    let shifted = FpVar::new_witness(cs.clone(), || shifted_expr.value())?;
+                    shifted_expr.enforce_equal(&shifted)?;
                     mp_cond1_pool.push(shifted);
                 }
             }
@@ -879,8 +881,10 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
             for i in 0..m_dim {
                 for j in (i+1)..m_dim {
-                    let shifted = &q_y_vars[0][b][h][i][j] - &q_y_vars[0][b][h][j][i]
+                    let shifted_expr = &q_y_vars[0][b][h][i][j] - &q_y_vars[0][b][h][j][i]
                         + FpVar::Constant(F::from(64u64));
+                    let shifted = FpVar::new_witness(cs.clone(), || shifted_expr.value())?;
+                    shifted_expr.enforce_equal(&shifted)?;
                     mp_cond3_pool.push(shifted);
                 }
             }
@@ -888,8 +892,10 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
             for i in 0..m_dim {
                 for j in (i+1)..m_dim {
-                    let shifted = &q_y_vars[2][b][h][i][j] - &q_y_vars[2][b][h][j][i]
+                    let shifted_expr = &q_y_vars[2][b][h][i][j] - &q_y_vars[2][b][h][j][i]
                         + FpVar::Constant(F::from(4u64));
+                    let shifted = FpVar::new_witness(cs.clone(), || shifted_expr.value())?;
+                    shifted_expr.enforce_equal(&shifted)?;
                     mp_cond4_pool.push(shifted);
                 }
             }
