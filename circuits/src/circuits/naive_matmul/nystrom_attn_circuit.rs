@@ -144,10 +144,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &inner.proj_o.q_out_proj);
         let proj_o_r = new_matrix_witness_4d(cs.clone(), &inner.proj_o.r_out_proj);
 
-        // O-projection input: NOT a separate witness.
-        // Instead, we reshape x_data.q_sim [B][H][S][D] → [B][S][H*D] after allocation,
-        // ensuring chain connectivity from kernel chain output to O-projection input.
-        // (attn_output_vars removed — was a soundness gap: separate unconstrained witness)
+        // O-projection input: separate witness needed because conv processing
+        // transforms matmul_x output (Q_sim_x) before O-proj.
+        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = inner.q_attn_output.iter().map(|batch| {
+            batch.iter().map(|seq| {
+                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+            }).collect()
+        }).collect();
 
         let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
         let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
@@ -160,16 +163,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let (mid_data, params_mid) = inner.matmul_mid.alloc_and_setup(cs.clone(), F::zero(), inner.pseudo_inv.z_inv, &two_k_var);
         let (x_data, params_x) = inner.matmul_x.alloc_and_setup(cs.clone(), inner.matmul_mid.z_sim, inner.matmul_temp.z_sim, &two_k_var);
 
-        // Chain connectivity: reshape x_data.q_sim [B][H][S][D] → [B][S][H*D]
-        let num_heads_x = x_data.q_sim[0].len();
-        let attn_output_from_chain: Vec<Vec<Vec<FpVar<F>>>> = (0..x_data.q_sim.len()).map(|b| {
-            let s_dim = x_data.q_sim[b][0].len();
-            (0..s_dim).map(|s| {
-                (0..num_heads_x).flat_map(|h| {
-                    x_data.q_sim[b][h][s].iter().cloned()
-                }).collect::<Vec<_>>()
-            }).collect()
-        }).collect();
+        // (chain reshape removed: conv processing makes matmul_x output != O-proj input)
 
         let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
         let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
@@ -634,9 +628,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                 global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
-                // Chain fix: use reshaped kernel chain output (x_data.q_sim → [B][S][HD])
+                // Uses q_attn_output witness (post-conv) as input.
                 {
-                    let o_input = &attn_output_from_chain[b];
+                    let o_input = &attn_output_vars[b];
 
                     let d_dim = inner.proj_o.q_w_diff[h].len();
                     let hd_dim = inner.proj_o.q_w_diff[h][0].len();
@@ -646,7 +640,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(inner.proj_o.m_proj),
                         m_prime: FpVar::Constant(inner.proj_o.m_prime_proj),
-                        z_w: FpVar::Constant(inner.matmul_x.z_sim),
+                        z_w: FpVar::Constant(inner.z_attn_output),
                         z_x: FpVar::zero(),
                         z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),

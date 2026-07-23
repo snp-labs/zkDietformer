@@ -125,6 +125,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &inner.proj_o.q_out_proj);
         let proj_o_r = new_matrix_witness_4d(cs.clone(), &inner.proj_o.r_out_proj);
 
+        // O-projection input: separate witness
+        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = inner.q_attn_output.iter().map(|batch| {
+            batch.iter().map(|seq| {
+                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+            }).collect()
+        }).collect();
+
         let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
         let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
         let mut global_proj_v_lows = Vec::new(); let mut global_proj_v_highs = Vec::new();
@@ -312,13 +319,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
                 global_x_highs.extend(h_x_highs);
 
                 // === O Projection ===
-                // Construct [S][H*D] input directly from x_data.q_sim
+                // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
+                // Uses q_attn_output witness as input.
                 {
-                    let num_heads = x_data.q_sim[b].len();
-                    let s_dim = x_data.q_sim[b][0].len();
-                    let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
-                        (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
-                    }).collect();
+                    let o_input = &attn_output_vars[b];
 
                     let d_dim = inner.proj_o.q_w_diff[h].len();
                     let hd_dim = inner.proj_o.q_w_diff[h][0].len();
@@ -328,7 +332,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuitNot<F> {
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(inner.proj_o.m_proj),
                         m_prime: FpVar::Constant(inner.proj_o.m_prime_proj),
-                        z_w: FpVar::Constant(inner.matmul_x.z_sim),
+                        z_w: FpVar::Constant(inner.z_attn_output),
                         z_x: FpVar::zero(), z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),
                     };

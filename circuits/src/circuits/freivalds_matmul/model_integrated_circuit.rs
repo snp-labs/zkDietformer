@@ -105,6 +105,7 @@ pub struct NystromAttnWitness<F: PrimeField> {
     pub scale_k: ScalingBundle<F>,
     // Output projection
     pub z_attn_output: F,
+    pub q_attn_output: Vec<Vec<Vec<F>>>,  // [B][S][HD] — O-proj input (post-conv)
     pub proj_o: ProjectionBundle<F>,
     // Core matmuls
     pub matmul1: MatmulBundle<F>,
@@ -145,6 +146,7 @@ pub struct BertAttnWitness<F: PrimeField> {
     pub scale_k: ScalingBundle<F>,
     // Output projection
     pub z_attn_output: F,
+    pub q_attn_output: Vec<Vec<Vec<F>>>,  // [B][S][HD] — O-proj input (post-conv)
     pub proj_o: ProjectionBundle<F>,
     // Core matmuls
     pub matmul_attn: MatmulBundle<F>,
@@ -382,6 +384,7 @@ where
     let scale_k = load_scaling(&mut npz, "k")?;
 
     let z_attn_output = E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_attn_output.npy")?.into_scalar());
+    let q_attn_output = to_field_3d_i64(&npz.by_name::<_, Ix3>("Q_attn_output.npy")?.into_dimensionality()?);
     let proj_o = load_projection(&mut npz, "o")?;
 
     Ok(NystromAttnWitness {
@@ -391,7 +394,7 @@ where
         q_x_input, z_x_input,
         proj_q, proj_k, proj_v,
         scale_q, scale_k,
-        z_attn_output, proj_o,
+        z_attn_output, q_attn_output, proj_o,
         matmul1, matmul2, matmul3,
         sm1, sm2, sm3,
         pseudo_inv,
@@ -495,6 +498,7 @@ where
     let scale_k = load_scaling(&mut npz, "k")?;
 
     let z_attn_output = E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_attn_output.npy")?.into_scalar());
+    let q_attn_output = to_field_3d_i64(&npz.by_name::<_, Ix3>("Q_attn_output.npy")?.into_dimensionality()?);
     let proj_o = load_projection(&mut npz, "o")?;
 
     Ok(BertAttnWitness {
@@ -502,7 +506,7 @@ where
         q_x_input, z_x_input,
         proj_q, proj_k, proj_v,
         scale_q, scale_k,
-        z_attn_output, proj_o,
+        z_attn_output, q_attn_output, proj_o,
         matmul_attn, sm, matmul_x,
         frac_bits, limb_bits, k_segments, k_bits,
         mask: to_field_2d_i64(&mask_raw),
@@ -629,6 +633,13 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let scale_k_r = new_matrix_witness_4d(cs.clone(), &w.scale_k.r_scale);
     let proj_o_out = new_matrix_witness_4d(cs.clone(), &w.proj_o.q_out_proj);
     let proj_o_r = new_matrix_witness_4d(cs.clone(), &w.proj_o.r_out_proj);
+
+    // O-projection input: separate witness (post-conv for Nystrom)
+    let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_attn_output.iter().map(|batch| {
+        batch.iter().map(|seq| {
+            seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+        }).collect()
+    }).collect();
 
     // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
     let num_heads = w.proj_q.q_w_diff.len();
@@ -919,21 +930,16 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
             // === O Projection: O_h = attn_output @ W_o_h^T + b_o_h ===
-            // Chain fix: use x_data.q_sim directly (reshaped to [S][H*D])
-            // z_w uses matmul_x.z_sim for chain connectivity (== z_attn_output in witness)
+            // Uses q_attn_output witness (post-conv) as input.
             {
-                let num_heads = x_data.q_sim[b].len();
-                let s_dim = x_data.q_sim[b][0].len();
-                let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
-                    (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
-                }).collect();
+                let o_input = &attn_output_vars[b];
 
                 let w_o_h_t = &w_o_vars[h];
                 let d_dim = w.proj_o.q_w_diff[h].len();
                 let proj_o_params = ZenParams {
                     m: FpVar::Constant(w.proj_o.m_proj),
                     m_prime: FpVar::Constant(w.proj_o.m_prime_proj),
-                    z_w: FpVar::Constant(w.matmul_x.z_sim),
+                    z_w: FpVar::Constant(w.z_attn_output),
                     z_x: FpVar::zero(),
                     z_y: FpVar::zero(),
                     two_k: two_k_var.clone(),
@@ -1071,6 +1077,13 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     let scale_k_r = new_matrix_witness_4d(cs.clone(), &w.scale_k.r_scale);
     let proj_o_out = new_matrix_witness_4d(cs.clone(), &w.proj_o.q_out_proj);
     let proj_o_r = new_matrix_witness_4d(cs.clone(), &w.proj_o.r_out_proj);
+
+    // O-projection input: separate witness (post-conv if applicable)
+    let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_attn_output.iter().map(|batch| {
+        batch.iter().map(|seq| {
+            seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+        }).collect()
+    }).collect();
 
     // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
     let num_heads = w.proj_q.q_w_diff.len();
@@ -1210,20 +1223,15 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
             global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
             // === O Projection ===
-            // Chain fix: use x_data.q_sim directly (reshaped to [S][H*D])
-            // z_w uses matmul_x.z_sim for chain connectivity (== z_attn_output in witness)
+            // Uses q_attn_output witness (post-conv if applicable) as input.
             {
-                let num_heads = x_data.q_sim[b].len();
-                let s_dim = x_data.q_sim[b][0].len();
-                let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
-                    (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
-                }).collect();
+                let o_input = &attn_output_vars[b];
 
                 let w_o_h_t = &w_o_vars[h];
                 let d_dim = w.proj_o.q_w_diff[h].len();
                 let proj_o_params = ZenParams {
                     m: FpVar::Constant(w.proj_o.m_proj), m_prime: FpVar::Constant(w.proj_o.m_prime_proj),
-                    z_w: FpVar::Constant(w.matmul_x.z_sim), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
+                    z_w: FpVar::Constant(w.z_attn_output), z_x: FpVar::zero(), z_y: FpVar::zero(), two_k: two_k_var.clone(),
                 };
                 let r_pows_po = gen_challenge_vector(r_var, d_dim);
                 enforce_freivalds(cs.clone(), &o_input, w_o_h_t, &proj_o_out[b][h], &proj_o_r[b][h], &w.proj_o.r_out_proj[b][h], &proj_o_params, &r_pows_po, &mut global_proj_o_lows, &mut global_proj_o_highs, Some(&w.proj_o.q_b_diff[h]))?;

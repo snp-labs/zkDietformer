@@ -69,6 +69,7 @@ pub struct BERTAttentionCircuit<F: PrimeField> {
 
     // === Output Projection ===
     pub z_attn_output: F,
+    pub q_attn_output: Vec<Vec<Vec<F>>>,  // [B][S][HD] — O-proj input
     pub proj_o: ProjectionBundle<F>,
 
     /// QK^T matmul: q_sim/r_matmul shape [batch][head][seq][seq], r_mean empty
@@ -170,6 +171,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
 
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &self.proj_o.q_out_proj);
         let proj_o_r = new_matrix_witness_4d(cs.clone(), &self.proj_o.r_out_proj);
+
+        // O-projection input: separate witness
+        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_attn_output.iter().map(|batch| {
+            batch.iter().map(|seq| {
+                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+            }).collect()
+        }).collect();
 
         let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
         let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
@@ -371,21 +379,16 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionCircuit<F> {
                 global_x_highs.extend(h_x_highs);
 
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
-                // Chain fix: use x_data.q_sim directly (reshaped to [S][H*D])
-                // z_w uses matmul_x.z_sim for chain connectivity (== z_attn_output in witness)
+                // Uses q_attn_output witness as input.
                 {
-                    let num_heads = x_data.q_sim[b].len();
-                    let s_dim = x_data.q_sim[b][0].len();
-                    let o_input: Vec<Vec<FpVar<F>>> = (0..s_dim).map(|s| {
-                        (0..num_heads).flat_map(|hh| x_data.q_sim[b][hh][s].iter().cloned()).collect()
-                    }).collect();
+                    let o_input = &attn_output_vars[b];
 
                     let w_o_h_t = &w_o_vars[h];
                     let d_dim = self.proj_o.q_w_diff[h].len();
                     let proj_o_params = ZenParams {
                         m: FpVar::Constant(self.proj_o.m_proj),
                         m_prime: FpVar::Constant(self.proj_o.m_prime_proj),
-                        z_w: FpVar::Constant(self.matmul_x.z_sim),
+                        z_w: FpVar::Constant(self.z_attn_output),
                         z_x: FpVar::zero(), z_y: FpVar::zero(),
                         two_k: two_k_var.clone(),
                     };
@@ -685,6 +688,7 @@ where
     let scale_k = load_scaling(&mut npz, "k")?;
 
     let z_attn_output = E::ScalarField::from(npz.by_name::<ndarray::OwnedRepr<u64>, Ix0>("z_attn_output.npy")?.into_scalar());
+    let q_attn_output = to_field_3d_i64(&npz.by_name::<_, Ix3>("Q_attn_output.npy")?.into_dimensionality()?);
     let proj_o = load_projection(&mut npz, "o")?;
 
     Ok(BERTAttentionCircuit {
@@ -699,6 +703,7 @@ where
         scale_q,
         scale_k,
         z_attn_output,
+        q_attn_output,
         proj_o,
         matmul_attn,
         sm,
