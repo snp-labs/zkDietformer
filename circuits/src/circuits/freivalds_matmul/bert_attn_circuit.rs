@@ -924,7 +924,7 @@ where
         cplink_report.print_log();
 
         // ── Grand total proof size report ──
-        proof_size::print_full_report(&g16_report, &cplink_report);
+        proof_size::print_full_report(&g16_report, &cplink_report, &proof_size::CpLinkSizeReport { proof_g_count: 0, proof_g_bytes: 0, proof_f_count: 0, proof_f_bytes: 0, proof_total: 0, instance_g_count: 0, instance_g_bytes: 0 });
 
         let e2e_time = e2e_start.elapsed();
 
@@ -944,11 +944,19 @@ where
                 commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
             },
             lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
-            cp_link: CpLinkMetrics {
+            cp_link_lasso: CpLinkMetrics {
+                commit_ms: 0,
                 setup_ms: cp_setup_ms,
                 prove_ms: cp_prove_ms,
                 verify_ms: cp_verify_ms,
                 proof_size_bytes: cplink_report.proof_total,
+            },
+            cp_link_global: CpLinkMetrics {
+                commit_ms: 0,
+                setup_ms: 0,
+                prove_ms: 0,
+                verify_ms: 0,
+                proof_size_bytes: 0,
             },
             end_to_end_ms: e2e_time.as_millis(),
         }

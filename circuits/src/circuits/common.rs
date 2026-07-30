@@ -10,6 +10,7 @@ use crate::{
         snark::{EK, LinkSnark, PP, VK},
         matrix::SparseMatrix,
         relation_generator::{
+            generate_cp_bound_relation,
             generate_cp_factored_instance,
             generate_cp_factored_relation,
             generate_cp_factored_witness,
@@ -123,6 +124,7 @@ impl LassoBenchmarkMetrics {
 }
 
 pub struct CpLinkMetrics {
+    pub commit_ms: u128,
     pub setup_ms: u128,
     pub prove_ms: u128,
     pub verify_ms: u128,
@@ -135,7 +137,8 @@ pub struct BenchmarkResult {
     pub constraints: usize,
     pub groth16: Groth16Metrics,
     pub lasso: LassoBenchmarkMetrics,
-    pub cp_link: CpLinkMetrics,
+    pub cp_link_lasso: CpLinkMetrics,
+    pub cp_link_global: CpLinkMetrics,
     pub end_to_end_ms: u128,
 }
 
@@ -166,11 +169,19 @@ impl BenchmarkResult {
                   "\"commitment_proof_bytes\":{l_cp_b},",
                   "\"proof_size_bytes\":{l_pf}",
                 "}},",
-                "\"cp_link\":{{",
-                  "\"setup_ms\":{cp_s},",
-                  "\"prove_ms\":{cp_p},",
-                  "\"verify_ms\":{cp_v},",
-                  "\"proof_size_bytes\":{cp_pf}",
+                "\"cp_link_lasso\":{{",
+                  "\"commit_ms\":{cpl_cm},",
+                  "\"setup_ms\":{cpl_s},",
+                  "\"prove_ms\":{cpl_p},",
+                  "\"verify_ms\":{cpl_v},",
+                  "\"proof_size_bytes\":{cpl_pf}",
+                "}},",
+                "\"cp_link_global\":{{",
+                  "\"commit_ms\":{cpg_cm},",
+                  "\"setup_ms\":{cpg_s},",
+                  "\"prove_ms\":{cpg_p},",
+                  "\"verify_ms\":{cpg_v},",
+                  "\"proof_size_bytes\":{cpg_pf}",
                 "}},",
                 "\"end_to_end_ms\":{e2e}",
                 "}}"
@@ -191,10 +202,16 @@ impl BenchmarkResult {
             l_ccl_b    = self.lasso.commitment_cplink_link_bytes,
             l_cp_b     = self.lasso.commitment_proof_bytes,
             l_pf       = self.lasso.proof_size_bytes,
-            cp_s       = self.cp_link.setup_ms,
-            cp_p       = self.cp_link.prove_ms,
-            cp_v       = self.cp_link.verify_ms,
-            cp_pf      = self.cp_link.proof_size_bytes,
+            cpl_cm     = self.cp_link_lasso.commit_ms,
+            cpl_s      = self.cp_link_lasso.setup_ms,
+            cpl_p      = self.cp_link_lasso.prove_ms,
+            cpl_v      = self.cp_link_lasso.verify_ms,
+            cpl_pf     = self.cp_link_lasso.proof_size_bytes,
+            cpg_cm     = self.cp_link_global.commit_ms,
+            cpg_s      = self.cp_link_global.setup_ms,
+            cpg_p      = self.cp_link_global.prove_ms,
+            cpg_v      = self.cp_link_global.verify_ms,
+            cpg_pf     = self.cp_link_global.proof_size_bytes,
             e2e        = self.end_to_end_ms,
         );
     }
@@ -350,5 +367,216 @@ pub fn prove_and_verify_factored_multi_link<E: Pairing>(
         Ok(())
     } else {
         Err(anyhow::anyhow!("Factored link verification failed"))
+    }
+}
+
+// ── Global CP-Link #2 (c_W ↔ d2) helpers ────────────────────────────────────
+
+/// Build the CP-Link #2 CRS relating the global weight commitment `c_W` to
+/// LegoGroth16's `d2`.  Uses `generate_cp_bound_relation` with:
+///   - Row 0: ck_glob bases  → c_W
+///   - Row 1: snark d2 bases → d2
+///
+/// `snark_ck` must be `[eta2_gamma_inv_g1, data_bases...]` (hiding first).
+pub fn global_link_setup<E: Pairing, R: Rng>(
+    vk: &VerifyingKey<E>,
+    num_pub: usize,
+    ck_glob: &[E::G1Affine],
+    rng: &mut R,
+) -> (PP<E::G1Affine, E::G2Affine>, SparseMatrix<E::G1Affine>) {
+    let n = vk.commit_witness_count_2 as usize;
+
+    // snark_ck for d2: [eta2_gamma_inv_g1 (hiding), data_bases...]
+    let group1_count = vk.commit_witness_count_1 as usize;
+    let d2_start = 1 + num_pub + group1_count;
+    let d2_end = d2_start + n;
+    let mut snark_ck = vec![vk.eta2_gamma_inv_g1];
+    snark_ck.extend_from_slice(&vk.gamma_abc_g1[d2_start..d2_end]);
+
+    let crs = generate_cp_bound_relation::<E>(n, ck_glob.to_vec(), snark_ck);
+
+    let pp = PP::new(
+        crs.nr,
+        crs.nc,
+        &E::G1::rand(rng).into_affine(),
+        &E::G2::rand(rng).into_affine(),
+    );
+    (pp, crs)
+}
+
+pub fn global_link_keygen<E: Pairing, R: Rng>(
+    pp: &PP<E::G1Affine, E::G2Affine>,
+    crs: SparseMatrix<E::G1Affine>,
+    rng: &mut R,
+) -> (EK<E::G1Affine>, VK<E::G2Affine>) {
+    LinkSnark::<E>::keygen(pp, crs, rng)
+}
+
+/// Prove CP-Link #2: c_W ↔ d2.
+///
+/// Witness layout for `generate_cp_bound_relation` (msg_len = N, t = N+2):
+///   col 0 → o_glob  (Row 0 blinding for c_W)
+///   col 1 → v2      (Row 1 blinding for d2)
+///   col 2..N+1 → w_0..w_{N-1}  (shared data columns)
+///
+/// Instance: `[c_W, d2]` (Row 0, Row 1 commitments).
+pub fn global_link_prove<E: Pairing, R: Rng>(
+    pp: &PP<E::G1Affine, E::G2Affine>,
+    ek: &EK<E::G1Affine>,
+    o_glob: E::ScalarField,
+    v2: E::ScalarField,
+    committed_group2: &[E::ScalarField],
+    c_w: E::G1Affine,
+    d2: E::G1Affine,
+    rng: &mut R,
+) -> (E::G1Affine, Vec<E::G1Affine>) {
+    // Witness: [o_glob, v2, w_0, ..., w_{N-1}]
+    let mut witness = Vec::with_capacity(2 + committed_group2.len());
+    witness.push(o_glob);
+    witness.push(v2);
+    witness.extend_from_slice(committed_group2);
+
+    // Instance: [c_W, d2]
+    let instance = vec![c_w, d2];
+
+    let (proof, _) = LinkSnark::<E>::prove(pp, ek, witness, rng);
+    (proof, instance)
+}
+
+pub fn global_link_verify<E: Pairing>(
+    pp: &PP<E::G1Affine, E::G2Affine>,
+    vk_link: &VK<E::G2Affine>,
+    instance: &[E::G1Affine],
+    proof: &E::G1Affine,
+) -> bool {
+    LinkSnark::<E>::verify(pp, vk_link, &instance.to_vec(), proof)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::{Bn254, Fr};
+    use ark_ff::{Field, PrimeField};
+    use ark_std::{UniformRand, rand::SeedableRng, rand::rngs::StdRng};
+    use ark_relations::{lc, r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError}};
+    use crate::cc_snark::legogroth16::{
+        create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof,
+    };
+    use crate::util::utils::{
+        cm1_from_vk, cm2_from_vk, generate_global_ck, commit_global, hash_commitments_to_field,
+    };
+    use core::ops::MulAssign;
+
+    /// Minimal circuit: w0 * w1 = public_out.
+    /// Group 1 = [w0], Group 2 = [w1] — so each group has exactly 1 committed witness.
+    #[derive(Clone)]
+    struct TinyCircuit<F: Field> {
+        a: Option<F>,
+        b: Option<F>,
+    }
+
+    impl<F: Field> ConstraintSynthesizer<F> for TinyCircuit<F> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+            let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
+            let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
+            let c = cs.new_input_variable(|| {
+                let mut a = self.a.ok_or(SynthesisError::AssignmentMissing)?;
+                let b = self.b.ok_or(SynthesisError::AssignmentMissing)?;
+                a.mul_assign(&b);
+                Ok(a)
+            })?;
+            cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_global_cplink2_and_fiat_shamir() {
+        type E = Bn254;
+        let mut rng = StdRng::seed_from_u64(42u64);
+
+        let a = Fr::rand(&mut rng);
+        let b = Fr::rand(&mut rng);
+        let circuit = TinyCircuit { a: Some(a), b: Some(b) };
+
+        // d1_indices = [0] (w0 → Group 1), d2_indices = [1] (w1 → Group 2)
+        let d1_indices: Vec<u32> = vec![0];
+        let d2_indices: Vec<u32> = vec![1];
+
+        let params = generate_random_parameters::<E, _, _>(
+            circuit.clone(), &d1_indices, &d2_indices, &mut rng,
+        ).unwrap();
+        let pvk = prepare_verifying_key::<E>(&params.vk);
+
+        let committed_group1 = vec![a]; // w0
+        let committed_group2 = vec![b]; // w1
+
+        let v1 = Fr::rand(&mut rng);
+        let v2 = Fr::rand(&mut rng);
+        let num_pub = 1usize; // 1 public input (c = a*b)
+
+        // Compute cm1, cm2
+        let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
+
+        // Global commitment c_W
+        let ck_glob = generate_global_ck::<E, _>(committed_group2.len(), &mut rng);
+        let o_glob = Fr::rand(&mut rng);
+        let c_w = commit_global::<E>(&ck_glob, &committed_group2, &o_glob);
+
+        // Fiat-Shamir challenge (use dummy hashes for this unit test)
+        let input_hash = Fr::from(111u64);
+        let output_hash = Fr::from(222u64);
+        let r_fs = hash_commitments_to_field::<E>(&c_w, &cm1, &cm2, &input_hash, &output_hash);
+        assert_ne!(r_fs, Fr::from(0u64), "Fiat-Shamir challenge should be nonzero");
+
+        // LegoGroth16 prove (r_fs is NOT used inside this tiny circuit, but proves d2 is correct)
+        let proof = create_random_proof::<E, _, _>(
+            circuit.clone(), v1, v2, &params, &mut rng,
+        ).unwrap();
+
+        // Verify Groth16
+        let public_inputs = vec![a * b];
+        let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
+        assert!(result.is_ok(), "LegoGroth16 verification failed: {:?}", result);
+
+        // Verify cm1 == proof.d1, cm2 == proof.d2
+        assert_eq!(cm1, proof.d1, "cm1 must equal proof.d1");
+        assert_eq!(cm2, proof.d2, "cm2 must equal proof.d2");
+
+        // ── CP-Link #2: c_W ↔ d2 ──
+        let (pp, crs) = global_link_setup::<E, _>(&params.vk, num_pub, &ck_glob, &mut rng);
+        let (ek, vk_link) = global_link_keygen::<E, _>(&pp, crs, &mut rng);
+        let (proof_link, instance) = global_link_prove::<E, _>(
+            &pp, &ek, o_glob, v2, &committed_group2, c_w, proof.d2, &mut rng,
+        );
+
+        assert!(
+            global_link_verify::<E>(&pp, &vk_link, &instance, &proof_link),
+            "CP-Link #2 (c_W ↔ d2) verification FAILED"
+        );
+        println!("[PASS] CP-Link #2 (c_W ↔ d2) verified");
+
+        // ── Fiat-Shamir recomputation ──
+        let r_fs_verify = hash_commitments_to_field::<E>(
+            &c_w, &proof.d1, &proof.d2, &input_hash, &output_hash,
+        );
+        assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");
+        println!("[PASS] Fiat-Shamir recomputation verified");
+
+        // ── Negative test: wrong data should fail ──
+        let bad_group2 = vec![Fr::rand(&mut rng)]; // different data
+        let bad_c_w = commit_global::<E>(&ck_glob, &bad_group2, &o_glob);
+        let (pp2, crs2) = global_link_setup::<E, _>(&params.vk, num_pub, &ck_glob, &mut rng);
+        let (ek2, vk_link2) = global_link_keygen::<E, _>(&pp2, crs2, &mut rng);
+        // Prove with mismatched data: c_W commits bad data, d2 commits correct data
+        let (bad_proof, bad_instance) = global_link_prove::<E, _>(
+            &pp2, &ek2, o_glob, v2, &committed_group2, bad_c_w, proof.d2, &mut rng,
+        );
+        assert!(
+            !global_link_verify::<E>(&pp2, &vk_link2, &bad_instance, &bad_proof),
+            "CP-Link #2 should FAIL with mismatched c_W"
+        );
+        println!("[PASS] Negative test: mismatched c_W correctly rejected");
     }
 }

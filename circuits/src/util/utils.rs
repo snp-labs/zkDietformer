@@ -4,8 +4,8 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::Variable;
 use ark_serialize::CanonicalSerialize;
-use ark_std::{ops::AddAssign, vec::Vec};
-use sha3::{Sha3_256,Digest, digest::Input};
+use ark_std::{ops::AddAssign, vec::Vec, UniformRand, rand::Rng};
+use sha3::{Sha3_256, Digest, digest::Input};
 
 /// Compute `cm1 = proof.d1` from committed witnesses (Group 1) and blinding `v1`, using vk's commitment bases.
 /// `public_inputs_count` is the number of public inputs in the circuit.
@@ -123,6 +123,68 @@ where
     let seed = hasher.result(); // hash 결과값
 
     E::ScalarField::from_le_bytes_mod_order(&seed)
+}
+
+/// Generate a fresh global commitment key of length `n+1`: `[h_glob, g_0, ..., g_{n-1}]`.
+/// Used to commit model weights with `c_W = MSM(g_i, w_i) + o * h_glob`.
+pub fn generate_global_ck<E: Pairing, R: Rng>(n: usize, rng: &mut R) -> Vec<E::G1Affine> {
+    let projective: Vec<E::G1> = (0..n + 1).map(|_| E::G1::rand(rng)).collect();
+    E::G1::normalize_batch(&projective)
+}
+
+/// Compute the global weight commitment: `c_W = MSM(ck_glob[1..], values) + o * ck_glob[0]`.
+pub fn commit_global<E: Pairing>(
+    ck_glob: &[E::G1Affine],
+    values: &[E::ScalarField],
+    o: &E::ScalarField,
+) -> E::G1Affine
+where
+    E::ScalarField: PrimeField,
+{
+    let scalars: Vec<_> = values.iter().map(|s| s.into_bigint()).collect();
+    let bases = &ck_glob[1..1 + scalars.len()];
+    let mut cm = E::G1::msm_bigint(bases, &scalars);
+    cm.add_assign(ck_glob[0].mul_bigint(o.into_bigint()));
+    cm.into_affine()
+}
+
+/// Multi-commitment Fiat-Shamir challenge (v2).
+/// `r = H("zkdiet-fs-v2" || c_W || cm1 || cm2 || input_hash || output_hash)`.
+pub fn hash_commitments_to_field<E: Pairing>(
+    c_w: &E::G1Affine,
+    cm_lk: &E::G1Affine,
+    cm_w: &E::G1Affine,
+    input_hash: &E::ScalarField,
+    output_hash: &E::ScalarField,
+) -> E::ScalarField
+where
+    E::ScalarField: PrimeField,
+{
+    let mut hasher = Sha3_256::new();
+    <Sha3_256 as Input>::input(&mut hasher, b"zkdiet-fs-v2");
+
+    let mut buf = Vec::new();
+    c_w.serialize_compressed(&mut buf).expect("serialize c_w");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    cm_lk.serialize_compressed(&mut buf).expect("serialize cm_lk");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    cm_w.serialize_compressed(&mut buf).expect("serialize cm_w");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    input_hash.serialize_compressed(&mut buf).expect("serialize input_hash");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    output_hash.serialize_compressed(&mut buf).expect("serialize output_hash");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    let digest = hasher.result();
+    E::ScalarField::from_le_bytes_mod_order(&digest)
 }
 
 /// Extract witness indices from committed FpVar slices.

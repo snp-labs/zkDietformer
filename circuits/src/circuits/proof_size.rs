@@ -418,7 +418,8 @@ impl LassoProofSizeReport {
 
 pub fn print_full_report(
     g16: &Groth16SizeReport,
-    cplink: &CpLinkSizeReport,
+    cplink_lasso: &CpLinkSizeReport,
+    cplink_global: &CpLinkSizeReport,
 ) {
     let (lasso_count, lasso_total) = get_lasso_aggregate();
 
@@ -427,14 +428,20 @@ pub fn print_full_report(
     println!("  Groth16 (LegoGroth16): {} bytes", g16.total);
     println!("    {} G1 ({} B) + {} G2 ({} B)",
         g16.g1_count, g16.g1_bytes, g16.g2_count, g16.g2_bytes);
-    println!("  CP-Link (pure proof): {} bytes", cplink.proof_total);
+    println!("  CP-Link #1 Lasso (pure proof): {} bytes", cplink_lasso.proof_total);
     println!("    {} G1 ({} B) + {} F ({} B)",
-        cplink.proof_g_count, cplink.proof_g_bytes,
-        cplink.proof_f_count, cplink.proof_f_bytes);
+        cplink_lasso.proof_g_count, cplink_lasso.proof_g_bytes,
+        cplink_lasso.proof_f_count, cplink_lasso.proof_f_bytes);
     println!("    [public instance: {} G1 ({} B) — not counted]",
-        cplink.instance_g_count, cplink.instance_g_bytes);
+        cplink_lasso.instance_g_count, cplink_lasso.instance_g_bytes);
+    println!("  CP-Link #2 Global (pure proof): {} bytes", cplink_global.proof_total);
+    println!("    {} G1 ({} B) + {} F ({} B)",
+        cplink_global.proof_g_count, cplink_global.proof_g_bytes,
+        cplink_global.proof_f_count, cplink_global.proof_f_bytes);
+    println!("    [public instance: {} G1 ({} B) — not counted]",
+        cplink_global.instance_g_count, cplink_global.instance_g_bytes);
     println!("  Lasso (all {} proofs): {} bytes", lasso_count, lasso_total);
-    let grand_total = g16.total + cplink.proof_total + lasso_total;
+    let grand_total = g16.total + cplink_lasso.proof_total + cplink_global.proof_total + lasso_total;
     println!("  ──────────────────────────────────────");
     println!("  Grand Total: {} bytes ({:.2} KB)", grand_total, grand_total as f64 / 1024.0);
     println!("════════════════════════════════════════════════════════════");
