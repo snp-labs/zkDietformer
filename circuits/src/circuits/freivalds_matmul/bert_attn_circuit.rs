@@ -19,6 +19,7 @@ use crate::{
         common::{
             BenchmarkResult, Groth16Metrics, LassoBenchmarkMetrics, CpLinkMetrics, LassoMetricsAggregate,
             factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
+            global_link_setup, global_link_keygen, global_link_prove, global_link_verify,
             pad_lasso_u_values, groth16_commitment_size, lasso_commitment_size,
         },
         proof_size,
@@ -41,7 +42,7 @@ use crate::{
     util::{
         load::{to_field_2d_i64, to_field_3d_i64, to_field_4d_i64, to_field_4d_u64},
         bert_attn_lookup::{run_bert_lasso_bundle, run_all_bert_remainders_with_link},
-        utils::{cm1_from_vk, hash_cm_to_field},
+        utils::{cm1_from_vk, cm2_from_vk, generate_global_ck, commit_global, hash_commitments_to_field},
     },
 };
 use crate::lasso::subtables::softmax::set_softmax_table_dir;
@@ -788,16 +789,38 @@ where
             committed_group1.len()
         );
 
+        let committed_group2 = {
+            let vars = sample_circuit.committed_vars_2.borrow();
+            let values: Vec<Fr> = vars.iter()
+                .map(|v| v.value().unwrap_or(Fr::zero()))
+                .collect();
+            if values.len() != num_commit_2 as usize {
+                return Err(anyhow::anyhow!(
+                    "d2 size mismatch: expected {}, got {}",
+                    num_commit_2,
+                    values.len()
+                ));
+            }
+            values
+        };
+        println!("[Debug] committed_group2 total={}", committed_group2.len());
+
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
         let num_pub = cs_witness.num_instance_variables() - 1;
 
-        // ── Groth16 commit (Pedersen cm1 from VK) ───────────────────────────
+        // ── Groth16 commit (Pedersen cm1, cm2 from VK) ───────────────────────
         let g16_commit_start = Instant::now();
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
         let g16_commit_ms = g16_commit_start.elapsed().as_millis();
 
-        let r_fs = hash_cm_to_field::<E>(&cm1);
+        // ── Global weight commitment c_W ─────────────────────────────────────
+        let global_commit_start = Instant::now();
+        let ck_glob = generate_global_ck::<E, _>(committed_group2.len(), &mut rng);
+        let o_glob = Fr::rand(&mut rng);
+        let c_w = commit_global::<E>(&ck_glob, &committed_group2, &o_glob);
+        let global_commit_ms = global_commit_start.elapsed().as_millis();
 
         // ── Compute Poseidon hashes (native) ──────────────────────────────────
         let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
@@ -821,6 +844,9 @@ where
             }
             crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &output_flat)
         };
+
+        // ── Multi-commitment Fiat-Shamir challenge (v2) ──────────────────────
+        let r_fs = hash_commitments_to_field::<E>(&c_w, &cm1, &cm2, &input_hash, &output_hash);
 
         println!("=== [1] Rebuilding circuit with Fiat-Shamir challenge ===");
         let final_circuit = BERTAttentionCircuit {
@@ -900,31 +926,60 @@ where
         lasso_results.extend(lasso_sm);
         lasso_results.extend(lasso_remainders);
 
-        // ── [3] CP-Link (setup/keygen, prove, verify timed separately) ───────
+        // ── [3] CP-Link #1: d1 ↔ Lasso (setup/keygen, prove, verify) ─────────
         let u_padded = pad_lasso_u_values::<E>(&lasso_results, &committed_group1);
 
-        let cp_setup_start = Instant::now();
-        let (pp, crs) = factored_link_setup::<E, _>(&params.vk, num_pub, committed_group1.len(), &lasso_results, &mut rng);
-        let (ek, vk_link) = factored_link_keygen::<E, _>(&pp, crs, &mut rng);
-        let cp_setup_ms = cp_setup_start.elapsed().as_millis();
+        let cpl_setup_start = Instant::now();
+        let (pp_lasso, crs_lasso) = factored_link_setup::<E, _>(&params.vk, num_pub, committed_group1.len(), &lasso_results, &mut rng);
+        let (ek_lasso, vk_link_lasso) = factored_link_keygen::<E, _>(&pp_lasso, crs_lasso, &mut rng);
+        let cpl_setup_ms = cpl_setup_start.elapsed().as_millis();
 
-        let cp_prove_start = Instant::now();
-        let (proof_link, instance) = factored_link_prove::<E, _>(&pp, &ek, v1, cm1, &lasso_results, u_padded, &mut rng);
-        let cp_prove_ms = cp_prove_start.elapsed().as_millis();
+        let cpl_prove_start = Instant::now();
+        let (proof_link_lasso, instance_lasso) = factored_link_prove::<E, _>(&pp_lasso, &ek_lasso, v1, cm1, &lasso_results, u_padded, &mut rng);
+        let cpl_prove_ms = cpl_prove_start.elapsed().as_millis();
 
-        let cp_verify_start = Instant::now();
-        if !factored_link_verify::<E>(&pp, &vk_link, &instance, &proof_link) {
-            return Err(anyhow::anyhow!("Factored link verification failed"));
+        let cpl_verify_start = Instant::now();
+        if !factored_link_verify::<E>(&pp_lasso, &vk_link_lasso, &instance_lasso, &proof_link_lasso) {
+            return Err(anyhow::anyhow!("CP-Link #1 (d1 ↔ Lasso) verification failed"));
         }
-        println!("  -> [Success] Factored Multi-Lasso CP-Link verified");
-        let cp_verify_ms = cp_verify_start.elapsed().as_millis();
+        println!("  -> [Success] CP-Link #1 (d1 ↔ Lasso) verified");
+        let cpl_verify_ms = cpl_verify_start.elapsed().as_millis();
 
-        // ── CP-Link proof size report ──
-        let cplink_report = proof_size::compute_cplink_report::<E>(&proof_link, &instance);
-        cplink_report.print_log();
+        let cplink_lasso_report = proof_size::compute_cplink_report::<E>(&proof_link_lasso, &instance_lasso);
+        cplink_lasso_report.print_log();
+
+        // ── [4] CP-Link #2: c_W ↔ d2 (global weight commitment link) ────────
+        let cpg_setup_start = Instant::now();
+        let (pp_glob, crs_glob) = global_link_setup::<E, _>(&params.vk, num_pub, &ck_glob, &mut rng);
+        let (ek_glob, vk_link_glob) = global_link_keygen::<E, _>(&pp_glob, crs_glob, &mut rng);
+        let cpg_setup_ms = cpg_setup_start.elapsed().as_millis();
+
+        let cpg_prove_start = Instant::now();
+        let (proof_link_glob, instance_glob) = global_link_prove::<E, _>(
+            &pp_glob, &ek_glob, o_glob, v2, &committed_group2, c_w, proof.d2, &mut rng,
+        );
+        let cpg_prove_ms = cpg_prove_start.elapsed().as_millis();
+
+        let cpg_verify_start = Instant::now();
+        if !global_link_verify::<E>(&pp_glob, &vk_link_glob, &instance_glob, &proof_link_glob) {
+            return Err(anyhow::anyhow!("CP-Link #2 (c_W ↔ d2) verification failed"));
+        }
+        println!("  -> [Success] CP-Link #2 (c_W ↔ d2) verified");
+        let cpg_verify_ms = cpg_verify_start.elapsed().as_millis();
+
+        let cplink_global_report = proof_size::compute_cplink_report::<E>(&proof_link_glob, &instance_glob);
+        cplink_global_report.print_log();
+
+        // ── Fiat-Shamir verification ─────────────────────────────────────────
+        let r_fs_verify = hash_commitments_to_field::<E>(
+            &c_w, &proof.d1, &proof.d2,
+            &public_inputs[1], &public_inputs[2],
+        );
+        assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");
+        println!("  -> [Success] Fiat-Shamir recomputation verified");
 
         // ── Grand total proof size report ──
-        proof_size::print_full_report(&g16_report, &cplink_report, &proof_size::CpLinkSizeReport { proof_g_count: 0, proof_g_bytes: 0, proof_f_count: 0, proof_f_bytes: 0, proof_total: 0, instance_g_count: 0, instance_g_bytes: 0 });
+        proof_size::print_full_report(&g16_report, &cplink_lasso_report, &cplink_global_report);
 
         let e2e_time = e2e_start.elapsed();
 
@@ -946,17 +1001,17 @@ where
             lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
             cp_link_lasso: CpLinkMetrics {
                 commit_ms: 0,
-                setup_ms: cp_setup_ms,
-                prove_ms: cp_prove_ms,
-                verify_ms: cp_verify_ms,
-                proof_size_bytes: cplink_report.proof_total,
+                setup_ms: cpl_setup_ms,
+                prove_ms: cpl_prove_ms,
+                verify_ms: cpl_verify_ms,
+                proof_size_bytes: cplink_lasso_report.proof_total,
             },
             cp_link_global: CpLinkMetrics {
-                commit_ms: 0,
-                setup_ms: 0,
-                prove_ms: 0,
-                verify_ms: 0,
-                proof_size_bytes: 0,
+                commit_ms: global_commit_ms,
+                setup_ms: cpg_setup_ms,
+                prove_ms: cpg_prove_ms,
+                verify_ms: cpg_verify_ms,
+                proof_size_bytes: cplink_global_report.proof_total,
             },
             end_to_end_ms: e2e_time.as_millis(),
         }
