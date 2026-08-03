@@ -665,9 +665,11 @@ macro_rules! define_mp_range_check {
     };
 }
 
-// MP bounded-diff: Cond1 [0, 1024), Cond3 [0, 128), Cond4 [0, 8)
+// MP bounded-diff: Cond1 [0, 8192), Cond3 [0, 1024), Cond4 [0, 64)
+define_mp_range_check!(prove_mp_range_13, 13);
 define_mp_range_check!(prove_mp_range_10, 10);
 define_mp_range_check!(prove_mp_range_7, 7);
+define_mp_range_check!(prove_mp_range_6, 6);
 define_mp_range_check!(prove_mp_range_3, 3);
 
 /// Run Moore-Penrose bounded-difference Lasso proofs for conditions 1, 3, 4.
@@ -687,87 +689,123 @@ pub fn run_mp_conditions_with_link<F: PrimeField, G: CurveGroup<ScalarField = F>
     let h_dim = q_y[0][0].len();
     let m_dim = q_y[0][0][0].len();
 
-    // Condition 1: |Q_y2 - P_k2| < 512 → shifted = Q_y2 - P_k2 + 512 ∈ [0, 1024)
+    // Condition 1: |Q_y2 - P_k2| < 4096 → shifted = Q_y2 - P_k2 + 4096 ∈ [0, 8192)
     {
-        let delta = F::from(512u64);
+        let delta_u64 = 4096u64;
+        let delta = F::from(delta_u64);
+        let range_limit = delta_u64 * 2;
         let total = b_dim * h_dim * m_dim * m_dim;
         let mut nz = Vec::with_capacity(total);
+        let mut max_val: usize = 0;
         for b in 0..b_dim {
             for h in 0..h_dim {
                 for i in 0..m_dim {
                     for j in 0..q_y[1][b][h][i].len() {
                         let shifted = q_y[1][b][h][i][j] - p_k2[b][h][i][j] + delta;
-                        nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                        let val = shifted.into_bigint().as_ref()[0] as usize;
+                        assert!(
+                            (val as u64) < range_limit,
+                            "mp_cond1: shifted value {} exceeds range [0, {}) at [b={},h={},i={},j={}]. \
+                             Increase delta (currently {}).",
+                            val, range_limit, b, h, i, j, delta_u64,
+                        );
+                        max_val = max_val.max(val);
+                        nz.push([val]);
                     }
                 }
             }
         }
+        println!("  [mp_cond1] max shifted value: {} (range limit: {})", max_val, range_limit);
         let gens = SparsePolyCommitmentGens::<G1>::new(
             b"mp_cond1", FRACBITS_C,
             total.next_power_of_two(),
             FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_mp_range_10(nz, &gens, rng, b"mp_cond1")?;
+        let (link_data, metrics) = prove_mp_range_13(nz, &gens, rng, b"mp_cond1")?;
         all_results.push(link_data);
         agg.add(&metrics);
-        println!("  - mp_cond1 (|Q_y2-P_k2|<512) verified | Count: {} | Time: {:?}", total, start.elapsed());
+        println!("  - mp_cond1 (|Q_y2-P_k2|<4096) verified | Count: {} | Time: {:?}", total, start.elapsed());
     }
 
-    // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
+    // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 512 → shifted ∈ [0, 1024)
     {
-        let delta = F::from(64u64);
+        let delta_u64 = 512u64;
+        let delta = F::from(delta_u64);
+        let range_limit = delta_u64 * 2;
         let pairs_per_bh = m_dim * (m_dim - 1) / 2;
         let total = b_dim * h_dim * pairs_per_bh;
         let mut nz = Vec::with_capacity(total);
+        let mut max_val: usize = 0;
         for b in 0..b_dim {
             for h in 0..h_dim {
                 for i in 0..m_dim {
                     for j in (i+1)..m_dim {
                         let shifted = q_y[0][b][h][i][j] - q_y[0][b][h][j][i] + delta;
-                        nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                        let val = shifted.into_bigint().as_ref()[0] as usize;
+                        assert!(
+                            (val as u64) < range_limit,
+                            "mp_cond3: shifted value {} exceeds range [0, {}) at [b={},h={},i={},j={}]. \
+                             Increase delta (currently {}).",
+                            val, range_limit, b, h, i, j, delta_u64,
+                        );
+                        max_val = max_val.max(val);
+                        nz.push([val]);
                     }
                 }
             }
         }
+        println!("  [mp_cond3] max shifted value: {} (range limit: {})", max_val, range_limit);
         let gens = SparsePolyCommitmentGens::<G1>::new(
             b"mp_cond3", FRACBITS_C,
             total.next_power_of_two(),
             FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_mp_range_7(nz, &gens, rng, b"mp_cond3")?;
+        let (link_data, metrics) = prove_mp_range_10(nz, &gens, rng, b"mp_cond3")?;
         all_results.push(link_data);
         agg.add(&metrics);
-        println!("  - mp_cond3 (|Q_y1-Q_y1^T|<64) verified | Count: {} | Time: {:?}", total, start.elapsed());
+        println!("  - mp_cond3 (|Q_y1-Q_y1^T|<512) verified | Count: {} | Time: {:?}", total, start.elapsed());
     }
 
-    // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
+    // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 32 → shifted ∈ [0, 64)
     {
-        let delta = F::from(4u64);
+        let delta_u64 = 32u64;
+        let delta = F::from(delta_u64);
+        let range_limit = delta_u64 * 2;
         let pairs_per_bh = m_dim * (m_dim - 1) / 2;
         let total = b_dim * h_dim * pairs_per_bh;
         let mut nz = Vec::with_capacity(total);
+        let mut max_val: usize = 0;
         for b in 0..b_dim {
             for h in 0..h_dim {
                 for i in 0..m_dim {
                     for j in (i+1)..m_dim {
                         let shifted = q_y[2][b][h][i][j] - q_y[2][b][h][j][i] + delta;
-                        nz.push([shifted.into_bigint().as_ref()[0] as usize]);
+                        let val = shifted.into_bigint().as_ref()[0] as usize;
+                        assert!(
+                            (val as u64) < range_limit,
+                            "mp_cond4: shifted value {} exceeds range [0, {}) at [b={},h={},i={},j={}]. \
+                             Increase delta (currently {}).",
+                            val, range_limit, b, h, i, j, delta_u64,
+                        );
+                        max_val = max_val.max(val);
+                        nz.push([val]);
                     }
                 }
             }
         }
+        println!("  [mp_cond4] max shifted value: {} (range limit: {})", max_val, range_limit);
         let gens = SparsePolyCommitmentGens::<G1>::new(
             b"mp_cond4", FRACBITS_C,
             total.next_power_of_two(),
             FRACBITS_C, FRACBITS_M.trailing_zeros() as usize,
         );
         let start = Instant::now();
-        let (link_data, metrics) = prove_mp_range_3(nz, &gens, rng, b"mp_cond4")?;
+        let (link_data, metrics) = prove_mp_range_6(nz, &gens, rng, b"mp_cond4")?;
         all_results.push(link_data);
         agg.add(&metrics);
-        println!("  - mp_cond4 (|Q_y3-Q_y3^T|<4) verified | Count: {} | Time: {:?}", total, start.elapsed());
+        println!("  - mp_cond4 (|Q_y3-Q_y3^T|<32) verified | Count: {} | Time: {:?}", total, start.elapsed());
     }
 
     Ok((all_results, agg))
