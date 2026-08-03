@@ -879,33 +879,33 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
             // ── Moore-Penrose condition enforcement (bounded-difference via Lasso) ──
             let m_dim = q_y_vars[0][b][h].len();
 
-            // Condition 1: |Q_y2 - P_k2| < 512 → shifted ∈ [0, 1024)
+            // Condition 1: |Q_y2 - P_k2| < 4096 → shifted ∈ [0, 8192)
             for i in 0..m_dim {
                 for j in 0..q_y_vars[1][b][h][i].len() {
                     let shifted_expr = &q_y_vars[1][b][h][i][j] - &sm2_vars.p[b][h][i][j]
-                        + FpVar::Constant(F::from(512u64));
+                        + FpVar::Constant(F::from(4096u64));
                     let shifted = FpVar::new_witness(cs.clone(), || shifted_expr.value())?;
                     shifted_expr.enforce_equal(&shifted)?;
                     mp_cond1_pool.push(shifted);
                 }
             }
 
-            // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 64 → shifted ∈ [0, 128)
+            // Condition 3: |Q_y1[i][j] - Q_y1[j][i]| < 512 → shifted ∈ [0, 1024)
             for i in 0..m_dim {
                 for j in (i+1)..m_dim {
                     let shifted_expr = &q_y_vars[0][b][h][i][j] - &q_y_vars[0][b][h][j][i]
-                        + FpVar::Constant(F::from(64u64));
+                        + FpVar::Constant(F::from(512u64));
                     let shifted = FpVar::new_witness(cs.clone(), || shifted_expr.value())?;
                     shifted_expr.enforce_equal(&shifted)?;
                     mp_cond3_pool.push(shifted);
                 }
             }
 
-            // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 4 → shifted ∈ [0, 8)
+            // Condition 4: |Q_y3[i][j] - Q_y3[j][i]| < 32 → shifted ∈ [0, 64)
             for i in 0..m_dim {
                 for j in (i+1)..m_dim {
                     let shifted_expr = &q_y_vars[2][b][h][i][j] - &q_y_vars[2][b][h][j][i]
-                        + FpVar::Constant(F::from(4u64));
+                        + FpVar::Constant(F::from(32u64));
                     let shifted = FpVar::new_witness(cs.clone(), || shifted_expr.value())?;
                     shifted_expr.enforce_equal(&shifted)?;
                     mp_cond4_pool.push(shifted);
