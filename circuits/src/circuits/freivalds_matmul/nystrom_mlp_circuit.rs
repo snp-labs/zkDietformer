@@ -588,6 +588,7 @@ where
             sample_circuit.clone(),
             &d1_indices,
             &[],
+            &[],
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
@@ -637,6 +638,7 @@ where
             sample_circuit.clone(),
             v1,
             v2,
+            Fr::zero(),
             &params,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;
@@ -802,6 +804,7 @@ where
             sample_circuit.clone(),
             &d1_indices,
             &[],
+            &[],
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
@@ -853,6 +856,7 @@ where
             sample_circuit.clone(),
             v1,
             v2,
+            Fr::zero(),
             &params,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;

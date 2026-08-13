@@ -40,7 +40,7 @@ use crate::{
     util::{
         load::{read_array_i64, to_field_2d_i64, to_field_3d_i64, to_field_3d_u64, to_field_4d_i64, to_field_4d_u64, to_field_5d_i64},
         nystrom_attn_lookup::{run_lasso_bundle, run_all_remainders_with_link, run_mp_conditions_with_link},
-        utils::{cm1_from_vk, cm2_from_vk, generate_global_ck, commit_global, hash_commitments_to_field},
+        utils::{cm1_from_vk, cm2_from_vk, cm_aux_from_vk, generate_global_ck, commit_global, hash_commitments_to_field_v3},
     },
 };
 use crate::lasso::subtables::softmax::set_softmax_table_dir;
@@ -99,11 +99,16 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
     /// d2 group: W_Q, W_K, W_V weights — committed via v2 but NOT CP-linked to Lasso.
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
+    /// Aux group: Freivalds-constrained intermediates (Q, K, V, Z*, Y) —
+    /// committed separately as cm_aux before FS challenge derivation.
+    /// NOT in d2 (preserves c_W as global weight commitment).
+    pub committed_vars_aux: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
         self.committed_vars_2.borrow_mut().clear();
+        self.committed_vars_aux.borrow_mut().clear();
 
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
@@ -195,13 +200,25 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             }).collect()
         }).collect();
 
-        // d2: commit W_Q, W_K, W_V, W_O weights
+        // d2: commit W_Q, W_K, W_V, W_O weights (global, reusable across proofs)
         {
             let mut vars_2 = self.committed_vars_2.borrow_mut();
             for h_w in &w_q_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_k_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_v_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
             for h_w in &w_o_vars { for row in h_w { vars_2.extend(row.iter().cloned()); } }
+        }
+
+        // Aux: commit Freivalds-constrained intermediates (Q, K, V, Y) before FS challenge.
+        // Separate from d2 to preserve c_W as a global weight commitment.
+        // cm_aux is computed per-proof and included in the FS hash.
+        {
+            let mut vars_aux = self.committed_vars_aux.borrow_mut();
+            for b in &proj_q_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+            for b in &proj_k_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+            for b in &proj_v_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+            // Y (attn_output_vars) [B][S][HD]
+            for b in &attn_output_vars { for s in b { vars_aux.extend(s.iter().cloned()); } }
         }
 
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &self.proj_o.q_out_proj);
@@ -244,6 +261,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let mut global_temp_lows = Vec::new(); let mut global_temp_highs = Vec::new();
         let mut global_mid_lows = Vec::new(); let mut global_mid_highs = Vec::new();
         let mut global_x_lows = Vec::new(); let mut global_x_highs = Vec::new();
+
+        // Collector for Z* (q_inv_var) — allocated inside b/h loop, pushed to aux after loop closes
+        let mut q_inv_committed: Vec<FpVar<F>> = Vec::new();
 
         for b in 0..scale_q_out.len() {
             // 해당 배치의 Landmarks 계산
@@ -508,6 +528,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
 
                 // moore-penrose
                 let q_inv_var = new_matrix_witness_4d(cs.clone(), &self.pseudo_inv.q_inv);
+                // Collect Z* (q_inv_var) for d2 commitment — Freivalds-only constrained
+                for row in &q_inv_var[b][h] {
+                    q_inv_committed.extend(row.iter().cloned());
+                }
                 let q_y_vars = self.pseudo_inv.q_y_intermediates.iter()
                     .map(|q_step| new_matrix_witness_4d(cs.clone(), q_step))
                     .collect::<Vec<_>>();
@@ -748,6 +772,12 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
                 }
                 eprintln!("[CCOUNT] b={} h={} after O-proj: {} (h_total={})", b, h, cs.num_constraints(), cs.num_constraints() - _nc_h_start);
             }
+        }
+
+        // Aux: commit Z* (q_inv_var) — collected during b/h loop, pushed after loop closes
+        {
+            let mut vars_aux = self.committed_vars_aux.borrow_mut();
+            vars_aux.extend(q_inv_committed);
         }
 
         {
@@ -1016,6 +1046,7 @@ where
 
         committed_vars: Rc::new(RefCell::new(Vec::new())),
         committed_vars_2: Rc::new(RefCell::new(Vec::new())),
+        committed_vars_aux: Rc::new(RefCell::new(Vec::new())),
     })
 }
 
@@ -1031,30 +1062,34 @@ where
         println!("\n=== Processing witness NPZ: {:?} ===", file_path);
 
         // ── Dry-run: extract committed witness indices ───────────────────────
-        let (d1_indices, d2_indices) = {
+        let (d1_indices, d2_indices, d3_indices) = {
             let temp_circuit = load_nystrom_circuit::<E>(&file_path)?;
             let vars1_ptr = Rc::clone(&temp_circuit.committed_vars);
             let vars2_ptr = Rc::clone(&temp_circuit.committed_vars_2);
+            let vars_aux_ptr = Rc::clone(&temp_circuit.committed_vars_aux);
             let cs_analyze = ConstraintSystem::<Fr>::new_ref();
             temp_circuit.generate_constraints(cs_analyze)?;
             (
                 crate::util::utils::extract_witness_indices(&vars1_ptr.borrow()),
                 crate::util::utils::extract_witness_indices(&vars2_ptr.borrow()),
+                crate::util::utils::extract_witness_indices(&vars_aux_ptr.borrow()),
             )
         };
         let num_commit_1 = d1_indices.len() as u32;
         let num_commit_2 = d2_indices.len() as u32;
-        println!("최종 측정된 커밋 개수: d1={:?}, d2={:?}", num_commit_1, num_commit_2);
+        let num_commit_3 = d3_indices.len() as u32;
+        println!("최종 측정된 커밋 개수: d1={:?}, d2={:?}, d3={:?}", num_commit_1, num_commit_2, num_commit_3);
 
         let sample_circuit = load_nystrom_circuit::<E>(&file_path)?;
 
         // ── [0] Setup ────────────────────────────────────────────────────────
-        println!("=== [0] LegoGroth16 Setup (d1={:?}, d2={:?}) ===", num_commit_1, num_commit_2);
+        println!("=== [0] LegoGroth16 Setup (d1={:?}, d2={:?}, d3={:?}) ===", num_commit_1, num_commit_2, num_commit_3);
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
             sample_circuit.clone(),
             &d1_indices,
             &d2_indices,
+            &d3_indices,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
@@ -1106,17 +1141,30 @@ where
         }
         println!("[Debug] LegoGroth16 committed_group2 (Total: {})", committed_group2.len());
 
+        // ── Extract aux values (Freivalds-constrained intermediates) ─────────
+        let committed_aux = {
+            let vars = sample_circuit.committed_vars_aux.borrow();
+            let values: Vec<Fr> = vars.iter()
+                .map(|v| v.value().unwrap_or(Fr::zero()))
+                .collect();
+            values
+        };
+        println!("[Debug] committed_aux (Total: {})", committed_aux.len());
+
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
+        let v3 = Fr::rand(&mut rng);
         let num_pub = cs_witness.num_instance_variables() - 1;
 
-        // ── Groth16 commit (Pedersen cm1, cm2 from VK) ───────────────────────
+        // ── Groth16 commit (Pedersen cm1, cm2, cm_aux from VK) ───────────────
         let g16_commit_start = Instant::now();
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
         let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
+        let cm_aux = cm_aux_from_vk::<E>(&params.vk, num_pub, &committed_aux, &v3);
         let g16_commit_ms = g16_commit_start.elapsed().as_millis();
+        println!("[Debug] cm_aux computed (aux_len={})", committed_aux.len());
 
-        // ── Global weight commitment c_W ─────────────────────────────────────
+        // ── Global weight commitment c_W (weights only, reusable) ────────────
         let global_commit_start = Instant::now();
         let ck_glob = generate_global_ck::<E, _>(committed_group2.len(), &mut rng);
         let o_glob = Fr::rand(&mut rng);
@@ -1146,8 +1194,8 @@ where
             crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &output_flat)
         };
 
-        // ── Multi-commitment Fiat-Shamir challenge (v2) ──────────────────────
-        let r_fs = hash_commitments_to_field::<E>(&c_w, &cm1, &cm2, &input_hash, &output_hash);
+        // ── Multi-commitment Fiat-Shamir challenge (v3: includes cm_aux) ─────
+        let r_fs = hash_commitments_to_field_v3::<E>(&c_w, &cm1, &cm2, &cm_aux, &input_hash, &output_hash);
 
         println!("=== [1] Building final circuit with Fiat-Shamir challenge ===");
         let final_circuit = NystromAttentionCircuit {
@@ -1178,6 +1226,7 @@ where
             final_circuit.clone(),
             v1,
             v2,
+            v3,
             &params,
             &mut rng,
         ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;
@@ -1293,9 +1342,9 @@ where
         let cplink_global_report = proof_size::compute_cplink_report::<E>(&proof_link_glob, &instance_glob);
         cplink_global_report.print_log();
 
-        // ── Fiat-Shamir verification ─────────────────────────────────────────
-        let r_fs_verify = hash_commitments_to_field::<E>(
-            &c_w, &proof.d1, &proof.d2,
+        // ── Fiat-Shamir verification (v3: includes cm_aux = proof.d3) ─────────
+        let r_fs_verify = hash_commitments_to_field_v3::<E>(
+            &c_w, &proof.d1, &proof.d2, &proof.d3,
             &public_inputs[1], &public_inputs[2],
         );
         assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");

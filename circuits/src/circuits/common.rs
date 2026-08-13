@@ -371,6 +371,10 @@ pub fn prove_and_verify_factored_multi_link<E: Pairing>(
 }
 
 // ── Global CP-Link #2 (c_W ↔ d2) helpers ────────────────────────────────────
+// d2 commits model weights only (W_Q, W_K, W_V, W_O). c_W is a global
+// weight commitment reusable across proofs. Freivalds-constrained
+// intermediates (Q, K, V, Z*, Y) are committed separately as cm_aux
+// and included in the FS hash (v3) to bind them before challenge derivation.
 
 /// Build the CP-Link #2 CRS relating the global weight commitment `c_W` to
 /// LegoGroth16's `d2`.  Uses `generate_cp_bound_relation` with:
@@ -504,7 +508,7 @@ mod tests {
         let d2_indices: Vec<u32> = vec![1];
 
         let params = generate_random_parameters::<E, _, _>(
-            circuit.clone(), &d1_indices, &d2_indices, &mut rng,
+            circuit.clone(), &d1_indices, &d2_indices, &[], &mut rng,
         ).unwrap();
         let pvk = prepare_verifying_key::<E>(&params.vk);
 
@@ -532,7 +536,7 @@ mod tests {
 
         // LegoGroth16 prove (r_fs is NOT used inside this tiny circuit, but proves d2 is correct)
         let proof = create_random_proof::<E, _, _>(
-            circuit.clone(), v1, v2, &params, &mut rng,
+            circuit.clone(), v1, v2, Fr::zero(), &params, &mut rng,
         ).unwrap();
 
         // Verify Groth16

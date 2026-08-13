@@ -71,6 +71,7 @@ where
             sample_circuit.clone(),
             &d1_indices,
             &[], // no d2 group for MLP
+            &[], // no d3 group for MLP
             &mut rng,
         )
         .map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
@@ -128,6 +129,7 @@ where
             sample_circuit.clone(),
             v1,
             v2,
+            Fr::zero(),
             &params,
             &mut rng,
         )

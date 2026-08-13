@@ -108,6 +108,7 @@ pub fn calculate_d<E: Pairing>(
     let mut d = prepare_inputs(pvk, public_inputs)?;
     d += proof.d1;
     d += proof.d2;
+    d += proof.d3;
 
     Ok(d.into_affine())
 }

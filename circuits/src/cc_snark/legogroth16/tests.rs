@@ -167,6 +167,7 @@ where
                 link_gens.clone(),
                 &bad_idx1,
                 &bad_idx2,
+                &[],
                 &mut rng,
             )
             .unwrap_err(),
@@ -174,7 +175,7 @@ where
         );
 
         assert_eq!(
-            generate_random_parameters::<E, _, _>(circuit.clone(), &bad_idx1, &bad_idx2, &mut rng).unwrap_err(),
+            generate_random_parameters::<E, _, _>(circuit.clone(), &bad_idx1, &bad_idx2, &[], &mut rng).unwrap_err(),
             Error::InsufficientWitnessesForCommitment(2, 3)
         );
 
@@ -184,13 +185,14 @@ where
             link_gens.clone(),
             &idx1,
             &idx2,
+            &[],
             &mut rng,
         )
         .unwrap();
 
         // Parameters for generating proof without CP_link
         let params =
-            generate_random_parameters::<E, _, _>(circuit.clone(), &idx1, &idx2, &mut rng).unwrap();
+            generate_random_parameters::<E, _, _>(circuit.clone(), &idx1, &idx2, &[], &mut rng).unwrap();
 
         let pvk_link = prepare_verifying_key::<E>(&params_link.vk.groth16_vk);
         let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -214,10 +216,12 @@ where
             };
 
             // Create proof with link
+            let v3 = E::ScalarField::rand(&mut rng);
             let proof_link = create_random_proof_incl_cp_link(
                 circuit.clone(),
                 v1,
                 v2,
+                v3,
                 link_v,
                 &params_link,
                 &mut rng,
@@ -225,7 +229,7 @@ where
             .unwrap();
 
             // Create proof without link
-            let proof = create_random_proof(circuit, v1, v2, &params, &mut rng).unwrap();
+            let proof = create_random_proof(circuit, v1, v2, v3, &params, &mut rng).unwrap();
 
             // -- Verify Commitments Logic --
 
@@ -316,6 +320,7 @@ where
             // Rerandomize 1 (updating v/d)
             let new_v1 = E::ScalarField::rand(&mut rng);
             let new_v2 = E::ScalarField::rand(&mut rng);
+            let new_v3 = E::ScalarField::rand(&mut rng);
 
             let re_rand_proof_1 = rerandomize_proof_1(
                 &proof,
@@ -323,9 +328,12 @@ where
                 new_v1,
                 v2,
                 new_v2,
+                v3,
+                new_v3,
                 &params.vk,
                 &params.common.eta1_delta_inv_g1,
                 &params.common.eta2_delta_inv_g1,
+                &params.common.eta3_delta_inv_g1,
                 &mut rng,
             );
 
@@ -382,11 +390,12 @@ where
         link_gens.clone(),
         &idx1,
         &idx2,
+        &[],
         &mut rng,
     )
     .unwrap();
 
-    let params = generate_random_parameters::<E, _, _>(circuit, &idx1, &idx2, &mut rng).unwrap();
+    let params = generate_random_parameters::<E, _, _>(circuit, &idx1, &idx2, &[], &mut rng).unwrap();
 
     let pvk_link = prepare_verifying_key::<E>(&params_link.vk.groth16_vk);
     let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -403,6 +412,7 @@ where
 
         let v1 = E::ScalarField::rand(&mut rng);
         let v2 = E::ScalarField::rand(&mut rng);
+        let v3 = E::ScalarField::rand(&mut rng);
         let link_v = E::ScalarField::rand(&mut rng);
 
         let circuit = MyLessSillyCircuit {
@@ -416,13 +426,14 @@ where
             circuit.clone(),
             v1,
             v2,
+            v3,
             link_v,
             &params_link,
             &mut rng,
         )
         .unwrap();
 
-        let proof = create_random_proof(circuit.clone(), v1, v2, &params, &mut rng).unwrap();
+        let proof = create_random_proof(circuit.clone(), v1, v2, v3, &params, &mut rng).unwrap();
 
         // 1. Verify Group 1 Commitments [a, b] (Linked)
         verify_commitments_group_1(&params_link.vk, &proof_link, 1, &[a, b], &v1, &link_v).unwrap();
@@ -446,6 +457,7 @@ where
         // Rerandomize
         let new_v1 = E::ScalarField::rand(&mut rng);
         let new_v2 = E::ScalarField::rand(&mut rng);
+        let new_v3 = E::ScalarField::rand(&mut rng);
 
         let re_rand_proof_1 = rerandomize_proof_1(
             &proof,
@@ -453,9 +465,12 @@ where
             new_v1,
             v2,
             new_v2,
+            v3,
+            new_v3,
             &params.vk,
             &params.common.eta1_delta_inv_g1,
             &params.common.eta2_delta_inv_g1,
+            &params.common.eta3_delta_inv_g1,
             &mut rng,
         );
 
@@ -493,11 +508,12 @@ where
         link_gens.clone(),
         &idx1,
         &idx2,
+        &[],
         &mut rng,
     )
     .unwrap();
 
-    let params = generate_random_parameters::<E, _, _>(circuit, &idx1, &idx2, &mut rng).unwrap();
+    let params = generate_random_parameters::<E, _, _>(circuit, &idx1, &idx2, &[], &mut rng).unwrap();
 
     let pvk_link = prepare_verifying_key::<E>(&params_link.vk.groth16_vk);
     let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -515,6 +531,7 @@ where
 
         let v1 = E::ScalarField::rand(&mut rng);
         let v2 = E::ScalarField::rand(&mut rng);
+        let v3 = E::ScalarField::rand(&mut rng);
         let link_v = E::ScalarField::rand(&mut rng);
 
         let circuit = MyLessSillyCircuit1 {
@@ -528,13 +545,14 @@ where
             circuit.clone(),
             v1,
             v2,
+            v3,
             link_v,
             &params_link,
             &mut rng,
         )
         .unwrap();
 
-        let proof = create_random_proof(circuit.clone(), v1, v2, &params, &mut rng).unwrap();
+        let proof = create_random_proof(circuit.clone(), v1, v2, v3, &params, &mut rng).unwrap();
 
         // 2 Public Inputs for this circuit
         let public_input_count = 2;
@@ -560,15 +578,19 @@ where
         // Rerandomize
         let new_v1 = E::ScalarField::rand(&mut rng);
         let new_v2 = E::ScalarField::rand(&mut rng);
+        let new_v3 = E::ScalarField::rand(&mut rng);
         let re_rand_proof_1 = rerandomize_proof_1(
             &proof,
             v1,
             new_v1,
             v2,
             new_v2,
+            v3,
+            new_v3,
             &params.vk,
             &params.common.eta1_delta_inv_g1,
             &params.common.eta2_delta_inv_g1,
+            &params.common.eta3_delta_inv_g1,
             &mut rng,
         );
         verify_proof(&pvk, &re_rand_proof_1, &[e, f]).unwrap();

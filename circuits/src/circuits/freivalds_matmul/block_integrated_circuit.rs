@@ -234,7 +234,7 @@ where
 
         // [0] Setup
         let setup_start = Instant::now();
-        let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &mut rng)
+        let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &[], &mut rng)
             .map_err(|e| anyhow::anyhow!("Setup L{} failed: {:?}", layer_idx, e))?;
         let setup_time = setup_start.elapsed();
         let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -328,7 +328,7 @@ where
 
         // [1] Groth16 Prove
         let g16_prove_start = Instant::now();
-        let proof = create_random_proof::<E, _, _>(final_circuit.clone(), v1, v2, &params, &mut rng)
+        let proof = create_random_proof::<E, _, _>(final_circuit.clone(), v1, v2, Fr::zero(), &params, &mut rng)
             .map_err(|e| anyhow::anyhow!("Proof L{} failed: {:?}", layer_idx, e))?;
         let g16_prove_time = g16_prove_start.elapsed();
 

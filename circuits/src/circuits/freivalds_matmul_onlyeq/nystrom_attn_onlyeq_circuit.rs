@@ -912,7 +912,7 @@ where
         println!("=== [0] LegoGroth16 Setup (d1={}, d2=0) ===", num_commit_1);
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
-            sample_circuit.clone(), &d1_indices, &d2_indices, &mut rng,
+            sample_circuit.clone(), &d1_indices, &d2_indices, &[], &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
         let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -949,7 +949,7 @@ where
         // [1] Groth16 Prove (v2=Fr::zero(), no d2)
         let g16_prove_start = Instant::now();
         let proof = create_random_proof::<E, _, _>(
-            final_circuit.clone(), v1, Fr::zero(), &params, &mut rng,
+            final_circuit.clone(), v1, Fr::zero(), Fr::zero(), &params, &mut rng,
         ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
         let g16_prove_time = g16_prove_start.elapsed();
 

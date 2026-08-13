@@ -32,6 +32,7 @@ pub fn create_random_proof_incl_cp_link<E, C, R>(
     circuit: C,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     link_v: E::ScalarField,
     pk: &ProvingKeyWithLink<E>,
     rng: &mut R,
@@ -43,16 +44,17 @@ where
 {
     let r = E::ScalarField::rand(rng);
     let s = E::ScalarField::rand(rng);
-    create_proof_incl_cp_link::<E, C>(circuit, pk, r, s, v1, v2, link_v)
+    create_proof_incl_cp_link::<E, C>(circuit, pk, r, s, v1, v2, v3, link_v)
 }
 
 /// Create a LegoGroth16 proof that is zero-knowledge.
-/// `v1` and `v2` are blinkings used in the commitment to the witness groups 1 and 2.
+/// `v1`, `v2`, `v3` are blindings used in the commitment to witness groups 1, 2, and 3.
 #[inline]
 pub fn create_random_proof<E, C, R>(
     circuit: C,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     pk: &ProvingKey<E>,
     rng: &mut R,
 ) -> Result<Proof<E>>
@@ -63,11 +65,11 @@ where
 {
     let r = E::ScalarField::rand(rng);
     let s = E::ScalarField::rand(rng);
-    create_proof::<E, C>(circuit, pk, r, s, v1, v2)
+    create_proof::<E, C>(circuit, pk, r, s, v1, v2, v3)
 }
 
 #[inline]
-/// Create a LegoGroth16 proof using randomness `r`, `s`, `v1`, `v2` and `link_v`.
+/// Create a LegoGroth16 proof using randomness `r`, `s`, `v1`, `v2`, `v3` and `link_v`.
 pub fn create_proof_incl_cp_link<E, C>(
     circuit: C,
     pk: &ProvingKeyWithLink<E>,
@@ -75,6 +77,7 @@ pub fn create_proof_incl_cp_link<E, C>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     link_v: E::ScalarField,
 ) -> Result<ProofWithLink<E>>
 where
@@ -82,12 +85,12 @@ where
     C: ConstraintSynthesizer<E::ScalarField>,
 {
     create_proof_incl_cp_link_with_reduction::<E, C, LibsnarkReduction>(
-        circuit, pk, r, s, v1, v2, link_v,
+        circuit, pk, r, s, v1, v2, v3, link_v,
     )
 }
 
 #[inline]
-/// Create a LegoGroth16 proof using randomness `r`, `s`, `v1`, `v2`.
+/// Create a LegoGroth16 proof using randomness `r`, `s`, `v1`, `v2`, `v3`.
 pub fn create_proof<E, C>(
     circuit: C,
     pk: &ProvingKey<E>,
@@ -95,12 +98,13 @@ pub fn create_proof<E, C>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
 ) -> Result<Proof<E>>
 where
     E: Pairing,
     C: ConstraintSynthesizer<E::ScalarField>,
 {
-    create_proof_with_reduction::<E, C, LibsnarkReduction>(circuit, pk, r, s, v1, v2)
+    create_proof_with_reduction::<E, C, LibsnarkReduction>(circuit, pk, r, s, v1, v2, v3)
 }
 
 #[inline]
@@ -111,6 +115,7 @@ pub fn create_proof_incl_cp_link_with_reduction<E, C, QAP>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     link_v: E::ScalarField,
 ) -> Result<ProofWithLink<E>>
 where
@@ -127,6 +132,7 @@ where
         s,
         v1,
         v2,
+        v3,
         link_v,
         &h,
         &prover.instance_assignment,
@@ -146,6 +152,7 @@ pub fn create_proof_with_reduction<E, C, QAP>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
 ) -> Result<Proof<E>>
 where
     E: Pairing,
@@ -161,6 +168,7 @@ where
         s,
         v1,
         v2,
+        v3,
         &h,
         &prover.instance_assignment,
         &prover.witness_assignment,
@@ -178,6 +186,7 @@ fn create_proof_incl_cp_link_with_assignment<E, QAP>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     link_v: E::ScalarField,
     h: &[E::ScalarField],
     input_assignment: &[E::ScalarField],
@@ -187,8 +196,8 @@ where
     E: Pairing,
     QAP: R1CStoQAP,
 {
-    // Returns proof and (witnesses_1, witnesses_2)
-    let (proof, comm_wits_1, _comm_wits_2) =
+    // Returns proof and (witnesses_1, witnesses_2, witnesses_3)
+    let (proof, comm_wits_1, _comm_wits_2, _comm_wits_3) =
         create_proof_and_committed_witnesses_with_assignment::<E, QAP>(
             &pk.common,
             &pk.vk.groth16_vk,
@@ -196,6 +205,7 @@ where
             s,
             v1,
             v2,
+            v3,
             &h,
             input_assignment,
             witness_assignment,
@@ -234,6 +244,7 @@ fn create_proof_with_assignment<E, QAP>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     h: &[E::ScalarField],
     input_assignment: &[E::ScalarField],
     witness_assignment: &[E::ScalarField],
@@ -242,13 +253,14 @@ where
     E: Pairing,
     QAP: R1CStoQAP,
 {
-    let (proof, _, _) = create_proof_and_committed_witnesses_with_assignment::<E, QAP>(
+    let (proof, _, _, _) = create_proof_and_committed_witnesses_with_assignment::<E, QAP>(
         &pk.common,
         &pk.vk,
         r,
         s,
         v1,
         v2,
+        v3,
         &h,
         input_assignment,
         witness_assignment,
@@ -256,7 +268,7 @@ where
     Ok(proof)
 }
 
-/// Returns the proof and the committed witnesses (Group 1, Group 2).
+/// Returns the proof and the committed witnesses (Group 1, Group 2, Group 3).
 #[inline]
 fn create_proof_and_committed_witnesses_with_assignment<E, QAP>(
     pk_common: &ProvingKeyCommon<E>,
@@ -265,10 +277,11 @@ fn create_proof_and_committed_witnesses_with_assignment<E, QAP>(
     s: E::ScalarField,
     v1: E::ScalarField,
     v2: E::ScalarField,
+    v3: E::ScalarField,
     h: &[E::ScalarField],
     input_assignment: &[E::ScalarField],
     witness_assignment: &[E::ScalarField],
-) -> Result<(Proof<E>, Vec<E::ScalarField>, Vec<E::ScalarField>)>
+) -> Result<(Proof<E>, Vec<E::ScalarField>, Vec<E::ScalarField>, Vec<E::ScalarField>)>
 where
     E: Pairing,
     QAP: R1CStoQAP,
@@ -282,9 +295,9 @@ where
 
     let v1_repr = v1.into_bigint();
     let v2_repr = v2.into_bigint();
+    let v3_repr = v3.into_bigint();
 
     // Compute C
-    // witness assignment = [committed_1 | committed_2 | uncommitted]
     let aux_assignment_time = start_timer!(|| "Process witness assignment");
     let aux_assignment = cfg_iter!(witness_assignment)
         .map(|s| s.into_bigint())
@@ -293,8 +306,10 @@ where
 
     let d1_idx = &vk.committed_witness_indices_1;
     let d2_idx = &vk.committed_witness_indices_2;
+    let d3_idx = &vk.committed_witness_indices_3;
     let count_1 = d1_idx.len();
     let count_2 = d2_idx.len();
+    let count_3 = d3_idx.len();
 
     let committed_witnesses_1: Vec<_> = d1_idx.iter()
         .map(|&i| aux_assignment[i as usize])
@@ -302,9 +317,12 @@ where
     let committed_witnesses_2: Vec<_> = d2_idx.iter()
         .map(|&i| aux_assignment[i as usize])
         .collect();
+    let committed_witnesses_3: Vec<_> = d3_idx.iter()
+        .map(|&i| aux_assignment[i as usize])
+        .collect();
 
     let committed_set: std::collections::HashSet<u32> =
-        d1_idx.iter().chain(d2_idx.iter()).copied().collect();
+        d1_idx.iter().chain(d2_idx.iter()).chain(d3_idx.iter()).copied().collect();
     let uncommitted_witnesses: Vec<_> = (0u32..aux_assignment.len() as u32)
         .filter(|i| !committed_set.contains(i))
         .map(|i| aux_assignment[i as usize])
@@ -314,10 +332,11 @@ where
     let l_aux_acc = E::G1::msm_bigint(&pk_common.l_query, &uncommitted_witnesses);
     end_timer!(l_aux_acc_time);
 
-    let v_eta_delta_inv_time = start_timer!(|| "Compute (v1*eta1/delta + v2*eta2/delta) * G1");
-    // C calculation must subtract both hiding factors scaled by eta/delta
+    let v_eta_delta_inv_time = start_timer!(|| "Compute (v1*eta1/delta + v2*eta2/delta + v3*eta3/delta) * G1");
+    // C calculation must subtract all hiding factors scaled by eta/delta
     let mut v_eta_delta_inv: <E as Pairing>::G1 = pk_common.eta1_delta_inv_g1.mul_bigint(v1_repr);
     v_eta_delta_inv += pk_common.eta2_delta_inv_g1.mul_bigint(v2_repr);
+    v_eta_delta_inv += pk_common.eta3_delta_inv_g1.mul_bigint(v3_repr);
     end_timer!(v_eta_delta_inv_time);
     end_timer!(c_acc_time);
 
@@ -331,8 +350,7 @@ where
 
     // Compute A
     let a_acc_time = start_timer!(|| "Compute A");
-    // FixedBase::windowed_mul 대신 단순 곱셈 사용 (0.5.0에서는 g * s가 최적화됨)
-    let r_g1 = pk_common.delta_g1 * r; 
+    let r_g1 = pk_common.delta_g1 * r;
     let g_a = calculate_coeff(r_g1, &pk_common.a_query, vk.alpha_g1, &assignment);
     end_timer!(a_acc_time);
 
@@ -357,8 +375,7 @@ where
     let c_time = start_timer!(|| "Finish C");
     let mut g_c = g_a.mul_bigint(s.into_bigint());
     g_c += &g1_b.mul_bigint(r.into_bigint());
-    // FixedBase::windowed_mul(..., &(r * s)) 대신 직접 곱셈
-    g_c -= &(pk_common.delta_g1 * (r * s)); 
+    g_c -= &(pk_common.delta_g1 * (r * s));
     g_c += &l_aux_acc;
     g_c += &h_acc;
     g_c -= &v_eta_delta_inv;
@@ -366,7 +383,6 @@ where
 
     // Compute D1 (Group 1)
     let d1_acc_time = start_timer!(|| "Compute D1");
-    // Offset for Group 1 in gamma_abc is just after public inputs
     let offset_1 = input_assignment_wth_one.len();
     let gamma_abc_inputs_source_1 = &vk.gamma_abc_g1[offset_1..offset_1 + count_1];
     let gamma_abc_inputs_acc_1 =
@@ -379,7 +395,6 @@ where
 
     // Compute D2 (Group 2)
     let d2_acc_time = start_timer!(|| "Compute D2");
-    // Offset for Group 2 in gamma_abc is after public + Group 1
     let offset_2 = offset_1 + count_1;
     let gamma_abc_inputs_source_2 = &vk.gamma_abc_g1[offset_2..offset_2 + count_2];
     let gamma_abc_inputs_acc_2 =
@@ -390,11 +405,26 @@ where
     g_d2 += &v2_eta_gamma_inv;
     end_timer!(d2_acc_time);
 
+    // Compute D3 (Group 3 / Aux)
+    let d3_acc_time = start_timer!(|| "Compute D3");
+    let offset_3 = offset_2 + count_2;
+    let gamma_abc_inputs_source_3 = &vk.gamma_abc_g1[offset_3..offset_3 + count_3];
+    let gamma_abc_inputs_acc_3 =
+        E::G1::msm_bigint(gamma_abc_inputs_source_3, &committed_witnesses_3);
+
+    let v3_eta_gamma_inv = vk.eta3_gamma_inv_g1.into_group().mul_bigint(v3_repr);
+    let mut g_d3 = gamma_abc_inputs_acc_3;
+    g_d3 += &v3_eta_gamma_inv;
+    end_timer!(d3_acc_time);
+
     // Extract committed witnesses by index (not by position)
     let committed_wits_vec_1: Vec<_> = d1_idx.iter()
         .map(|&i| witness_assignment[i as usize])
         .collect();
     let committed_wits_vec_2: Vec<_> = d2_idx.iter()
+        .map(|&i| witness_assignment[i as usize])
+        .collect();
+    let committed_wits_vec_3: Vec<_> = d3_idx.iter()
         .map(|&i| witness_assignment[i as usize])
         .collect();
     drop(aux_assignment);
@@ -406,9 +436,11 @@ where
             c: g_c.into_affine(),
             d1: g_d1.into_affine(),
             d2: g_d2.into_affine(),
+            d3: g_d3.into_affine(),
         },
         committed_wits_vec_1,
         committed_wits_vec_2,
+        committed_wits_vec_3,
     ))
 }
 
@@ -522,6 +554,38 @@ pub fn verify_witness_commitment_2<E: Pairing>(
     Ok(())
 }
 
+/// Given the proof, verify that `proof.d3` commits to the Group 3 (Aux) witnesses.
+pub fn verify_witness_commitment_3<E: Pairing>(
+    vk: &VerifyingKey<E>,
+    proof: &Proof<E>,
+    public_inputs_count: usize,
+    witnesses_3: &[E::ScalarField],
+    v3: &E::ScalarField,
+) -> Result<()> {
+    let offset_1 = vk.commit_witness_count_1 as usize;
+    let offset_2 = vk.commit_witness_count_2 as usize;
+    if (public_inputs_count + offset_1 + offset_2 + witnesses_3.len()) > vk.gamma_abc_g1.len() {
+        return Err(Error::VectorLongerThanExpected(
+            public_inputs_count + offset_1 + offset_2 + witnesses_3.len(),
+            vk.gamma_abc_g1.len(),
+        ));
+    }
+    let committed = cfg_iter!(witnesses_3)
+        .map(|p| p.into_bigint())
+        .collect::<Vec<_>>();
+
+    // Group 3 starts after Public Inputs + Group 1 + Group 2
+    let start = 1 + public_inputs_count + offset_1 + offset_2;
+    let end = start + committed.len();
+
+    let mut d = E::G1::msm_bigint(&vk.gamma_abc_g1[start..end], &committed);
+    d.add_assign(&vk.eta3_gamma_inv_g1.mul_bigint(v3.into_bigint()));
+    if proof.d3 != d.into_affine() {
+        return Err(Error::InvalidWitnessCommitment);
+    }
+    Ok(())
+}
+
 /// Given a LegoGroth16 proof, returns a fresh proof of the same statement.
 /// This breaks the property that `proof.d1` and `proof.d2` are valid commitments to the witnesses,
 /// so it is useful only when unlinkability is required but commitment reuse is not.
@@ -530,40 +594,31 @@ where
     E: Pairing,
     R: Rng,
 {
-    // These are our rerandomization factors. They must be nonzero and uniformly sampled.
     let (mut r1, mut r2) = (E::ScalarField::zero(), E::ScalarField::zero());
     while r1.is_zero() || r2.is_zero() {
         r1 = E::ScalarField::rand(rng);
         r2 = E::ScalarField::rand(rng);
     }
 
-    // We split r2 into r3 and r4 such that r3 + r4 = r2.
-    // This ensures that the total addition to D (d1 + d2) corresponds to r2,
-    // while randomizing both d1 and d2 individually to ensure unlinkability.
+    // Split r2 into r3 + r4 + r5 = r2
+    // so that d1 + d2 + d3 total addition = r2*A
     let r3 = E::ScalarField::rand(rng);
-    let r4 = r2 - r3;
-
-    //   A' = (1/r₁)A
-    //   B' = r₁B + r₁r₂(δG₂) + r₁r₂(γG₂)
-    //   C' = C + r₂A
-    //   D1' = D1 + r₃A  \
-    //                    > Sum adds r₂A
-    //   D2' = D2 + r₄A  /
+    let r4 = E::ScalarField::rand(rng);
+    let r5 = r2 - r3 - r4;
 
     let new_a = proof.a.mul(r1.inverse().unwrap());
-
-    // Update B with terms for both delta and gamma
     let new_b = proof.b.mul(r1) + (vk.delta_g2 + vk.gamma_g2).mul(r1 * &r2);
 
     let a_r2 = proof.a.mul(r2).into_affine();
     let new_c = proof.c + a_r2;
 
-    // Distribute r2*A across d1 and d2
     let a_r3 = proof.a.mul(r3).into_affine();
     let a_r4 = proof.a.mul(r4).into_affine();
+    let a_r5 = proof.a.mul(r5).into_affine();
 
     let new_d1 = proof.d1 + a_r3;
     let new_d2 = proof.d2 + a_r4;
+    let new_d3 = proof.d3 + a_r5;
 
     Proof {
         a: new_a.into_affine(),
@@ -571,19 +626,23 @@ where
         c: new_c.into_affine(),
         d1: new_d1.into_affine(),
         d2: new_d2.into_affine(),
+        d3: new_d3.into_affine(),
     }
 }
 
-/// Rerandomize proof. Keeps D1, D2 valid commitments by adjusting based on v changes.
+/// Rerandomize proof. Keeps D1, D2, D3 valid commitments by adjusting based on v changes.
 pub fn rerandomize_proof_1<E, R>(
     proof: &Proof<E>,
     old_v1: E::ScalarField,
     new_v1: E::ScalarField,
     old_v2: E::ScalarField,
     new_v2: E::ScalarField,
+    old_v3: E::ScalarField,
+    new_v3: E::ScalarField,
     vk: &VerifyingKey<E>,
     eta1_delta_inv_g1: &E::G1Affine,
     eta2_delta_inv_g1: &E::G1Affine,
+    eta3_delta_inv_g1: &E::G1Affine,
     rng: &mut R,
 ) -> Proof<E>
 where
@@ -600,17 +659,17 @@ where
     let new_b = proof.b.mul(r1) + vk.delta_g2.mul(r1 * &r2);
     let a_r2 = proof.a.mul(r2).into_affine();
 
-    // Update C with both v1 and v2 diffs
+    // Update C with v1, v2, v3 diffs
     let mut new_c_group = proof.c + a_r2;
     new_c_group += eta1_delta_inv_g1.mul(old_v1 - new_v1);
     new_c_group += eta2_delta_inv_g1.mul(old_v2 - new_v2);
+    new_c_group += eta3_delta_inv_g1.mul(old_v3 - new_v3);
     let new_c = new_c_group.into_affine();
 
-    // Update D1
+    // Update D1, D2, D3
     let new_d1 = (proof.d1 + vk.eta1_gamma_inv_g1.mul(new_v1 - old_v1)).into_affine();
-
-    // Update D2
     let new_d2 = (proof.d2 + vk.eta2_gamma_inv_g1.mul(new_v2 - old_v2)).into_affine();
+    let new_d3 = (proof.d3 + vk.eta3_gamma_inv_g1.mul(new_v3 - old_v3)).into_affine();
 
     Proof {
         a: new_a.into_affine(),
@@ -618,6 +677,7 @@ where
         c: new_c,
         d1: new_d1,
         d2: new_d2,
+        d3: new_d3,
     }
 }
 

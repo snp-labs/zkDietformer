@@ -27,6 +27,7 @@ pub fn generate_random_parameters_incl_cp_link<E, C, R>(
     link_gens: LinkPublicGenerators<E>,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKeyWithLink<E>>
 where
@@ -39,6 +40,7 @@ where
         link_gens,
         committed_witness_indices_1,
         committed_witness_indices_2,
+        committed_witness_indices_3,
         rng,
     )
 }
@@ -49,6 +51,7 @@ pub fn generate_random_parameters<E, C, R>(
     circuit: C,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKey<E>>
 where
@@ -60,6 +63,7 @@ where
         circuit,
         committed_witness_indices_1,
         committed_witness_indices_2,
+        committed_witness_indices_3,
         rng,
     )
 }
@@ -69,6 +73,7 @@ pub fn generate_random_parameters_with_reduction<E, C, R, QAP>(
     circuit: C,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKey<E>>
 where
@@ -77,8 +82,7 @@ where
     R: Rng,
     QAP: R1CStoQAP,
 {
-    // Modified: Generate eta1, eta2
-    let (alpha, beta, gamma, delta, eta1, eta2, g1_generator, g2_generator) =
+    let (alpha, beta, gamma, delta, eta1, eta2, eta3, g1_generator, g2_generator) =
         generate_randomness::<E, R>(rng);
 
     generate_parameters_with_qap::<E, C, R, QAP>(
@@ -89,10 +93,12 @@ where
         delta,
         eta1,
         eta2,
+        eta3,
         g1_generator,
         g2_generator,
         committed_witness_indices_1,
         committed_witness_indices_2,
+        committed_witness_indices_3,
         rng,
     )
 }
@@ -103,6 +109,7 @@ pub fn generate_random_parameters_incl_cp_link_with_reduction<E, C, R, QAP>(
     link_gens: LinkPublicGenerators<E>,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKeyWithLink<E>>
 where
@@ -111,8 +118,7 @@ where
     R: Rng,
     QAP: R1CStoQAP,
 {
-    // Modified: Generate eta1, eta2
-    let (alpha, beta, gamma, delta, eta1, eta2, g1_generator, g2_generator) =
+    let (alpha, beta, gamma, delta, eta1, eta2, eta3, g1_generator, g2_generator) =
         generate_randomness::<E, R>(rng);
 
     generate_parameters_incl_cp_link_with_qap::<E, C, R, QAP>(
@@ -123,11 +129,13 @@ where
         delta,
         eta1,
         eta2,
+        eta3,
         g1_generator,
         g2_generator,
         link_gens,
         committed_witness_indices_1,
         committed_witness_indices_2,
+        committed_witness_indices_3,
         rng,
     )
 }
@@ -139,13 +147,15 @@ pub fn generate_parameters_incl_cp_link_with_qap<E, C, R, QAP>(
     beta: E::ScalarField,
     gamma: E::ScalarField,
     delta: E::ScalarField,
-    eta1: E::ScalarField, // Modified
-    eta2: E::ScalarField, // Modified
+    eta1: E::ScalarField,
+    eta2: E::ScalarField,
+    eta3: E::ScalarField,
     g1_generator: E::G1,
     g2_generator: E::G2,
     link_gens: LinkPublicGenerators<E>,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKeyWithLink<E>>
 where
@@ -163,10 +173,12 @@ where
             delta,
             eta1,
             eta2,
+            eta3,
             g1_generator,
             g2_generator,
             committed_witness_indices_1,
             committed_witness_indices_2,
+            committed_witness_indices_3,
             rng,
         )?;
 
@@ -227,10 +239,12 @@ pub fn generate_parameters_with_qap<E, C, R, QAP>(
     delta: E::ScalarField,
     eta1: E::ScalarField,
     eta2: E::ScalarField,
+    eta3: E::ScalarField,
     g1_generator: E::G1,
     g2_generator: E::G2,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<ProvingKey<E>>
 where
@@ -247,10 +261,12 @@ where
         delta,
         eta1,
         eta2,
+        eta3,
         g1_generator,
         g2_generator,
         committed_witness_indices_1,
         committed_witness_indices_2,
+        committed_witness_indices_3,
         rng,
     )?;
     Ok(pk)
@@ -266,10 +282,12 @@ fn generate_parameters_and_extra_info_with_qap<E, C, R, QAP>(
     delta: E::ScalarField,
     eta1: E::ScalarField, // For Group 1
     eta2: E::ScalarField, // For Group 2
+    eta3: E::ScalarField, // For Group 3 (Aux)
     g1_generator: E::G1,
     g2_generator: E::G2,
     committed_witness_indices_1: &[u32],
     committed_witness_indices_2: &[u32],
+    committed_witness_indices_3: &[u32],
     rng: &mut R,
 ) -> Result<(ProvingKey<E>, usize)>
 where
@@ -282,6 +300,7 @@ where
 
     let commit_witness_count_1 = committed_witness_indices_1.len() as u32;
     let commit_witness_count_2 = committed_witness_indices_2.len() as u32;
+    let commit_witness_count_3 = committed_witness_indices_3.len() as u32;
 
     let setup_time = start_timer!(|| "Groth16::Generator");
     let cs = ConstraintSystem::new_ref();
@@ -304,19 +323,19 @@ where
 
     let num_instance_variables = cs.num_instance_variables();
     let num_witnesses = cs.num_witness_variables();
-    // Check if we have enough witnesses for both groups
-    if num_witnesses < (commit_witness_count_1 + commit_witness_count_2) as usize {
+    // Check if we have enough witnesses for all groups
+    let total_committed = (commit_witness_count_1 + commit_witness_count_2 + commit_witness_count_3) as usize;
+    if num_witnesses < total_committed {
         return Err(
             crate::cc_snark::legogroth16::error::Error::InsufficientWitnessesForCommitment(
                 num_witnesses,
-                (commit_witness_count_1 + commit_witness_count_2) as usize,
+                total_committed,
             ),
         );
     }
 
-    // n = number of gamma_abc entries = Public + Group 1 + Group 2
-    let n =
-        num_instance_variables + commit_witness_count_1 as usize + commit_witness_count_2 as usize;
+    // n = number of gamma_abc entries = Public + Group 1 + Group 2 + Group 3
+    let n = num_instance_variables + total_committed;
 
     let reduction_time = start_timer!(|| "R1CS to QAP Instance Map with Evaluation");
     let (a, b, c, zt, _qap_num_variables, m_raw) = LibsnarkReduction::instance_map_with_evaluation::<
@@ -329,13 +348,16 @@ where
     let delta_inverse = delta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
 
     // Build gamma_abc using index-based selection:
-    // [public variables (0..num_pub)] ++ [d1 witness indices] ++ [d2 witness indices]
+    // [public variables (0..num_pub)] ++ [d1 witness indices] ++ [d2 witness indices] ++ [d3 witness indices]
     let num_pub = num_instance_variables;
     let mut gamma_abc_var_indices: Vec<usize> = (0..num_pub).collect();
     for &idx in committed_witness_indices_1 {
         gamma_abc_var_indices.push(num_pub + idx as usize);
     }
     for &idx in committed_witness_indices_2 {
+        gamma_abc_var_indices.push(num_pub + idx as usize);
+    }
+    for &idx in committed_witness_indices_3 {
         gamma_abc_var_indices.push(num_pub + idx as usize);
     }
 
@@ -346,6 +368,7 @@ where
     // l_query: only uncommitted witness variables (in ascending index order)
     let committed_set: HashSet<u32> = committed_witness_indices_1.iter()
         .chain(committed_witness_indices_2.iter())
+        .chain(committed_witness_indices_3.iter())
         .copied().collect();
 
     let l_scalars: Vec<_> = (0..num_witnesses)
@@ -430,13 +453,15 @@ where
     let gamma_g2 = g2_generator.mul_bigint(gamma.into_bigint());
     end_timer!(verifying_key_time);
 
-    // --- Modified Section: Calculate eta*gamma^-1 for both groups ---
+    // --- Modified Section: Calculate eta*gamma^-1 for all groups ---
     let eta1_gamma_inv_g1 = g1_generator.mul_bigint((eta1 * &gamma_inverse).into_bigint());
     let eta2_gamma_inv_g1 = g1_generator.mul_bigint((eta2 * &gamma_inverse).into_bigint());
+    let eta3_gamma_inv_g1 = g1_generator.mul_bigint((eta3 * &gamma_inverse).into_bigint());
 
     let gamma_abc_g1_affine = gamma_abc_g1;
     let eta1_gamma_inv_g1_affine = eta1_gamma_inv_g1.into_affine();
     let eta2_gamma_inv_g1_affine = eta2_gamma_inv_g1.into_affine();
+    let eta3_gamma_inv_g1_affine = eta3_gamma_inv_g1.into_affine();
 
     let vk = VerifyingKey::<E> {
         alpha_g1: alpha_g1.into_affine(),
@@ -444,12 +469,15 @@ where
         gamma_g2: gamma_g2.into_affine(),
         delta_g2: delta_g2.into_affine(),
         gamma_abc_g1: gamma_abc_g1_affine,
-        eta1_gamma_inv_g1: eta1_gamma_inv_g1_affine, // Set
-        eta2_gamma_inv_g1: eta2_gamma_inv_g1_affine, // Set
-        commit_witness_count_1,                      // Set
-        commit_witness_count_2,                      // Set
+        eta1_gamma_inv_g1: eta1_gamma_inv_g1_affine,
+        eta2_gamma_inv_g1: eta2_gamma_inv_g1_affine,
+        eta3_gamma_inv_g1: eta3_gamma_inv_g1_affine,
+        commit_witness_count_1,
+        commit_witness_count_2,
+        commit_witness_count_3,
         committed_witness_indices_1: committed_witness_indices_1.to_vec(),
         committed_witness_indices_2: committed_witness_indices_2.to_vec(),
+        committed_witness_indices_3: committed_witness_indices_3.to_vec(),
     };
 
     let batch_normalization_time = start_timer!(|| "Convert proving key elements to affine");
@@ -461,15 +489,17 @@ where
     end_timer!(batch_normalization_time);
     end_timer!(setup_time);
 
-    // --- Modified Section: Calculate eta*delta^-1 for both groups ---
+    // --- Modified Section: Calculate eta*delta^-1 for all groups ---
     let eta1_delta_inv_g1 = g1_generator.mul_bigint((eta1 * &delta_inverse).into_bigint());
     let eta2_delta_inv_g1 = g1_generator.mul_bigint((eta2 * &delta_inverse).into_bigint());
+    let eta3_delta_inv_g1 = g1_generator.mul_bigint((eta3 * &delta_inverse).into_bigint());
 
     let common = ProvingKeyCommon {
         beta_g1: beta_g1.into_affine(),
         delta_g1: delta_g1.into_affine(),
-        eta1_delta_inv_g1: eta1_delta_inv_g1.into_affine(), // Set
-        eta2_delta_inv_g1: eta2_delta_inv_g1.into_affine(), // Set
+        eta1_delta_inv_g1: eta1_delta_inv_g1.into_affine(),
+        eta2_delta_inv_g1: eta2_delta_inv_g1.into_affine(),
+        eta3_delta_inv_g1: eta3_delta_inv_g1.into_affine(),
         a_query,
         b_g1_query,
         b_g2_query,
@@ -488,7 +518,8 @@ fn generate_randomness<E, R>(
     E::ScalarField,
     E::ScalarField,
     E::ScalarField,
-    E::ScalarField, // Added eta2
+    E::ScalarField,
+    E::ScalarField, // eta3
     E::G1,
     E::G2,
 )
@@ -500,8 +531,9 @@ where
     let beta = E::ScalarField::rand(rng);
     let gamma = E::ScalarField::rand(rng);
     let delta = E::ScalarField::rand(rng);
-    let eta1 = E::ScalarField::rand(rng); // eta1
-    let eta2 = E::ScalarField::rand(rng); // eta2
+    let eta1 = E::ScalarField::rand(rng);
+    let eta2 = E::ScalarField::rand(rng);
+    let eta3 = E::ScalarField::rand(rng);
 
     let g1_generator = E::G1::rand(rng);
     let g2_generator = E::G2::rand(rng);
@@ -513,6 +545,7 @@ where
         delta,
         eta1,
         eta2,
+        eta3,
         g1_generator,
         g2_generator,
     )

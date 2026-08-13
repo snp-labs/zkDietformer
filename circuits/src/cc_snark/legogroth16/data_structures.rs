@@ -19,6 +19,8 @@ pub struct Proof<E: Pairing> {
     pub d1: E::G1Affine,
     /// The `D2` element in `G1`. Commits to the second subset of private inputs (Group 2)
     pub d2: E::G1Affine,
+    /// The `D3` element in `G1`. Commits to the third subset of private inputs (Group 3 / Aux)
+    pub d3: E::G1Affine,
     // ------------------------
 }
 
@@ -40,6 +42,7 @@ impl<E: Pairing> Default for Proof<E> {
             c: E::G1Affine::default(),
             d1: E::G1Affine::default(), // Modified
             d2: E::G1Affine::default(), // Modified
+            d3: E::G1Affine::default(), // Modified
         }
     }
 }
@@ -76,16 +79,22 @@ pub struct VerifyingKey<E: Pairing> {
     pub eta1_gamma_inv_g1: E::G1Affine,
     /// The element `eta2 * gamma^-1 * G` in `E::G1` (For Group 2).
     pub eta2_gamma_inv_g1: E::G1Affine,
+    /// The element `eta3 * gamma^-1 * G` in `E::G1` (For Group 3 / Aux).
+    pub eta3_gamma_inv_g1: E::G1Affine,
 
     /// No of witness to commit in Group 1
     pub commit_witness_count_1: u32,
     /// No of witness to commit in Group 2
     pub commit_witness_count_2: u32,
+    /// No of witness to commit in Group 3 (Aux)
+    pub commit_witness_count_3: u32,
 
     /// Actual witness indices for Group 1 (d1)
     pub committed_witness_indices_1: Vec<u32>,
     /// Actual witness indices for Group 2 (d2)
     pub committed_witness_indices_2: Vec<u32>,
+    /// Actual witness indices for Group 3 (d3 / Aux)
+    pub committed_witness_indices_3: Vec<u32>,
     // ------------------------
 }
 
@@ -111,10 +120,13 @@ impl<E: Pairing> Default for VerifyingKey<E> {
             gamma_abc_g1: Vec::new(),
             eta1_gamma_inv_g1: E::G1Affine::default(), // Modified
             eta2_gamma_inv_g1: E::G1Affine::default(), // Modified
+            eta3_gamma_inv_g1: E::G1Affine::default(), // Modified
             commit_witness_count_1: 0,                 // Modified
             commit_witness_count_2: 0,                 // Modified
+            commit_witness_count_3: 0,                 // Modified
             committed_witness_indices_1: Vec::new(),
             committed_witness_indices_2: Vec::new(),
+            committed_witness_indices_3: Vec::new(),
         }
     }
 }
@@ -183,6 +195,8 @@ pub struct ProvingKeyCommon<E: Pairing> {
     pub eta1_delta_inv_g1: E::G1Affine,
     /// The element `eta2 * delta^-1 * G` in `E::G1` (For Group 2).
     pub eta2_delta_inv_g1: E::G1Affine,
+    /// The element `eta3 * delta^-1 * G` in `E::G1` (For Group 3 / Aux).
+    pub eta3_delta_inv_g1: E::G1Affine,
     // ------------------------
     /// The elements `a_i * G` in `E::G1`.
     pub a_query: Vec<E::G1Affine>,
@@ -224,7 +238,7 @@ pub struct LinkPublicGenerators<E: Pairing> {
 
 impl<E: Pairing> VerifyingKey<E> {
     pub fn num_public_inputs(&self) -> u32 {
-        self.gamma_abc_g1.len() as u32 - self.commit_witness_count_1 - self.commit_witness_count_2
+        self.gamma_abc_g1.len() as u32 - self.commit_witness_count_1 - self.commit_witness_count_2 - self.commit_witness_count_3
     }
 
     pub fn num_committed_witnesses_1(&self) -> u32 {
@@ -233,6 +247,10 @@ impl<E: Pairing> VerifyingKey<E> {
 
     pub fn num_committed_witnesses_2(&self) -> u32 {
         self.commit_witness_count_2
+    }
+
+    pub fn num_committed_witnesses_3(&self) -> u32 {
+        self.commit_witness_count_3
     }
 
     /// Get the commitment key for Group 1 witnesses (used for d1)
@@ -252,6 +270,16 @@ impl<E: Pairing> VerifyingKey<E> {
         let mut key = Vec::with_capacity(self.commit_witness_count_2 as usize + 1);
         key.extend_from_slice(&self.gamma_abc_g1[start as usize..end as usize]);
         key.push(self.eta2_gamma_inv_g1);
+        key
+    }
+
+    /// Get the commitment key for Group 3 witnesses (used for d3 / aux)
+    pub fn get_commitment_key_for_witnesses_3(&self) -> Vec<E::G1Affine> {
+        let start = self.num_public_inputs() + self.commit_witness_count_1 + self.commit_witness_count_2;
+        let end = start + self.commit_witness_count_3;
+        let mut key = Vec::with_capacity(self.commit_witness_count_3 as usize + 1);
+        key.extend_from_slice(&self.gamma_abc_g1[start as usize..end as usize]);
+        key.push(self.eta3_gamma_inv_g1);
         key
     }
 }

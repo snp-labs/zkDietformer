@@ -76,6 +76,40 @@ where
     d2.into_affine()
 }
 
+/// Compute `cm3 = proof.d3` from committed witnesses (Group 3 / Aux) and blinding `v3`, using vk's commitment bases.
+/// `public_inputs_count` is the number of public inputs.
+pub fn cm_aux_from_vk<E: Pairing>(
+    vk: &VerifyingKey<E>,
+    public_inputs_count: usize,
+    committed_aux: &[E::ScalarField],
+    v3: &E::ScalarField,
+) -> E::G1Affine
+where
+    E::ScalarField: PrimeField,
+{
+    let scalars = committed_aux
+        .iter()
+        .map(|s| s.into_bigint())
+        .collect::<Vec<_>>();
+
+    // Group 3 bases start after Public Inputs + Group 1 + Group 2
+    let group1_count = vk.commit_witness_count_1 as usize;
+    let group2_count = vk.commit_witness_count_2 as usize;
+
+    let start = 1 + public_inputs_count + group1_count + group2_count;
+    let end = start + scalars.len();
+
+    if end > vk.gamma_abc_g1.len() {
+        panic!("cm_aux_from_vk: Not enough bases in vk.gamma_abc_g1 for Group 3 (Aux)");
+    }
+
+    let bases = &vk.gamma_abc_g1[start..end];
+
+    let mut d3 = E::G1::msm_bigint(bases, &scalars);
+    d3.add_assign(vk.eta3_gamma_inv_g1.mul_bigint(v3.into_bigint()));
+    d3.into_affine()
+}
+
 /// Derive r_vec of length `len` from cm.
 /// r[i] = SHA3-256( "freivalds-r-v1/expand" || seed || i ) mapped into the scalar field,
 /// where seed = SHA3-256( "freivalds-r-v1" || serialize(cm) ).
@@ -187,6 +221,52 @@ where
     E::ScalarField::from_le_bytes_mod_order(&digest)
 }
 
+/// Multi-commitment Fiat-Shamir challenge (v3) — includes cm_aux for Freivalds binding.
+/// `r = H("zkdiet-fs-v3" || c_W || cm1 || cm2 || cm_aux || input_hash || output_hash)`.
+/// cm_aux binds Freivalds-constrained intermediates (Q, K, V, Z*, Y) separately from
+/// the global weight commitment c_W, preserving c_W's reusability across proofs.
+pub fn hash_commitments_to_field_v3<E: Pairing>(
+    c_w: &E::G1Affine,
+    cm_lk: &E::G1Affine,
+    cm_w: &E::G1Affine,
+    cm_aux: &E::G1Affine,
+    input_hash: &E::ScalarField,
+    output_hash: &E::ScalarField,
+) -> E::ScalarField
+where
+    E::ScalarField: PrimeField,
+{
+    let mut hasher = Sha3_256::new();
+    <Sha3_256 as Input>::input(&mut hasher, b"zkdiet-fs-v3");
+
+    let mut buf = Vec::new();
+    c_w.serialize_compressed(&mut buf).expect("serialize c_w");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    cm_lk.serialize_compressed(&mut buf).expect("serialize cm_lk");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    cm_w.serialize_compressed(&mut buf).expect("serialize cm_w");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    cm_aux.serialize_compressed(&mut buf).expect("serialize cm_aux");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    input_hash.serialize_compressed(&mut buf).expect("serialize input_hash");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    output_hash.serialize_compressed(&mut buf).expect("serialize output_hash");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    let digest = hasher.result();
+    E::ScalarField::from_le_bytes_mod_order(&digest)
+}
+
 /// Extract witness indices from committed FpVar slices.
 /// Each FpVar must be an allocated Witness variable.
 pub fn extract_witness_indices<F: PrimeField>(vars: &[FpVar<F>]) -> Vec<u32> {
@@ -197,4 +277,91 @@ pub fn extract_witness_indices<F: PrimeField>(vars: &[FpVar<F>]) -> Vec<u32> {
         },
         _ => panic!("Expected allocated FpVar, got Constant"),
     }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::{Bn254, Fr, G1Projective};
+    use ark_std::{UniformRand, rand::{SeedableRng, rngs::StdRng}};
+
+    type E = Bn254;
+
+    /// Test B: FS hash (v3) changes when cm_aux changes, even if all other inputs are identical.
+    /// This validates that Freivalds-constrained intermediates are bound before r derivation.
+    #[test]
+    fn test_fs_hash_v3_reflects_aux_commitment() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        // Fixed commitments (c_W, cm1, cm2, hashes)
+        let c_w = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let cm1 = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let cm2 = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let input_hash = Fr::rand(&mut rng);
+        let output_hash = Fr::rand(&mut rng);
+
+        // Two different aux commitments (simulating honest vs tampered intermediates)
+        let cm_aux_honest = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let cm_aux_tampered = <E as Pairing>::G1::rand(&mut rng).into_affine();
+
+        let r1 = hash_commitments_to_field_v3::<E>(
+            &c_w, &cm1, &cm2, &cm_aux_honest, &input_hash, &output_hash,
+        );
+        let r2 = hash_commitments_to_field_v3::<E>(
+            &c_w, &cm1, &cm2, &cm_aux_tampered, &input_hash, &output_hash,
+        );
+
+        assert_ne!(r1, r2, "FS challenge must change when cm_aux changes");
+    }
+
+    /// Verify that cm_aux is computed independently from c_W.
+    /// Changing aux values doesn't affect c_W (preserving global reusability).
+    #[test]
+    fn test_cm_aux_independent_from_cw() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        // Shared weights
+        let weights: Vec<Fr> = (0..10).map(|_| Fr::rand(&mut rng)).collect();
+        let ck_w = generate_global_ck::<E, _>(weights.len(), &mut rng);
+        let o_w = Fr::rand(&mut rng);
+        let c_w = commit_global::<E>(&ck_w, &weights, &o_w);
+
+        // Two different aux vectors
+        let aux1: Vec<Fr> = (0..5).map(|_| Fr::rand(&mut rng)).collect();
+        let aux2: Vec<Fr> = (0..5).map(|_| Fr::rand(&mut rng)).collect();
+
+        let ck_aux = generate_global_ck::<E, _>(5, &mut rng);
+        let o_aux = Fr::rand(&mut rng);
+        let cm_aux1 = commit_global::<E>(&ck_aux, &aux1, &o_aux);
+        let cm_aux2 = commit_global::<E>(&ck_aux, &aux2, &o_aux);
+
+        // c_W unchanged regardless of aux
+        let c_w2 = commit_global::<E>(&ck_w, &weights, &o_w);
+        assert_eq!(c_w, c_w2, "c_W must be unchanged by different aux");
+
+        // But cm_aux differs
+        assert_ne!(cm_aux1, cm_aux2, "cm_aux must differ for different intermediates");
+    }
+
+    /// Verify v2 and v3 hash produce different challenges (domain separation).
+    #[test]
+    fn test_fs_v2_v3_domain_separation() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let c_w = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let cm1 = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let cm2 = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let cm_aux = <E as Pairing>::G1::rand(&mut rng).into_affine();
+        let input_hash = Fr::rand(&mut rng);
+        let output_hash = Fr::rand(&mut rng);
+
+        let r_v2 = hash_commitments_to_field::<E>(
+            &c_w, &cm1, &cm2, &input_hash, &output_hash,
+        );
+        let r_v3 = hash_commitments_to_field_v3::<E>(
+            &c_w, &cm1, &cm2, &cm_aux, &input_hash, &output_hash,
+        );
+
+        assert_ne!(r_v2, r_v3, "v2 and v3 must produce different challenges (domain separation)");
+    }
 }
