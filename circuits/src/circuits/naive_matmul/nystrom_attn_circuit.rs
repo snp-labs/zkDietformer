@@ -38,6 +38,8 @@ use crate::{
 };
 use crate::lasso::subtables::softmax::set_softmax_table_dir;
 use crate::circuits::proof_size;
+use crate::circuits::freivalds_matmul::model_integrated_circuit::ConvBundle;
+use crate::gadgets::activation::gelu::split_remainder_and_push;
 
 type G1 = G1Projective;
 
@@ -51,6 +53,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let inner = self.0;
         inner.committed_vars.borrow_mut().clear();
         inner.committed_vars_2.borrow_mut().clear();
+        inner.committed_vars_aux.borrow_mut().clear();
 
         // Public input: Fiat-Shamir challenge (kept for interface compatibility)
         let _r_var = FpVar::new_input(cs.clone(), || Ok(inner.r_challenge))?;
@@ -145,13 +148,52 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &inner.proj_o.q_out_proj);
         let proj_o_r = new_matrix_witness_4d(cs.clone(), &inner.proj_o.r_out_proj);
 
-        // O-projection input: separate witness needed because conv processing
-        // transforms matmul_x output (Q_sim_x) before O-proj.
-        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = inner.q_attn_output.iter().map(|batch| {
-            batch.iter().map(|seq| {
-                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
-            }).collect()
-        }).collect();
+        // === Conv allocation & O-proj input derivation ===
+        let (q_t_conv_vars, q_conv_vars, r_conv_vars, q_xf_vars, r_xf_vars, attn_output_vars) =
+        if let Some(ref conv) = inner.conv {
+            let q_t_conv_vars: Vec<Vec<Vec<FpVar<F>>>> = conv.q_t_conv.iter().map(|head| {
+                head.iter().map(|row| {
+                    row.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+                }).collect()
+            }).collect();
+            // d2: commit Toeplitz weights
+            {
+                let mut vars_2 = inner.committed_vars_2.borrow_mut();
+                for head in &q_t_conv_vars { for row in head { vars_2.extend(row.iter().cloned()); } }
+            }
+            let q_conv_vars = new_matrix_witness_4d(cs.clone(), &conv.q_conv);
+            let r_conv_vars = new_matrix_witness_4d(cs.clone(), &conv.r_conv);
+            let q_xf_vars = new_matrix_witness_4d(cs.clone(), &conv.q_xf);
+            let r_xf_vars = new_matrix_witness_4d(cs.clone(), &conv.r_xf);
+            // aux: commit Q_conv and Q_xf
+            {
+                let mut vars_aux = inner.committed_vars_aux.borrow_mut();
+                for b in &q_conv_vars { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+                for b in &q_xf_vars { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+            }
+            // Derive attn_output_vars from Q_xf via reshape: [B][H][S][D] → [B][S][H*D]
+            let attn_output: Vec<Vec<Vec<FpVar<F>>>> = {
+                let num_h = q_xf_vars[0].len();
+                let head_dim = q_xf_vars[0][0][0].len();
+                q_xf_vars.iter().map(|batch| {
+                    let seq_len = batch[0].len();
+                    (0..seq_len).map(|s| {
+                        (0..num_h * head_dim).map(|hd| {
+                            batch[hd / head_dim][s][hd % head_dim].clone()
+                        }).collect()
+                    }).collect()
+                }).collect()
+            };
+            (Some(q_t_conv_vars), Some(q_conv_vars), Some(r_conv_vars), Some(q_xf_vars), Some(r_xf_vars), attn_output)
+        } else {
+            // No conv: allocate from q_attn_output witness directly
+            let attn_output: Vec<Vec<Vec<FpVar<F>>>> = inner.q_attn_output.iter().map(|batch| {
+                batch.iter().map(|seq| {
+                    seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
+                }).collect()
+            }).collect();
+            (None, None, None, None, None, attn_output)
+        };
 
         let mut global_proj_q_lows = Vec::new(); let mut global_proj_q_highs = Vec::new();
         let mut global_proj_k_lows = Vec::new(); let mut global_proj_k_highs = Vec::new();
@@ -169,6 +211,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
         let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
         let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
         let mut global_k3_lows = Vec::new(); let mut global_k3_highs = Vec::new();
+        // Conv remainder pools
+        let mut global_conv_lows = Vec::new(); let mut global_conv_highs = Vec::new();
+        let mut global_xf_lows = Vec::new(); let mut global_xf_highs = Vec::new();
 
         let mut global_sm1_idx = Vec::new();
         let mut global_sm1_r_sm = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
@@ -628,6 +673,57 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
                 )?;
                 global_x_lows.extend(h_x_lows); global_x_highs.extend(h_x_highs);
 
+                // === Conv: Q_conv = Toeplitz(W_conv_h) @ V_h, then rescaled addition ===
+                if let Some(ref conv) = inner.conv {
+                    let q_t_h = q_t_conv_vars.as_ref().unwrap();
+                    let q_conv_v = q_conv_vars.as_ref().unwrap();
+                    let r_conv_v = r_conv_vars.as_ref().unwrap();
+                    let q_xf_v = q_xf_vars.as_ref().unwrap();
+                    let r_xf_v = r_xf_vars.as_ref().unwrap();
+
+                    // Conv naive matmul: T_h[S×S] @ V[S×D] = Q_conv[S×D]
+                    let conv_params = ZenParams {
+                        m: FpVar::Constant(conv.m_conv),
+                        m_prime: FpVar::Constant(conv.m_prime_conv),
+                        z_w: FpVar::Constant(conv.z_t_conv),
+                        z_x: FpVar::Constant(inner.z_v),
+                        z_y: FpVar::Constant(conv.z_conv_out),
+                        two_k: two_k_var.clone(),
+                    };
+                    let mut h_conv_lows = Vec::new(); let mut h_conv_highs = Vec::new();
+                    enforce_naive_matmul(
+                        cs.clone(), &q_t_h[h], &v_proc[b][h],
+                        &q_conv_v[b][h], &r_conv_v[b][h],
+                        &conv.r_conv[b][h],
+                        &conv_params,
+                        &mut h_conv_lows, &mut h_conv_highs,
+                        None,
+                    )?;
+                    global_conv_lows.extend(h_conv_lows); global_conv_highs.extend(h_conv_highs);
+
+                    // Rescaled addition: Q_xf * 2^k + R_xf = M_add_x*(Ỹ-z) + M_add_conv*(Q_conv-z) + z_xf*2^k
+                    let m_add_x_const = FpVar::Constant(conv.m_add_x);
+                    let m_add_conv_const = FpVar::Constant(conv.m_add_conv);
+                    let z_sim_x_const = FpVar::Constant(inner.matmul_x.z_sim);
+                    let z_conv_out_const = FpVar::Constant(conv.z_conv_out);
+                    let z_xf_two_k = FpVar::Constant(conv.z_xf) * &two_k_var;
+                    for s in 0..q_xf_v[b][h].len() {
+                        for d in 0..q_xf_v[b][h][s].len() {
+                            let lhs = &q_xf_v[b][h][s][d] * &two_k_var + &r_xf_v[b][h][s][d];
+                            let rhs = &m_add_x_const * (&x_data.q_sim[b][h][s][d] - &z_sim_x_const)
+                                    + &m_add_conv_const * (&q_conv_v[b][h][s][d] - &z_conv_out_const)
+                                    + &z_xf_two_k;
+                            lhs.enforce_equal(&rhs)?;
+
+                            let (low, high) = split_remainder_and_push(
+                                cs.clone(), &r_xf_v[b][h][s][d], conv.r_xf[b][h][s][d]
+                            )?;
+                            global_xf_lows.push(low);
+                            global_xf_highs.push(high);
+                        }
+                    }
+                }
+
                 // === O Projection: O = attn_output @ W_o_h^T + b_o_h ===
                 // Uses q_attn_output witness (post-conv) as input.
                 {
@@ -681,6 +777,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuitNot<F> {
             final_vars.extend(global_temp_lows); final_vars.extend(global_temp_highs);
             final_vars.extend(global_mid_lows); final_vars.extend(global_mid_highs);
             final_vars.extend(global_x_lows); final_vars.extend(global_x_highs);
+            // Conv remainders (only non-empty when conv exists)
+            final_vars.extend(global_conv_lows); final_vars.extend(global_conv_highs);
+            final_vars.extend(global_xf_lows); final_vars.extend(global_xf_highs);
             // Projection remainders
             final_vars.extend(global_proj_q_lows); final_vars.extend(global_proj_q_highs);
             final_vars.extend(global_proj_k_lows); final_vars.extend(global_proj_k_highs);
