@@ -741,6 +741,9 @@ where
             groth16: Groth16Metrics {
                 setup_ms: setup_time.as_millis(),
                 commit_ms: groth16_commit_ms,
+                cm1_ms: groth16_commit_ms,
+                cm2_ms: 0,
+                cm_aux_ms: 0,
                 prove_ms: groth16_prove_time.as_millis(),
                 verify_ms: groth16_verify_time.as_millis(),
                 proof_size_bytes: proof_size,
@@ -964,6 +967,9 @@ where
             groth16: Groth16Metrics {
                 setup_ms: setup_time.as_millis(),
                 commit_ms: groth16_commit_ms,
+                cm1_ms: groth16_commit_ms,
+                cm2_ms: 0,
+                cm_aux_ms: 0,
                 prove_ms: groth16_prove_time.as_millis(),
                 verify_ms: groth16_verify_time.as_millis(),
                 proof_size_bytes: proof_size,

@@ -50,7 +50,7 @@ use crate::{
     },
     util::{
         norm_detect::NormType,
-        utils::{cm1_from_vk, cm2_from_vk, generate_global_ck, commit_global, hash_commitments_to_field},
+        utils::{cm1_from_vk, cm2_from_vk, cm_aux_from_vk, generate_global_ck, commit_global, hash_commitments_to_field_v3},
     },
 };
 use crate::lasso::subtables::softmax::set_softmax_table_dir;
@@ -81,29 +81,35 @@ pub struct BlockIntegratedCircuit<F: PrimeField> {
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
     /// d2: Q, K, V raw values (CP-Link non-target)
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
+    /// d3: Freivalds-constrained intermediates (Q, K, V, Z*, temp, mid, x) —
+    /// committed as cm_aux and included in FS hash v3.
+    pub committed_vars_aux: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for BlockIntegratedCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
         self.committed_vars_2.borrow_mut().clear();
+        self.committed_vars_aux.borrow_mut().clear();
 
         // Single public input: Fiat-Shamir challenge
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
 
-        // Attention constraints (push to d1 + d2)
+        // Attention constraints (push to d1 + d2 + d3)
         match &self.attn {
             AttnWitness::Nystrom(w) => {
                 generate_nystrom_attn_constraints(
                     cs.clone(), w, &r_var, &two_k_var,
                     &self.committed_vars, &self.committed_vars_2,
+                    &self.committed_vars_aux,
                 )?;
             }
             AttnWitness::Bert(w) => {
                 generate_bert_attn_constraints(
                     cs.clone(), w, &r_var, &two_k_var,
                     &self.committed_vars, &self.committed_vars_2,
+                    &self.committed_vars_aux,
                 )?;
             }
         }
@@ -171,6 +177,7 @@ where
         r_challenge: E::ScalarField::zero(),
         committed_vars: Rc::new(RefCell::new(Vec::new())),
         committed_vars_2: Rc::new(RefCell::new(Vec::new())),
+        committed_vars_aux: Rc::new(RefCell::new(Vec::new())),
     })
 }
 
@@ -216,25 +223,28 @@ where
         // Load
         let circuit = load_block_integrated_circuit::<E>(&discovered, layer_idx)?;
 
-        // Dry-run → d1/d2 indices
-        let (d1_indices, d2_indices) = {
+        // Dry-run → d1/d2/d3 indices
+        let (d1_indices, d2_indices, d3_indices) = {
             let temp = load_block_integrated_circuit::<E>(&discovered, layer_idx)?;
             let v1 = Rc::clone(&temp.committed_vars);
             let v2 = Rc::clone(&temp.committed_vars_2);
+            let v3 = Rc::clone(&temp.committed_vars_aux);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
             (
                 crate::util::utils::extract_witness_indices(&v1.borrow()),
                 crate::util::utils::extract_witness_indices(&v2.borrow()),
+                crate::util::utils::extract_witness_indices(&v3.borrow()),
             )
         };
         let num_d1 = d1_indices.len() as u32;
         let num_d2 = d2_indices.len() as u32;
-        println!("  Commit counts: d1={}, d2={}", num_d1, num_d2);
+        let num_d3 = d3_indices.len() as u32;
+        println!("  Commit counts: d1={}, d2={}, d3={}", num_d1, num_d2, num_d3);
 
         // [0] Setup
         let setup_start = Instant::now();
-        let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &[], &mut rng)
+        let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &d3_indices, &mut rng)
             .map_err(|e| anyhow::anyhow!("Setup L{} failed: {:?}", layer_idx, e))?;
         let setup_time = setup_start.elapsed();
         let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -248,16 +258,30 @@ where
             .map(|v| v.value().unwrap_or(Fr::zero())).collect();
         let committed_group2: Vec<Fr> = circuit.committed_vars_2.borrow().iter()
             .map(|v| v.value().unwrap_or(Fr::zero())).collect();
-        println!("[Debug] committed_group2 total={}", committed_group2.len());
+        let committed_aux: Vec<Fr> = circuit.committed_vars_aux.borrow().iter()
+            .map(|v| v.value().unwrap_or(Fr::zero())).collect();
+        println!("[Debug] committed_group2 total={}, committed_aux total={}", committed_group2.len(), committed_aux.len());
         let num_pub = cs_witness.num_instance_variables() - 1;
 
         // Groth16 commit + Fiat-Shamir
         let v1 = Fr::rand(&mut rng);
         let v2 = Fr::rand(&mut rng);
+        let v3 = Fr::rand(&mut rng);
 
         let g16_commit_start = Instant::now();
+
+        let cm1_start = Instant::now();
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let cm1_ms = cm1_start.elapsed().as_millis();
+
+        let cm2_start = Instant::now();
         let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
+        let cm2_ms = cm2_start.elapsed().as_millis();
+
+        let cm_aux_start = Instant::now();
+        let cm_aux = cm_aux_from_vk::<E>(&params.vk, num_pub, &committed_aux, &v3);
+        let cm_aux_ms = cm_aux_start.elapsed().as_millis();
+
         let g16_commit_ms = g16_commit_start.elapsed().as_millis();
 
         // ── Global weight commitment c_W ─────────────────────────────────────
@@ -318,8 +342,8 @@ where
             AttnWitness::Bert(w) => (w.input_hash, w.output_hash),
         };
 
-        // ── Multi-commitment Fiat-Shamir challenge (v2) ──────────────────────
-        let r_fs = hash_commitments_to_field::<E>(&c_w, &cm1, &cm2, &input_hash, &output_hash);
+        // ── Multi-commitment Fiat-Shamir challenge (v3: includes cm_aux) ────
+        let r_fs = hash_commitments_to_field_v3::<E>(&c_w, &cm1, &cm2, &cm_aux, &input_hash, &output_hash);
 
         let final_circuit = BlockIntegratedCircuit {
             r_challenge: r_fs,
@@ -328,7 +352,7 @@ where
 
         // [1] Groth16 Prove
         let g16_prove_start = Instant::now();
-        let proof = create_random_proof::<E, _, _>(final_circuit.clone(), v1, v2, Fr::zero(), &params, &mut rng)
+        let proof = create_random_proof::<E, _, _>(final_circuit.clone(), v1, v2, v3, &params, &mut rng)
             .map_err(|e| anyhow::anyhow!("Proof L{} failed: {:?}", layer_idx, e))?;
         let g16_prove_time = g16_prove_start.elapsed();
 
@@ -420,9 +444,9 @@ where
         let cplink_global_report = proof_size::compute_cplink_report::<E>(&proof_link_glob, &instance_glob);
         cplink_global_report.print_log();
 
-        // ── Fiat-Shamir verification ─────────────────────────────────────────
-        let r_fs_verify = hash_commitments_to_field::<E>(
-            &c_w, &proof.d1, &proof.d2,
+        // ── Fiat-Shamir verification (v3: includes d3) ─────────────────────
+        let r_fs_verify = hash_commitments_to_field_v3::<E>(
+            &c_w, &proof.d1, &proof.d2, &proof.d3,
             &public_inputs[1], &public_inputs[2],
         );
         assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");
@@ -439,6 +463,9 @@ where
             groth16: Groth16Metrics {
                 setup_ms: setup_time.as_millis(),
                 commit_ms: g16_commit_ms,
+                cm1_ms,
+                cm2_ms,
+                cm_aux_ms,
                 prove_ms: g16_prove_time.as_millis(),
                 verify_ms: g16_verify_time.as_millis(),
                 proof_size_bytes,

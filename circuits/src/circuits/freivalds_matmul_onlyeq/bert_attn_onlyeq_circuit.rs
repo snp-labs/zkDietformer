@@ -43,7 +43,7 @@ use crate::{
         load::{to_field_2d_i64, to_field_4d_i64, to_field_4d_u64},
         bert_attn_lookup::run_bert_lasso_bundle,
         nystrom_attn_lookup::{prove_lasso_for_range_22, prove_lasso_for_range_52},
-        utils::{cm1_from_vk, hash_cm_to_field},
+        utils::{cm1_from_vk, cm_aux_from_vk, hash_cm_with_aux_to_field},
     },
 };
 use crate::lasso::subtables::softmax::set_softmax_table_dir;
@@ -87,11 +87,14 @@ pub struct BERTAttentionOnlyeqCircuit<F: PrimeField> {
 
     /// d1 committed group only
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
+    /// d3/aux group: Freivalds-constrained intermediates (Q, K, V, x=P*V)
+    pub committed_vars_aux: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionOnlyeqCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
+        self.committed_vars_aux.borrow_mut().clear();
 
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
@@ -119,6 +122,17 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BERTAttentionOnlyeqCircuit<F> {
             self.matmul_attn.alloc_and_setup(cs.clone(), self.z_q, self.z_k, &two_k_var);
         let (x_data, params_x) =
             self.matmul_x.alloc_and_setup(cs.clone(), F::zero(), self.z_v, &two_k_var);
+
+        // d3/aux: commit Freivalds-constrained intermediates
+        {
+            let mut vars_aux = self.committed_vars_aux.borrow_mut();
+            // Q, K, V [B][H][S][D]
+            for b in &q_q_vars { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+            for b in &q_k_vars { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+            for b in &q_v_vars { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+            // x=P*V [B][H][S][D]
+            for b in &x_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+        }
 
         let mask_var = new_matrix_witness(cs.clone(), &self.mask);
         let sm_vars = self.sm.alloc_vars(cs.clone())?;
@@ -349,6 +363,7 @@ where
         k_bits,
         mask: to_field_2d_i64(&mask_raw),
         committed_vars: Rc::new(RefCell::new(Vec::new())),
+        committed_vars_aux: Rc::new(RefCell::new(Vec::new())),
     })
 }
 
@@ -496,25 +511,30 @@ where
         let e2e_start = Instant::now();
         println!("\n=== [BERT Onlyeq] Processing: {:?} ===", file_path);
 
-        // Dry-run: extract d1 indices only (no d2)
-        let d1_indices = {
+        // Dry-run: extract d1 + d3 indices (no d2)
+        let (d1_indices, d3_indices) = {
             let temp = load_bert_attention_onlyeq_circuit::<E>(file_path)?;
             let v1_ptr = Rc::clone(&temp.committed_vars);
+            let vaux_ptr = Rc::clone(&temp.committed_vars_aux);
             let cs = ConstraintSystem::<Fr>::new_ref();
             temp.generate_constraints(cs)?;
-            crate::util::utils::extract_witness_indices(&v1_ptr.borrow())
+            (
+                crate::util::utils::extract_witness_indices(&v1_ptr.borrow()),
+                crate::util::utils::extract_witness_indices(&vaux_ptr.borrow()),
+            )
         };
         let num_commit_1 = d1_indices.len() as u32;
+        let num_commit_3 = d3_indices.len() as u32;
         let d2_indices: Vec<u32> = vec![];
-        println!("Commit counts: d1={}, d2=0", num_commit_1);
+        println!("Commit counts: d1={}, d2=0, d3={}", num_commit_1, num_commit_3);
 
         let sample_circuit = load_bert_attention_onlyeq_circuit::<E>(file_path)?;
 
-        // [0] Setup — d1 only
-        println!("=== [0] LegoGroth16 Setup (d1={}, d2=0) ===", num_commit_1);
+        // [0] Setup — d1 + d3
+        println!("=== [0] LegoGroth16 Setup (d1={}, d2=0, d3={}) ===", num_commit_1, num_commit_3);
         let setup_start = Instant::now();
         let params = generate_random_parameters::<E, _, _>(
-            sample_circuit.clone(), &d1_indices, &d2_indices, &[], &mut rng,
+            sample_circuit.clone(), &d1_indices, &d2_indices, &d3_indices, &mut rng,
         ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
         let setup_time = setup_start.elapsed();
         let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -531,16 +551,32 @@ where
             values
         };
 
+        let committed_aux = {
+            let vars = sample_circuit.committed_vars_aux.borrow();
+            vars.iter().map(|v| v.value().unwrap_or(Fr::zero())).collect::<Vec<Fr>>()
+        };
+        println!("[Debug] committed_aux (d3) total={}", committed_aux.len());
+
         let v1 = Fr::rand(&mut rng);
+        let v3 = Fr::rand(&mut rng);
         let num_pub = cs_witness.num_instance_variables() - 1;
 
-        // cm1 only
+        // cm1 + cm_aux (no cm2, no c_W)
         let g16_commit_start = Instant::now();
-        let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
-        let g16_commit_ms = g16_commit_start.elapsed().as_millis();
 
-        // Simple Fiat-Shamir: hash(cm1)
-        let r_fs = hash_cm_to_field::<E>(&cm1);
+        let cm1_start = Instant::now();
+        let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let cm1_ms = cm1_start.elapsed().as_millis();
+
+        let cm_aux_start = Instant::now();
+        let cm_aux = cm_aux_from_vk::<E>(&params.vk, num_pub, &committed_aux, &v3);
+        let cm_aux_ms = cm_aux_start.elapsed().as_millis();
+
+        let g16_commit_ms = g16_commit_start.elapsed().as_millis();
+        println!("[Debug] cm_aux computed (aux_len={})", committed_aux.len());
+
+        // Fiat-Shamir: hash(cm1 || cm_aux)
+        let r_fs = hash_cm_with_aux_to_field::<E>(&cm1, &cm_aux);
 
         println!("=== [1] Building circuit with Fiat-Shamir challenge ===");
         let final_circuit = BERTAttentionOnlyeqCircuit {
@@ -548,10 +584,10 @@ where
             ..sample_circuit.clone()
         };
 
-        // [1] Groth16 Prove (v2=Fr::zero(), no d2)
+        // [1] Groth16 Prove (v2=Fr::zero() no d2, v3 for d3)
         let g16_prove_start = Instant::now();
         let proof = create_random_proof::<E, _, _>(
-            final_circuit.clone(), v1, Fr::zero(), Fr::zero(), &params, &mut rng,
+            final_circuit.clone(), v1, Fr::zero(), v3, &params, &mut rng,
         ).map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
         let g16_prove_time = g16_prove_start.elapsed();
 
@@ -613,8 +649,9 @@ where
         let cplink_lasso_report = proof_size::compute_cplink_report::<E>(&proof_link_lasso, &instance_lasso);
         cplink_lasso_report.print_log();
 
-        // Fiat-Shamir verification
-        let r_fs_verify = hash_cm_to_field::<E>(&proof.d1);
+        // Fiat-Shamir verification (cm1 from d1, cm_aux from d3)
+        let cm_aux_verify = proof.d3;
+        let r_fs_verify = hash_cm_with_aux_to_field::<E>(&proof.d1, &cm_aux_verify);
         assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");
         println!("  -> [Success] Fiat-Shamir recomputation verified");
 
@@ -636,6 +673,9 @@ where
             groth16: Groth16Metrics {
                 setup_ms: setup_time.as_millis(),
                 commit_ms: g16_commit_ms,
+                cm1_ms,
+                cm2_ms: 0,
+                cm_aux_ms,
                 prove_ms: g16_prove_time.as_millis(),
                 verify_ms: g16_verify_time.as_millis(),
                 proof_size_bytes: proof_size,
@@ -655,6 +695,7 @@ where
             end_to_end_ms: e2e_time.as_millis(),
         }
         .print_json();
+
     }
     Ok(())
 }

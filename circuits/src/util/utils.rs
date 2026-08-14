@@ -159,6 +159,26 @@ where
     E::ScalarField::from_le_bytes_mod_order(&seed)
 }
 
+/// Onlyeq Fiat-Shamir challenge: `r = H("zkdiet-onlyeq-fs" || cm1 || cm_aux)`.
+/// Used by onlyeq circuits that have d1 + d3 but no d2/c_W/Poseidon.
+pub fn hash_cm_with_aux_to_field<E: Pairing>(cm1: &E::G1Affine, cm_aux: &E::G1Affine) -> E::ScalarField
+where
+    E::ScalarField: PrimeField,
+{
+    let mut hasher = Sha3_256::new();
+    <Sha3_256 as Input>::input(&mut hasher, b"zkdiet-onlyeq-fs");
+
+    let mut buf = Vec::new();
+    cm1.serialize_compressed(&mut buf).expect("serialize cm1");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    buf.clear();
+    cm_aux.serialize_compressed(&mut buf).expect("serialize cm_aux");
+    <Sha3_256 as Input>::input(&mut hasher, &buf);
+
+    E::ScalarField::from_le_bytes_mod_order(&hasher.result())
+}
+
 /// Generate a fresh global commitment key of length `n+1`: `[h_glob, g_0, ..., g_{n-1}]`.
 /// Used to commit model weights with `c_W = MSM(g_i, w_i) + o * h_glob`.
 pub fn generate_global_ck<E: Pairing, R: Rng>(n: usize, rng: &mut R) -> Vec<E::G1Affine> {

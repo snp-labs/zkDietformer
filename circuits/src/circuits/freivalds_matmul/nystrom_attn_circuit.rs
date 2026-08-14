@@ -99,7 +99,7 @@ pub struct NystromAttentionCircuit<F: PrimeField> {
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
     /// d2 group: W_Q, W_K, W_V weights — committed via v2 but NOT CP-linked to Lasso.
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
-    /// Aux group: Freivalds-constrained intermediates (Q, K, V, Z*, Y) —
+    /// Aux group: Freivalds-constrained intermediates (Q, K, V, Z*, temp=B̃V, mid=F̃Ã⁺, x=Ỹ) —
     /// committed separately as cm_aux before FS challenge derivation.
     /// NOT in d2 (preserves c_W as global weight commitment).
     pub committed_vars_aux: Rc<RefCell<Vec<FpVar<F>>>>,
@@ -139,15 +139,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         // === Projection input allocation (witness) ===
         // X_input [B][S][HD] — common input for Q/K/V projections
         let x_input_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_x_input.iter().map(|batch| {
-            batch.iter().map(|seq| {
-                seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
-            }).collect()
-        }).collect();
-
-        // O-projection input: separate witness needed because conv processing
-        // transforms matmul_x output (Q_sim_x) before O-proj.
-        // q_attn_output stores post-conv values (= O-proj actual input).
-        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = self.q_attn_output.iter().map(|batch| {
             batch.iter().map(|seq| {
                 seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
             }).collect()
@@ -217,8 +208,6 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
             for b in &proj_q_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
             for b in &proj_k_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
             for b in &proj_v_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
-            // Y (attn_output_vars) [B][S][HD]
-            for b in &attn_output_vars { for s in b { vars_aux.extend(s.iter().cloned()); } }
         }
 
         let proj_o_out = new_matrix_witness_4d(cs.clone(), &self.proj_o.q_out_proj);
@@ -235,6 +224,30 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for NystromAttentionCircuit<F> {
         let (temp_data, params_temp) = self.matmul_temp.alloc_and_setup(cs.clone(), F::zero(), self.z_v, &two_k_var);
         let (mid_data, params_mid) = self.matmul_mid.alloc_and_setup(cs.clone(), F::zero(), self.pseudo_inv.z_inv, &two_k_var);
         let (x_data, params_x) = self.matmul_x.alloc_and_setup(cs.clone(), self.matmul_mid.z_sim, self.matmul_temp.z_sim, &two_k_var);
+
+        // Aux: commit chain intermediates — Freivalds-only constrained
+        // temp=B̃V [B][H][m][d_v], mid=F̃Ã⁺ [B][H][n][m], x=Ỹ [B][H][n][d_v]
+        {
+            let mut vars_aux = self.committed_vars_aux.borrow_mut();
+            for b in &temp_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+            for b in &mid_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+            for b in &x_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+        }
+
+        // O-proj input: rearranged reference to x_data.q_sim (conv = arithmetic-free reshape)
+        // Y[b][s][h*D+d] = Ỹ[b][h][s][d] — shares same R1CS variables, no separate witness
+        let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = {
+            let num_h = x_data.q_sim[0].len();
+            let head_dim = x_data.q_sim[0][0][0].len();
+            x_data.q_sim.iter().map(|batch| {
+                let seq_len = batch[0].len();
+                (0..seq_len).map(|s| {
+                    (0..num_h * head_dim).map(|hd| {
+                        batch[hd / head_dim][s][hd % head_dim].clone()
+                    }).collect()
+                }).collect()
+            }).collect()
+        };
 
         let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
         let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
@@ -1158,9 +1171,19 @@ where
 
         // ── Groth16 commit (Pedersen cm1, cm2, cm_aux from VK) ───────────────
         let g16_commit_start = Instant::now();
+
+        let cm1_start = Instant::now();
         let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let cm1_ms = cm1_start.elapsed().as_millis();
+
+        let cm2_start = Instant::now();
         let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
+        let cm2_ms = cm2_start.elapsed().as_millis();
+
+        let cm_aux_start = Instant::now();
         let cm_aux = cm_aux_from_vk::<E>(&params.vk, num_pub, &committed_aux, &v3);
+        let cm_aux_ms = cm_aux_start.elapsed().as_millis();
+
         let g16_commit_ms = g16_commit_start.elapsed().as_millis();
         println!("[Debug] cm_aux computed (aux_len={})", committed_aux.len());
 
@@ -1366,6 +1389,9 @@ where
             groth16: Groth16Metrics {
                 setup_ms: setup_time.as_millis(),
                 commit_ms: g16_commit_ms,
+                cm1_ms,
+                cm2_ms,
+                cm_aux_ms,
                 prove_ms: groth16_prove_time.as_millis(),
                 verify_ms: groth16_verify_time.as_millis(),
                 proof_size_bytes: proof_size,

@@ -68,7 +68,7 @@ use crate::{
             to_field_4d_i64, to_field_4d_u64, to_field_5d_i64,
         },
         norm_detect::{NormType, detect_norm_type},
-        utils::{cm1_from_vk, cm2_from_vk, generate_global_ck, commit_global, hash_commitments_to_field},
+        utils::{cm1_from_vk, cm2_from_vk, cm_aux_from_vk, generate_global_ck, commit_global, hash_commitments_to_field_v3},
     },
 };
 use crate::lasso::subtables::softmax::set_softmax_table_dir;
@@ -597,6 +597,7 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     two_k_var: &FpVar<F>,
     committed_vars: &Rc<RefCell<Vec<FpVar<F>>>>,
     committed_vars_2: &Rc<RefCell<Vec<FpVar<F>>>>,
+    committed_vars_aux: &Rc<RefCell<Vec<FpVar<F>>>>,
 ) -> Result<(), SynthesisError> {
     // r_div: 26-bit split (low 16 + high 10) — per-softmax pools
     let mut r_div_k1_lows = Vec::new();
@@ -635,12 +636,13 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let proj_o_out = new_matrix_witness_4d(cs.clone(), &w.proj_o.q_out_proj);
     let proj_o_r = new_matrix_witness_4d(cs.clone(), &w.proj_o.r_out_proj);
 
-    // O-projection input: separate witness (post-conv for Nystrom)
-    let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_attn_output.iter().map(|batch| {
-        batch.iter().map(|seq| {
-            seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
-        }).collect()
-    }).collect();
+    // d3: commit Freivalds-constrained intermediates (Q, K, V)
+    {
+        let mut vars_aux = committed_vars_aux.borrow_mut();
+        for b in &proj_q_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+        for b in &proj_k_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+        for b in &proj_v_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+    }
 
     // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
     let num_heads = w.proj_q.q_w_diff.len();
@@ -686,6 +688,32 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
     let (temp_data, params_temp) = w.matmul_temp.alloc_and_setup(cs.clone(), F::zero(), w.z_v, two_k_var);
     let (mid_data, params_mid) = w.matmul_mid.alloc_and_setup(cs.clone(), F::zero(), w.pseudo_inv.z_inv, two_k_var);
     let (x_data, params_x) = w.matmul_x.alloc_and_setup(cs.clone(), w.matmul_mid.z_sim, w.matmul_temp.z_sim, two_k_var);
+
+    // d3: commit chain intermediates (temp=B̃V, mid=F̃Ã⁺, x=Ỹ)
+    {
+        let mut vars_aux = committed_vars_aux.borrow_mut();
+        for b in &temp_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+        for b in &mid_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+        for b in &x_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+    }
+
+    // O-proj input: rearranged reference to x_data.q_sim (conv = arithmetic-free reshape)
+    // Y[b][s][h*D+d] = Ỹ[b][h][s][d] — shares same R1CS variables, no separate witness
+    let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = {
+        let num_h = x_data.q_sim[0].len();
+        let head_dim = x_data.q_sim[0][0][0].len();
+        x_data.q_sim.iter().map(|batch| {
+            let seq_len = batch[0].len();
+            (0..seq_len).map(|s| {
+                (0..num_h * head_dim).map(|hd| {
+                    batch[hd / head_dim][s][hd % head_dim].clone()
+                }).collect()
+            }).collect()
+        }).collect()
+    };
+
+    // Collector for Z* (q_inv_var) — allocated inside b/h loop, pushed to aux after loop closes
+    let mut q_inv_committed: Vec<FpVar<F>> = Vec::new();
 
     let mut global_k1_lows = Vec::new(); let mut global_k1_highs = Vec::new();
     let mut global_k2_lows = Vec::new(); let mut global_k2_highs = Vec::new();
@@ -832,6 +860,8 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
 
             // Moore-Penrose pseudoinverse (4 steps)
             let q_inv_var = new_matrix_witness_4d(cs.clone(), &w.pseudo_inv.q_inv);
+            // Collect Z* (q_inv_var) for d3 commitment — Freivalds-only constrained
+            for row in &q_inv_var[b][h] { q_inv_committed.extend(row.iter().cloned()); }
             let q_y_vars: Vec<_> = w.pseudo_inv.q_y_intermediates.iter().map(|q_step| new_matrix_witness_4d(cs.clone(), q_step)).collect();
             let r_inv_vars: Vec<_> = w.pseudo_inv.r_inv_remainders.iter().map(|r_step| new_matrix_witness_4d(cs.clone(), r_step)).collect();
             let z_zero = FpVar::zero();
@@ -951,6 +981,11 @@ pub fn generate_nystrom_attn_constraints<F: PrimeField>(
         }
     }
 
+    // d3: commit Z* (q_inv_var) — collected during b/h loop, pushed after loop closes
+    {
+        committed_vars_aux.borrow_mut().extend(q_inv_committed);
+    }
+
     // Push to committed_vars in CP-Link ordering
     {
         let mut final_vars = committed_vars.borrow_mut();
@@ -1058,6 +1093,7 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     two_k_var: &FpVar<F>,
     committed_vars: &Rc<RefCell<Vec<FpVar<F>>>>,
     committed_vars_2: &Rc<RefCell<Vec<FpVar<F>>>>,
+    committed_vars_aux: &Rc<RefCell<Vec<FpVar<F>>>>,
 ) -> Result<(), SynthesisError> {
     let mut r_div_lows = Vec::new();
     let mut r_div_highs = Vec::new();
@@ -1079,12 +1115,13 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
     let proj_o_out = new_matrix_witness_4d(cs.clone(), &w.proj_o.q_out_proj);
     let proj_o_r = new_matrix_witness_4d(cs.clone(), &w.proj_o.r_out_proj);
 
-    // O-projection input: separate witness (post-conv if applicable)
-    let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = w.q_attn_output.iter().map(|batch| {
-        batch.iter().map(|seq| {
-            seq.iter().map(|v| FpVar::new_witness(cs.clone(), || Ok(*v)).unwrap()).collect()
-        }).collect()
-    }).collect();
+    // d3: commit Freivalds-constrained intermediates (Q, K, V)
+    {
+        let mut vars_aux = committed_vars_aux.borrow_mut();
+        for b in &proj_q_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+        for b in &proj_k_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+        for b in &proj_v_out { for h in b { for s in h { vars_aux.extend(s.iter().cloned()); } } }
+    }
 
     // Allocate W_Q, W_K, W_V weights as witnesses (transposed form: [H][HD][D])
     let num_heads = w.proj_q.q_w_diff.len();
@@ -1129,6 +1166,28 @@ pub fn generate_bert_attn_constraints<F: PrimeField>(
 
     let (attn_data, params_attn) = w.matmul_attn.alloc_and_setup(cs.clone(), w.z_q, w.z_k, two_k_var);
     let (x_data, params_x) = w.matmul_x.alloc_and_setup(cs.clone(), F::zero(), w.z_v, two_k_var);
+
+    // d3: commit chain output x=P*V [B][H][S][D] — Freivalds-only constrained
+    {
+        let mut vars_aux = committed_vars_aux.borrow_mut();
+        for b in &x_data.q_sim { for h in b { for row in h { vars_aux.extend(row.iter().cloned()); } } }
+    }
+
+    // O-proj input: rearranged reference to x_data.q_sim (conv = arithmetic-free reshape)
+    // Y[b][s][h*D+d] = Ỹ[b][h][s][d] — shares same R1CS variables, no separate witness
+    let attn_output_vars: Vec<Vec<Vec<FpVar<F>>>> = {
+        let num_h = x_data.q_sim[0].len();
+        let head_dim = x_data.q_sim[0][0][0].len();
+        x_data.q_sim.iter().map(|batch| {
+            let seq_len = batch[0].len();
+            (0..seq_len).map(|s| {
+                (0..num_h * head_dim).map(|hd| {
+                    batch[hd / head_dim][s][hd % head_dim].clone()
+                }).collect()
+            }).collect()
+        }).collect()
+    };
+
     let mask_var = new_matrix_witness(cs.clone(), &w.mask);
     let sm_vars = w.sm.alloc_vars(cs.clone())?;
 
@@ -1383,12 +1442,16 @@ pub struct ModelIntegratedCircuit<F: PrimeField> {
     pub r_challenge: F,
     pub committed_vars: Rc<RefCell<Vec<FpVar<F>>>>,
     pub committed_vars_2: Rc<RefCell<Vec<FpVar<F>>>>,
+    /// d3: Freivalds-constrained intermediates (Q, K, V, Z*, temp, mid, x) —
+    /// committed as cm_aux and included in FS hash v3.
+    pub committed_vars_aux: Rc<RefCell<Vec<FpVar<F>>>>,
 }
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for ModelIntegratedCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.committed_vars.borrow_mut().clear();
         self.committed_vars_2.borrow_mut().clear();
+        self.committed_vars_aux.borrow_mut().clear();
 
         let r_var = FpVar::new_input(cs.clone(), || Ok(self.r_challenge))?;
         let two_k_var = FpVar::new_constant(cs.clone(), F::from(1u128 << self.k_bits))?;
@@ -1400,12 +1463,14 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for ModelIntegratedCircuit<F> {
                     generate_nystrom_attn_constraints(
                         cs.clone(), w, &r_var, &two_k_var,
                         &self.committed_vars, &self.committed_vars_2,
+                        &self.committed_vars_aux,
                     )?;
                 }
                 AttnWitness::Bert(w) => {
                     generate_bert_attn_constraints(
                         cs.clone(), w, &r_var, &two_k_var,
                         &self.committed_vars, &self.committed_vars_2,
+                        &self.committed_vars_aux,
                     )?;
                 }
             }
@@ -1478,6 +1543,7 @@ where
         r_challenge: E::ScalarField::zero(),
         committed_vars: Rc::new(RefCell::new(Vec::new())),
         committed_vars_2: Rc::new(RefCell::new(Vec::new())),
+        committed_vars_aux: Rc::new(RefCell::new(Vec::new())),
     })
 }
 
@@ -1503,28 +1569,31 @@ where
     println!("\n=== [Model Integrated] {} layers, {:?} attn, {:?} norm ===",
         discovered.num_layers, discovered.attn_variant, discovered.norm_variant);
 
-    // Dry-run → d1/d2 indices
-    let (d1_indices, d2_indices) = {
+    // Dry-run → d1/d2/d3 indices
+    let (d1_indices, d2_indices, d3_indices) = {
         let temp = load_model_integrated_circuit::<E>(&discovered)?;
         let v1 = Rc::clone(&temp.committed_vars);
         let v2 = Rc::clone(&temp.committed_vars_2);
+        let v3 = Rc::clone(&temp.committed_vars_aux);
         let cs = ConstraintSystem::<Fr>::new_ref();
         temp.generate_constraints(cs)?;
         (
             crate::util::utils::extract_witness_indices(&v1.borrow()),
             crate::util::utils::extract_witness_indices(&v2.borrow()),
+            crate::util::utils::extract_witness_indices(&v3.borrow()),
         )
     };
     let num_d1 = d1_indices.len() as u32;
     let num_d2 = d2_indices.len() as u32;
-    println!("Commit counts: d1={}, d2={}", num_d1, num_d2);
+    let num_d3 = d3_indices.len() as u32;
+    println!("Commit counts: d1={}, d2={}, d3={}", num_d1, num_d2, num_d3);
 
     let circuit = load_model_integrated_circuit::<E>(&discovered)?;
 
     // [0] Setup
     println!("=== [0] LegoGroth16 Setup ===");
     let setup_start = Instant::now();
-    let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &[], &mut rng)
+    let params = generate_random_parameters::<E, _, _>(circuit.clone(), &d1_indices, &d2_indices, &d3_indices, &mut rng)
         .map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
     let setup_time = setup_start.elapsed();
     let pvk = prepare_verifying_key::<E>(&params.vk);
@@ -1538,16 +1607,30 @@ where
         .map(|v| v.value().unwrap_or(Fr::zero())).collect();
     let committed_group2: Vec<Fr> = circuit.committed_vars_2.borrow().iter()
         .map(|v| v.value().unwrap_or(Fr::zero())).collect();
-    println!("[Debug] committed_group2 total={}", committed_group2.len());
+    let committed_aux: Vec<Fr> = circuit.committed_vars_aux.borrow().iter()
+        .map(|v| v.value().unwrap_or(Fr::zero())).collect();
+    println!("[Debug] committed_group2 total={}, committed_aux total={}", committed_group2.len(), committed_aux.len());
     let num_pub = cs_witness.num_instance_variables() - 1;
 
     // Groth16 commit + Fiat-Shamir
     let v1 = Fr::rand(&mut rng);
     let v2 = Fr::rand(&mut rng);
+    let v3 = Fr::rand(&mut rng);
 
     let g16_commit_start = Instant::now();
+
+    let cm1_start = Instant::now();
     let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+    let cm1_ms = cm1_start.elapsed().as_millis();
+
+    let cm2_start = Instant::now();
     let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
+    let cm2_ms = cm2_start.elapsed().as_millis();
+
+    let cm_aux_start = Instant::now();
+    let cm_aux = cm_aux_from_vk::<E>(&params.vk, num_pub, &committed_aux, &v3);
+    let cm_aux_ms = cm_aux_start.elapsed().as_millis();
+
     let g16_commit_ms = g16_commit_start.elapsed().as_millis();
 
     // ── Global weight commitment c_W ─────────────────────────────────────
@@ -1599,13 +1682,13 @@ where
         }
     }
 
-    // ── Multi-commitment Fiat-Shamir challenge (v2) ──────────────────────
+    // ── Multi-commitment Fiat-Shamir challenge (v3: includes cm_aux) ────
     // Use first layer's hashes for the Fiat-Shamir challenge
     let (input_hash, output_hash) = match &circuit_with_hashes.attn_layers[0] {
         AttnWitness::Nystrom(w) => (w.input_hash, w.output_hash),
         AttnWitness::Bert(w) => (w.input_hash, w.output_hash),
     };
-    let r_fs = hash_commitments_to_field::<E>(&c_w, &cm1, &cm2, &input_hash, &output_hash);
+    let r_fs = hash_commitments_to_field_v3::<E>(&c_w, &cm1, &cm2, &cm_aux, &input_hash, &output_hash);
 
     let final_circuit = ModelIntegratedCircuit {
         r_challenge: r_fs,
@@ -1615,7 +1698,7 @@ where
     // [1] Groth16 Prove
     println!("=== [1] LegoGroth16 Prove ===");
     let g16_prove_start = Instant::now();
-    let proof = create_random_proof::<E, _, _>(final_circuit.clone(), v1, v2, Fr::zero(), &params, &mut rng)
+    let proof = create_random_proof::<E, _, _>(final_circuit.clone(), v1, v2, v3, &params, &mut rng)
         .map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
     let g16_prove_time = g16_prove_start.elapsed();
 
@@ -1740,9 +1823,9 @@ where
     let cplink_global_report = proof_size::compute_cplink_report::<E>(&proof_link_glob, &instance_glob);
     cplink_global_report.print_log();
 
-    // ── Fiat-Shamir verification ─────────────────────────────────────────
-    let r_fs_verify = hash_commitments_to_field::<E>(
-        &c_w, &proof.d1, &proof.d2,
+    // ── Fiat-Shamir verification (v3: includes d3) ─────────────────────
+    let r_fs_verify = hash_commitments_to_field_v3::<E>(
+        &c_w, &proof.d1, &proof.d2, &proof.d3,
         &public_inputs[1], &public_inputs[2],
     );
     assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");
@@ -1760,6 +1843,9 @@ where
         groth16: Groth16Metrics {
             setup_ms: setup_time.as_millis(),
             commit_ms: g16_commit_ms,
+            cm1_ms,
+            cm2_ms,
+            cm_aux_ms,
             prove_ms: g16_prove_time.as_millis(),
             verify_ms: g16_verify_time.as_millis(),
             proof_size_bytes: proof_size_bytes,
