@@ -113,11 +113,6 @@ fn run_nystrom_attn_lasso(
     full_22bit.push((&w.matmul_temp.r_matmul, "attn_temp_rem"));
     full_22bit.push((&w.matmul_mid.r_matmul, "attn_mid_rem"));
     full_22bit.push((&w.matmul_x.r_matmul, "attn_x_rem"));
-    // Conv remainders (only present when conv exists)
-    if let Some(ref conv) = w.conv {
-        full_22bit.push((&conv.r_conv, "conv_rem"));
-        full_22bit.push((&conv.r_xf, "conv_xf_rem"));
-    }
     // Projection remainders
     full_22bit.push((&w.proj_q.r_out_proj, "proj_q_rem"));
     full_22bit.push((&w.proj_k.r_out_proj, "proj_k_rem"));
