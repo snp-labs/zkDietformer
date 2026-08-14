@@ -785,6 +785,11 @@ fn run_onlyeq_remainders_with_link(
     target_26bit.push((&circuit.matmul_temp.r_matmul, "matmul_v_remainder"));
     target_26bit.push((&circuit.matmul_mid.r_matmul, "matmul_mid_remainder"));
     target_26bit.push((&circuit.matmul_x.r_matmul, "matmul_x_remainder"));
+    // Conv remainders (only present when conv exists)
+    if let Some(ref conv) = circuit.conv {
+        target_26bit.push((&conv.r_conv, "conv_remainder"));
+        target_26bit.push((&conv.r_xf, "conv_xf_remainder"));
+    }
     target_26bit.push((&circuit.scale_q.r_scale, "scale_q_remainder"));
     target_26bit.push((&circuit.scale_k.r_scale, "scale_k_remainder"));
 

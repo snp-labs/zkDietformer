@@ -441,6 +441,12 @@ pub fn run_all_remainders_with_link<F: PrimeField, G: CurveGroup<ScalarField = F
     target_26bit.push((&circuit.matmul_mid.r_matmul, "matmul_mid_remainder"));
     target_26bit.push((&circuit.matmul_x.r_matmul, "matmul_x_remainder"));
 
+    // Conv remainders (only present when conv exists)
+    if let Some(ref conv) = circuit.conv {
+        target_26bit.push((&conv.r_conv, "conv_remainder"));
+        target_26bit.push((&conv.r_xf, "conv_xf_remainder"));
+    }
+
     // Projection remainders
     target_26bit.push((&circuit.proj_q.r_out_proj, "proj_q_remainder"));
     target_26bit.push((&circuit.proj_k.r_out_proj, "proj_k_remainder"));
