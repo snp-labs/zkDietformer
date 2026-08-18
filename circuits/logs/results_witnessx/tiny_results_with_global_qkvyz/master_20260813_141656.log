@@ -443,3 +443,30 @@ warning: `nystromformer` (lib test) generated 16 warnings (16 duplicates)
   Log:   logs/prove_bert_mlp_n4096_L2_h128_20260814_073715.log
   Time:  logs/prove_bert_mlp_n4096_L2_h128_20260814_073715.time
 ============================================
+  [FAIL] bert_mlp_n4096_L2_h128 (exit code: 101)
+  Layers proved: 0
+
+
+============================================
+ measure_tiny.sh 완료
+ 시작: 2026-08-13 14:16:56
+ 종료: 2026-08-14 08:42:26
+ 총 실행: 36
+ 성공:    19
+ 실패:    17
+ 스킵:    0
+============================================
+
+=== 결과 요약 명령 ===
+
+# per-layer 벤치마크 (JSON):
+  grep BENCHMARK_RESULT logs/prove_*.log
+
+# peak RSS (메모리, bytes):
+  grep 'maximum resident set size' logs/prove_*.time
+
+# 전체 wall time per run:
+  grep 'total_wall_ms' logs/prove_*.log
+
+# 실패한 run 확인:
+  grep '\[FAIL\]' logs/master_*.log
