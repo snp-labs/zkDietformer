@@ -5,3 +5,5 @@ pub mod nystrom_attn_circuit;
 pub mod nystrom_mlp_circuit;
 pub mod model_integrated_circuit;
 pub mod block_integrated_circuit;
+pub mod linformer_attn_circuit;
+pub mod soft_attn_circuit;

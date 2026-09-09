@@ -665,11 +665,19 @@ macro_rules! define_mp_range_check {
     };
 }
 
-// MP bounded-diff: Cond1 [0, 8192), Cond3 [0, 1024), Cond4 [0, 64)
+// MP bounded-diff range checks: [0, 2^LOG_R)
+define_mp_range_check!(prove_mp_range_15, 15);
+define_mp_range_check!(prove_mp_range_14, 14);
 define_mp_range_check!(prove_mp_range_13, 13);
+define_mp_range_check!(prove_mp_range_12, 12);
+define_mp_range_check!(prove_mp_range_11, 11);
 define_mp_range_check!(prove_mp_range_10, 10);
+define_mp_range_check!(prove_mp_range_9, 9);
+define_mp_range_check!(prove_mp_range_8, 8);
 define_mp_range_check!(prove_mp_range_7, 7);
 define_mp_range_check!(prove_mp_range_6, 6);
+define_mp_range_check!(prove_mp_range_5, 5);
+define_mp_range_check!(prove_mp_range_4, 4);
 define_mp_range_check!(prove_mp_range_3, 3);
 
 /// Run Moore-Penrose bounded-difference Lasso proofs for conditions 1, 3, 4.

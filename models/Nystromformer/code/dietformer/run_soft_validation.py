@@ -112,6 +112,26 @@ def main():
             k_bits=args.k_bits, n_iter=args.n_iter,
         )
         print(f"  {safe_name}: CosSim={result['cosine_similarity']:.8f}")
+        print(f"    cond1_max={result['cond1_max']}, "
+              f"cond3_max={result['cond3_max']}, "
+              f"cond4_max={result['cond4_max']}")
+
+        # Append epsilon to witness NPZ.
+        # Use max(production_floor, 3 * actual_cond_max) to guarantee coverage.
+        # Production floors from B-gate fixture (S=8): eps1~2754, eps3~6, eps4~195.
+        layer_idx = list(captured.keys()).index(layer_name)
+        prod_eps1 = {0: 2754, 1: 3630}.get(layer_idx, 4096)
+        prod_eps3 = 6
+        prod_eps4 = 195
+        eps1 = max(prod_eps1, int(result["cond1_max"]) * 3)
+        eps3 = max(prod_eps3, int(result["cond3_max"]) * 3)
+        eps4 = max(prod_eps4, int(result["cond4_max"]) * 3)
+        existing = dict(np.load(witness_path, allow_pickle=True))
+        existing["eps1"] = np.array(eps1, dtype=np.uint64)
+        existing["eps3"] = np.array(eps3, dtype=np.uint64)
+        existing["eps4"] = np.array(eps4, dtype=np.uint64)
+        np.savez_compressed(witness_path, **existing)
+        print(f"    eps1={eps1}, eps3={eps3}, eps4={eps4} (production, layer {layer_idx})")
 
     print(f"\nOutput: {out_dir}/")
 

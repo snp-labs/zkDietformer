@@ -58,9 +58,15 @@ Nystrom 및 Linformer와 동일. 변경 없음.
 | 범주 | 항목 |
 |------|------|
 | d2 | W_Q, W_V, W_O (3종) |
-| aux | proj_q, proj_v, Z* (A^{+}), temp, mid, Y (6종) |
-| omega | Q_proc, Q~, norm_q, norm_qtilde, C_B, C_A, B, A |
-| d1 | Gaussian table_idx, R_gauss, R_matmul (cross/chain/proj), MP remainder, MP bounded-diff |
+| aux | proj_q, proj_v, Z* (A^{+}), temp, mid, Y, C_B, C_A (8종) |
+| omega | Q_proc, Q~, norm_q, norm_qtilde, Q_dist_B, Q_dist_A, B, A |
+| d1 | Gaussian table_idx, R_gauss, R_dist_B, R_dist_A, R_matmul (cross/chain/proj), MP remainder, MP bounded-diff |
+
+**C_B/C_A aux 이동 근거 (Option 2)**: C_B/C_A를 omega로 유지하려면
+커밋된 값(table_idx, r_gauss, norm)에서 정수 도메인으로 역복원이 가능해야 한다.
+실측 결과 정수 경로 역복원에서 676/8192 원소가 off-by-1 이상 불일치.
+floor 절삭이 비가역적이므로 C_B/C_A는 omega 자격을 상실한다.
+aux로 이동하고 Freivalds 항등식으로 건전성을 보장한다.
 
 ---
 
@@ -167,18 +173,26 @@ K~ landmark 별도 생성 없음 (Q~ = K~).
 
 ZEN 파라미터: M_cross_B, M_prime_cross_B, z_sim_cross_B 등.
 
+**cross-term 커밋 분류**: C_B, C_A는 aux (Freivalds-only). omega가 아닌 이유는
+0-3절 Option 2 근거 참조.
+
 #### Gaussian kernel distance + lookup (SOFT 전용)
 
 | 중간값 | Shape | 분류 |
 |--------|-------|------|
-| Q_dist_B | [B, H, n, m] | omega (norm + norm - 2*cross로 결정) |
+| Q_dist_B | [B, H, n, m] | omega (dist 등식 Euclidean 몫, 유일 결정) |
+| R_dist_B | [B, H, n, m] | d1 (dist 등식 Euclidean 나머지, 26-bit, C=2) |
 | table_idx_B | [B, H, n, m] | d1 (Gaussian Lasso) |
 | r_gauss_B | [B, H, n, m] | d1 (Gaussian remainder) |
 | kernel_B | [B, H, n, m] | omega (table[table_idx]로 복원) |
-| Q_dist_A | [B, H, m, m] | omega |
+| Q_dist_A | [B, H, m, m] | omega (dist 등식 Euclidean 몫, 유일 결정) |
+| R_dist_A | [B, H, m, m] | d1 (dist 등식 Euclidean 나머지, 26-bit, C=2) |
 | table_idx_A | [B, H, m, m] | d1 (Gaussian Lasso) |
 | r_gauss_A | [B, H, m, m] | d1 (Gaussian remainder) |
 | kernel_A | [B, H, m, m] | omega |
+| M_A_B, M_B_B | scalar | ZEN 파라미터 (dist_B 등식 두 multiplier) |
+| M_A_A, M_B_A | scalar | ZEN 파라미터 (dist_A 등식 두 multiplier) |
+| z_dist | scalar (= 1) | ZEN 파라미터 (floor 절삭 guard offset) |
 
 #### Pseudoinverse (Nystrom 동일)
 
@@ -219,8 +233,9 @@ Python witness 파이프라인의 Gaussian kernel 계산 순서:
 3. norm_q[i] = sum_d (Q_proc[i][d] - z_q)^2      # 행별 제곱 노름 (정수)
 4. norm_qtilde[j] = sum_d (Q~[j][d] - z_qtilde)^2 # landmark 제곱 노름
 5. C_B = sign_bit_grouping_matmul(Q_proc, z_q, Q~^T, z_qtilde, ...)  # cross-term
-6. dist_B[i][j] = norm_q[i] + norm_qtilde[j] - 2 * C_B[i][j]        # 비음수 거리
-7. (kernel_B, table_idx_B, r_gauss_B) = gaussian_lookup(dist_B, ...)  # 테이블 lookup
+6. LHS_B = M_A*(n_q+n_qt) - 2*M_B*(C_B-z_cross) + z_dist*2^k       # dist 등식 (정수)
+   Q_dist_B = LHS_B // 2^k,  R_dist_B = LHS_B % 2^k                 # Euclidean division
+7. (kernel_B, table_idx_B, r_gauss_B) = gaussian_lookup(Q_dist_B, R_dist_B, ...)  # 테이블 lookup
 ```
 
 C_A 및 kernel_A도 동일 절차 (Q~ 자기 자신 간 거리).
@@ -241,15 +256,17 @@ sign_bit_grouping_matmul이 자동 산출한다.
 **테이블 생성** (gaussian_table.py):
 
 ```python
-def generate_gaussian_table(table_frac_bits=10, frac_bits=16):
+def generate_gaussian_table(table_frac_bits=10, frac_bits=16, z_dist=0):
     TABLE_SIZE = 1 << 16  # 65536
     scale = 1 << table_frac_bits
     indices = np.arange(TABLE_SIZE, dtype=np.float64)
-    real_x = indices / scale  # x in [0, 64)
+    shifted = np.maximum(indices - z_dist, 0.0)  # z_dist offset 흡수
+    real_x = shifted / scale  # x in [0, 64)
     exps = np.exp(-real_x)    # exp(-x), decreasing from 1 to ~0
     fixed_exps = (exps * float(1 << frac_bits))
     fixed_exps = np.clip(fixed_exps, 0, float((1 << 64) - 1))
     return fixed_exps.astype(np.uint64)
+# z_dist=1일 때: table[0]=table[1]=65536 (=1.0), table[2]=exp(-1/1024)*65536, ...
 ```
 
 **softmax 테이블과의 차이**:
@@ -426,6 +443,86 @@ for i in 0..n {
 
 **커밋 불필요**: norm_q, norm_qtilde는 omega (Q_proc와 Q~에서 결정론적으로 유일 결정).
 
+### B-4b. Dist 제약 명세 (SOFT 전용)
+
+Gaussian kernel 거리 Q_dist를 정수 도메인에서 제약하는 등식.
+enforce_scaling (단일 multiplier)과 달리 **두 개의 multiplier** (M_A, M_B)를 사용한다.
+
+**등식 형태** (two-multiplier ZEN):
+
+```
+Q_dist * 2^k + R_dist = M_A * (n1 + n2) - 2 * M_B * (Q_cross - z_cross) + z_dist * 2^k
+```
+
+- k = k_bits = 26
+- n1, n2: 제곱 노름 (omega, B-4 R1CS로 결정)
+- Q_cross: cross-term matmul 결과 (aux, Freivalds 검증)
+- z_cross: Q_cross zero-point
+- M_A = floor(2^k × s_q² / (s_dist × 2√D))
+- M_B = floor(2^k × s_cross / (s_dist × 2√D))
+- z_dist = 1 (floor 절삭 guard offset)
+
+**z_dist 오프셋 근거**:
+
+M_A와 M_B가 독립적으로 floor 절삭되므로 대각선 원소 (i==j, true distance≈0)에서
+LHS가 음수가 될 수 있다.
+
+| z_dist | Layer 1 kernel A 음수 원소 | LHS 최소값 |
+|--------|--------------------------|-----------|
+| 0 | 6/2048 | -6 |
+| 1 | 0/2048 | ≥ 0 |
+
+z_dist=1은 LHS에 2^26 = 67,108,864를 더한다. floor 절삭 오차(최대 ≈6)를 충분히 흡수한다.
+Gaussian 테이블이 z_dist offset을 흡수: table[j]=1.0 for j ≤ z_dist.
+clamping이나 부호 검사 게이트를 사용하지 않는다.
+
+**Euclidean division 유일성**:
+
+LHS ≥ 0이 보장되므로 (Q_dist, R_dist)는 유일하다.
+Q_dist는 omega (등식에 의해 결정론적으로 유일 결정, 커밋 불필요).
+R_dist는 d1 (26-bit Lasso range check, KBITS_C=2).
+
+**실측 결과** (n=128, m=32, L=2, H=2, dense input, z_dist=1):
+
+| Layer | Kernel | Total | Mismatch | Q_dist range | R_dist range |
+|-------|--------|-------|----------|-------------|--------------|
+| 0 | B | 8,192 | 0 | [1, 4094] | [8560, 67107056] |
+| 0 | A | 2,048 | 0 | [1, 4094] | [0, 67100345] |
+| 1 | B | 8,192 | 0 | [1, 4094] | [0, 67104832] |
+| 1 | A | 2,048 | 0 | [1, 4094] | [0, 67075768] |
+
+R_dist bit width: 26 (= k_bits). 12-bit Q_dist: min=1 (z_dist=1), max=4094.
+
+**회로 제약 비용** (per batch per head):
+
+| 커널 | 원소 수 | 선형 등식 (enforce_equal) | R_dist d1 limb |
+|------|---------|------------------------|----------------|
+| B | S×m = 4096 | 4096 | 8192 (16+10 split) |
+| A | m×m = 1024 | 1024 | 2048 (16+10 split) |
+
+### B-4c. 커밋 분류 원칙 (Stage B 가이드)
+
+1. **omega**: 선행 커밋/공개 상수에서 결정론적으로 유일 결정되는 값.
+   자유 증인이 아니라 등식 제약이 유일한 값을 강제한다.
+   예: Q_dist (dist 등식), norm_q (R1CS 제곱), kernel (table lookup).
+
+2. **aux**: Freivalds 항등식의 일부로만 참여하는 중간값.
+   Freivalds random projection이 건전성을 보장하므로 값 자체의
+   결정론적 복원이 불필요하다.
+   예: proj_q, proj_v, temp, mid, Y, C_B, C_A, A^{+}.
+
+3. **d1**: Lasso range check 대상. 값 범위를 증명해야 하는 나머지/인덱스.
+   예: R_matmul, R_dist, table_idx, r_gauss, MP bounded-diff.
+
+4. **d2**: 모델 가중치. 신뢰 모델과 동일함을 보장해야 한다.
+   예: W_Q, W_V, W_O.
+
+**omega vs aux 판정 기준**:
+- 정수 도메인에서 커밋된 값만으로 역복원이 가능한가?
+- 역복원에 floor, clip 등 비가역 연산이 포함되면 off-by-1 불일치 위험.
+- 불일치가 존재하면 omega 자격 상실 → aux로 이동.
+- 예: C_B/C_A 역복원(676/8192 off-by-1) → aux. Q_dist 순방향 등식(0 불일치) → omega.
+
 ### B-5. 커밋 그룹 구성
 
 #### d2 (가중치)
@@ -443,8 +540,10 @@ Nystrom 대비 W_K 제거.
 | 4 | Q_sim_temp [B][H][m][D] | chain Freivalds-only |
 | 5 | Q_sim_mid [B][H][n][m] | chain Freivalds-only |
 | 6 | Q_sim_Y [B][H][n][D] | chain Freivalds-only |
+| 7 | C_B (Q_sim_cross_B) [B][H][n][m] | cross-term Freivalds-only (Option 2) |
+| 8 | C_A (Q_sim_cross_A) [B][H][m][m] | cross-term Freivalds-only (Option 2) |
 
-6종. Nystrom 대비 proj_k_out 제거.
+8종. Nystrom 대비 proj_k_out 제거, C_B/C_A 추가.
 
 #### d1 (Lasso lookup 대상)
 
@@ -454,6 +553,7 @@ Push 순서 (Lasso target 순서와 일치 필수):
 1. Gaussian table_idx (B 커널) [C=1]
 2. Gaussian table_idx (A 커널) [C=1]
 3. 26-bit remainders (C=2: 16+10):
+   - R_dist_B, R_dist_A (dist 등식 Euclidean 나머지)
    - R_cross_B, R_cross_A
    - R_temp, R_mid, R_Y
    - R_proj_q, R_proj_v, R_proj_o
@@ -613,9 +713,12 @@ B-2에서 확정. 요약:
    | 조작 | 기대 실패 지점 |
    |------|---------------|
    | aux commit tamper (proj_q) | 사영 Freivalds |
-   | Q_sim_cross_B tamper | cross-term Freivalds |
+   | C_B tamper (aux) | cross-term Freivalds |
+   | C_A tamper (aux) | cross-term Freivalds |
    | kernel_B tamper | Gaussian lookup 등식 |
    | norm_q tamper | 제곱 노름 R1CS |
+   | Q_dist_B tamper | dist 등식 (enforce_equal) |
+   | R_dist_B tamper | dist 등식 또는 Lasso range check |
    | A^{+} tamper | MP Freivalds |
    | Q_sim_temp tamper | chain Freivalds |
    | Q_sim_mid tamper | chain Freivalds |
@@ -630,6 +733,30 @@ B-2에서 확정. 요약:
 
 3. **제약 수 내역**: 단계별 constraint count 보고.
    Poseidon hash 비율 주의 (축소 fixture에서 80%+ 예상).
+
+---
+
+## 비용 요약 (Nystrom 대비 SOFT 변경)
+
+### 커밋 그룹 변동
+
+| 커밋 그룹 | 추가 | 제거 | 순 변동 |
+|-----------|------|------|---------|
+| aux | C_B [n×m], C_A [m×m] | proj_k (W_q=W_k) | +n×m + m×m - S×D |
+| d1 | R_dist_B [n×m], R_dist_A [m×m], Gauss table_idx ×2, r_gauss ×2 | softmax table_idx ×3, r_sm ×3, R_div ×3 | 상당 감소 |
+| d2 | - | W_K | -1종 |
+| omega | Q_dist_B, Q_dist_A | C_B, C_A (aux로 이동) | 유사 |
+
+### 제약 변동 (per batch per head)
+
+| 구분 | SOFT 추가 | SOFT 제거 | 비고 |
+|------|-----------|-----------|------|
+| 제곱 노름 R1CS | (n+m)×D 곱셈 | - | SOFT 전용 |
+| dist 등식 (enforce_equal) | (n×m + m×m) × 1 선형 | - | SOFT 전용 |
+| R_dist d1 limb | (n×m + m×m) × 2 | - | SOFT 전용 |
+| Gaussian lookup | 2세트 | - | softmax lookup 3세트 제거 |
+| softmax 정규화 | - | R_div ×3, r_sm ×3 | SOFT는 정규화 없음 |
+| K 사영/스케일링 | - | proj_k, scale_k | W_q=W_k |
 
 ---
 

@@ -147,21 +147,29 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
             Q_v = Q_raw_4d.astype(np.int64)
             s_v, z_v = s_raw, z_raw
 
-    # ── Phase 1: Landmarks (segment averaging from chain Q_q) ──
-    Q_sum = Q_q.reshape(B, H, m, seg, D).sum(axis=-2)
+    # ── Masking (Linformer pattern) ──
+    # Q_q and Q_v stay unmasked for Freivalds (projection verification).
+    # Q_q_masked and Q_v_masked are derived via conditional_select equivalent.
+    # Downstream uses masked versions only.
+    mask_bhsd = mask[:, np.newaxis, :, np.newaxis]  # [B, 1, S, 1]
+    Q_q_masked = np.where(mask_bhsd == 0, z_q, Q_q)
+    Q_v_masked = np.where(mask_bhsd == 0, z_v, Q_v)
+
+    # ── Phase 1: Landmarks (segment averaging from masked Q_q) ──
+    Q_sum = Q_q_masked.reshape(B, H, m, seg, D).sum(axis=-2)
     Q_landmarks_q = Q_sum // seg
     R_mean_q = Q_sum % seg
 
-    # ── Phase 2: Squared norms (integer domain) ──
-    # norm_q[b][h][i] = sum_d (Q_q[b][h][i][d] - z_q)^2
-    Q_q_centered = (Q_q - z_q).astype(np.int64)
+    # ── Phase 2: Squared norms (integer domain, from masked Q) ──
+    # norm_q[b][h][i] = sum_d (Q_q_masked[b][h][i][d] - z_q)^2
+    Q_q_centered = (Q_q_masked - z_q).astype(np.int64)
     norm_q_int = np.sum(Q_q_centered ** 2, axis=-1)  # [B,H,S]
 
     Q_lm_centered = (Q_landmarks_q - z_q).astype(np.int64)
     norm_qtilde_int = np.sum(Q_lm_centered ** 2, axis=-1)  # [B,H,m]
 
-    # ── Phase 3: Cross-term matmul (ZEN) ──
-    # C_B = Q_q @ Q~^T : [B,H,S,D] @ [B,H,D,m] -> [B,H,S,m]
+    # ── Phase 3: Cross-term matmul (ZEN, from masked Q) ──
+    # C_B = Q_q_masked @ Q~^T : [B,H,S,D] @ [B,H,D,m] -> [B,H,S,m]
     Q_lm_T = np.swapaxes(Q_landmarks_q, -1, -2)  # [B,H,D,m]
 
     cross_B_real = debug['cross_B']
@@ -169,7 +177,7 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
 
     M_cb = get_m_constant(s_q, s_q, s_cb, k=k_bits)
     Q_sim_cross_B, R_cross_B, M_prime_cb = sign_bit_grouping_matmul(
-        Q_q, z_q, Q_lm_T, z_q, z_cb, M_cb, k_bits
+        Q_q_masked, z_q, Q_lm_T, z_q, z_cb, M_cb, k_bits
     )
 
     # C_A = Q~ @ Q~^T : [B,H,m,D] @ [B,H,D,m] -> [B,H,m,m]
@@ -182,15 +190,13 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
     )
 
     # ── Phase 4: Gaussian distance and lookup ──
-    # dist_B[i][j] = norm_q[i] + norm_qtilde[j] - 2 * cross_B[i][j]
-    # The distance is in the "integer squared norm" scale, not the cross-term scale.
-    # We need to combine: norm uses (Q-z)^2 directly (scale = s_q^2),
-    # cross uses ZEN output (scale = s_cb).
-    # To combine, we compute dist in a unified quantized domain.
+    # Integer Euclidean division (circuit truth):
+    # Q_dist * 2^k + R_dist = M_A*(n1+n2) - 2*M_B*(Q_cross-z_cross) + z_dist*2^k
+    # z_dist = 1: absorbs two-multiplier floor truncation that can push LHS negative.
+    # Float dist computed only for determining s_dist range.
+    TWO_K = 1 << k_bits
+    GAUSS_Z_DIST = 1
 
-    # Strategy: compute dist as float, then quantize together.
-    # This follows chain-output principle: use chain cross-term Q_sim values.
-    # Dequantize cross to float for distance combination, then quantize dist.
     cross_B_deq = (Q_sim_cross_B.astype(np.float64) - z_cb) * s_cb
     norm_q_deq = norm_q_int.astype(np.float64) * (s_q ** 2)
     norm_qt_deq = norm_qtilde_int.astype(np.float64) * (s_q ** 2)
@@ -198,19 +204,28 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
     dist_B_float = (norm_q_deq[:, :, :, np.newaxis]
                     + norm_qt_deq[:, :, np.newaxis, :]
                     - 2.0 * cross_B_deq)
-    # Divide by denom = 2*sqrt(D) for Gaussian kernel argument
     dist_B_scaled = dist_B_float / denom
-    # Clamp to non-negative (numerical noise can make tiny negatives)
     dist_B_scaled = np.maximum(dist_B_scaled, 0.0)
 
-    s_dist_B, z_dist_B = get_quantization_params(dist_B_scaled)
-    Q_dist_B = quantize_tensor(dist_B_scaled, s_dist_B, z_dist_B)
+    max_dist_B = float(np.max(dist_B_scaled))
+    z_dist_B = GAUSS_Z_DIST
+    s_dist_B = max_dist_B / (4095 - z_dist_B) if max_dist_B > 1e-12 else 1.0
 
-    # For Gaussian lookup, we need (Q_dist, R_dist) pair.
-    # Since dist is freshly quantized (not from ZEN matmul), R_dist = 0.
-    R_dist_B = np.zeros_like(Q_dist_B, dtype=np.int64)
+    # Integer path: M_A, M_B are layer-specific constants
+    M_A_B = int(np.floor(TWO_K * (s_q ** 2) / (s_dist_B * denom)))
+    M_B_B = int(np.floor(TWO_K * s_cb / (s_dist_B * denom)))
+    LHS_B = (M_A_B * (norm_q_int[:, :, :, np.newaxis].astype(object)
+                       + norm_qtilde_int[:, :, np.newaxis, :].astype(object))
+             - 2 * M_B_B * (Q_sim_cross_B.astype(object) - z_cb)
+             + z_dist_B * TWO_K)
+    n_neg_B = int(np.sum(LHS_B < 0))
+    if n_neg_B > 0:
+        raise ValueError(f"dist_B integer LHS has {n_neg_B} negatives after z_dist offset")
+    Q_dist_B = (LHS_B // TWO_K).astype(np.int64)
+    R_dist_B = (LHS_B % TWO_K).astype(np.int64)
 
-    gauss_table = generate_gaussian_table(GAUSS_TABLE_FRAC_BITS, GAUSS_FRAC_BITS)
+    gauss_table = generate_gaussian_table(GAUSS_TABLE_FRAC_BITS, GAUSS_FRAC_BITS,
+                                          z_dist=GAUSS_Z_DIST)
     kernel_B_val, table_idx_B, r_gauss_B, M_gauss_B, clamp_lo_B, clamp_hi_B = gaussian_lookup(
         Q_dist_B.astype(np.int64), R_dist_B, s_dist_B, k_bits,
         GAUSS_FRAC_BITS, GAUSS_TABLE_FRAC_BITS, gauss_table
@@ -225,9 +240,21 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
     dist_A_scaled = dist_A_float / denom
     dist_A_scaled = np.maximum(dist_A_scaled, 0.0)
 
-    s_dist_A, z_dist_A = get_quantization_params(dist_A_scaled)
-    Q_dist_A = quantize_tensor(dist_A_scaled, s_dist_A, z_dist_A)
-    R_dist_A = np.zeros_like(Q_dist_A, dtype=np.int64)
+    max_dist_A = float(np.max(dist_A_scaled))
+    z_dist_A = GAUSS_Z_DIST
+    s_dist_A = max_dist_A / (4095 - z_dist_A) if max_dist_A > 1e-12 else 1.0
+
+    M_A_A = int(np.floor(TWO_K * (s_q ** 2) / (s_dist_A * denom)))
+    M_B_A = int(np.floor(TWO_K * s_ca / (s_dist_A * denom)))
+    LHS_A = (M_A_A * (norm_qtilde_int[:, :, :, np.newaxis].astype(object)
+                       + norm_qtilde_int[:, :, np.newaxis, :].astype(object))
+             - 2 * M_B_A * (Q_sim_cross_A.astype(object) - z_ca)
+             + z_dist_A * TWO_K)
+    n_neg_A = int(np.sum(LHS_A < 0))
+    if n_neg_A > 0:
+        raise ValueError(f"dist_A integer LHS has {n_neg_A} negatives after z_dist offset")
+    Q_dist_A = (LHS_A // TWO_K).astype(np.int64)
+    R_dist_A = (LHS_A % TWO_K).astype(np.int64)
 
     kernel_A_val, table_idx_A, r_gauss_A, M_gauss_A, clamp_lo_A, clamp_hi_A = gaussian_lookup(
         Q_dist_A.astype(np.int64), R_dist_A, s_dist_A, k_bits,
@@ -330,7 +357,7 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
 
     M_temp = get_m_constant(s_B, s_v, s_temp, k=k_bits)
     Q_sim_temp, R_matmul_temp, M_prime_temp = sign_bit_grouping_matmul(
-        B_kernel_T, z_B, Q_v.astype(np.int64), z_v, z_temp, M_temp, k_bits
+        B_kernel_T, z_B, Q_v_masked.astype(np.int64), z_v, z_temp, M_temp, k_bits
     )
 
     # mid = B @ A^{+} : [B,H,S,m] @ [B,H,m,m] -> [B,H,S,m]
@@ -465,7 +492,7 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
           f"A: {n_mismatch_A}/{kernel_A_val.size}")
 
     # ── A-gate 2: ZEN equation verification ──
-    _verify_zen_equations(proj_witness, Q_q, z_q, Q_v, z_v,
+    _verify_zen_equations(proj_witness, Q_q_masked, z_q, Q_v_masked, z_v,
                           Q_sim_cross_B, R_cross_B, M_cb, M_prime_cb, z_cb,
                           Q_sim_cross_A, R_cross_A, M_ca, M_prime_ca, z_ca,
                           Q_landmarks_q, Q_lm_T,
@@ -516,11 +543,14 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
     np.savez_compressed(
         out_npz_path,
         **proj_witness,
-        # Chain inputs
+        # Chain inputs (unmasked: Freivalds verification)
         Q_q=Q_q.astype(np.int64),
         z_q=np.uint64(z_q),
         Q_v=Q_v.astype(np.int64),
         z_v=np.uint64(z_v),
+        # Chain inputs (masked: downstream matmuls)
+        Q_q_masked=Q_q_masked.astype(np.int64),
+        Q_v_masked=Q_v_masked.astype(np.int64),
         # Landmarks
         Q_landmarks_q=Q_landmarks_q.astype(np.int64),
         R_mean_q=R_mean_q.astype(np.int64),
@@ -542,19 +572,25 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
         z_sim_cross_A=np.uint64(z_ca),
         # Gaussian kernel B
         Q_dist_B=Q_dist_B.astype(np.int64),
+        R_dist_B=R_dist_B.astype(np.int64),
+        M_A_B=np.uint64(M_A_B),
+        M_B_B=np.uint64(M_B_B),
         s_dist_B=np.float64(s_dist_B),
         z_dist_B=np.uint64(z_dist_B),
         kernel_B=kernel_B_val.astype(np.uint64),
         table_idx_B=table_idx_B.astype(np.int64),
-        r_gauss_B=np.array(r_gauss_B, dtype=object),
+        r_gauss_B=np.array(r_gauss_B, dtype=np.int64),
         M_gauss_B=np.uint64(M_gauss_B),
         # Gaussian kernel A
         Q_dist_A=Q_dist_A.astype(np.int64),
+        R_dist_A=R_dist_A.astype(np.int64),
+        M_A_A=np.uint64(M_A_A),
+        M_B_A=np.uint64(M_B_A),
         s_dist_A=np.float64(s_dist_A),
         z_dist_A=np.uint64(z_dist_A),
         kernel_A=kernel_A_val.astype(np.uint64),
         table_idx_A=table_idx_A.astype(np.int64),
-        r_gauss_A=np.array(r_gauss_A, dtype=object),
+        r_gauss_A=np.array(r_gauss_A, dtype=np.int64),
         M_gauss_A=np.uint64(M_gauss_A),
         # Gaussian table
         gauss_table=gauss_table,
@@ -570,19 +606,19 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
         R_inv_remainders=np.stack([R_inv1, R_inv2, R_inv3, R_inv4]).astype(np.int64),
         # Chain: temp = B^T @ V
         Q_sim_temp=Q_sim_temp.astype(np.int64),
-        R_matmul_temp=R_matmul_temp.astype(np.int64),
+        R_temp=R_matmul_temp.astype(np.int64),
         M_temp=np.uint64(M_temp),
         M_prime_temp=np.uint64(M_prime_temp),
         z_sim_temp=np.uint64(z_temp),
         # Chain: mid = B @ A^{+}
         Q_sim_mid=Q_sim_mid.astype(np.int64),
-        R_matmul_mid=R_matmul_mid.astype(np.int64),
+        R_mid=R_matmul_mid.astype(np.int64),
         M_mid=np.uint64(M_mid),
         M_prime_mid=np.uint64(M_prime_mid),
         z_sim_mid=np.uint64(z_mid),
         # Chain: Y = mid @ temp
         Q_sim_Y=Q_sim_Y.astype(np.int64),
-        R_matmul_Y=R_matmul_Y.astype(np.int64),
+        R_Y=R_matmul_Y.astype(np.int64),
         M_Y=np.uint64(M_Y),
         M_prime_Y=np.uint64(M_prime_Y),
         z_sim_Y=np.uint64(z_Y),

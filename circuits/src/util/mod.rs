@@ -7,3 +7,5 @@ pub mod bert_attn_lookup;
 pub mod norm_detect;
 pub mod model_integrated_lookup;
 pub mod block_integrated_lookup;
+pub mod linformer_attn_lookup;
+pub mod soft_attn_lookup;

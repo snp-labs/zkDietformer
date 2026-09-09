@@ -3,3 +3,5 @@ pub mod bert_attn_circuit;
 pub mod bert_mlp_circuit;
 pub mod nystrom_attn_circuit;
 pub mod nystrom_mlp_circuit;
+pub mod linformer_attn_circuit;
+pub mod soft_attn_circuit;

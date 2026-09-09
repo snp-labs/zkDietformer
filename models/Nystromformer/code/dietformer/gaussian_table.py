@@ -20,10 +20,13 @@ UINT64_MAX = (1 << 64) - 1
 
 
 def generate_gaussian_table(table_frac_bits=GAUSS_TABLE_FRAC_BITS,
-                            frac_bits=GAUSS_FRAC_BITS):
+                            frac_bits=GAUSS_FRAC_BITS,
+                            z_dist=0):
     """Generate exp(-x) lookup table for Gaussian kernel.
 
-    table[i] = fixed_point(exp(-i / 2^table_frac_bits))
+    With z_dist offset (absorbs floor-truncation negative guard):
+      table[j] = 1.0 (fixed point)                    for j <= z_dist
+      table[j] = exp(-(j - z_dist) / 2^table_frac_bits) for j > z_dist
 
     Returns:
         np.ndarray of shape (65536,), dtype uint64.
@@ -31,18 +34,19 @@ def generate_gaussian_table(table_frac_bits=GAUSS_TABLE_FRAC_BITS,
     TABLE_SIZE = 1 << 16  # 65536
     scale = 1 << table_frac_bits
     indices = np.arange(TABLE_SIZE, dtype=np.float64)
-    real_x = indices / scale  # x in [0, 64)
-    exps = np.exp(-real_x)    # exp(-x), decreasing from 1 to ~0
+    shifted = np.maximum(indices - z_dist, 0.0)
+    real_x = shifted / scale
+    exps = np.exp(-real_x)
     fixed_exps = exps * float(1 << frac_bits)
     fixed_exps = np.clip(fixed_exps, 0, float(UINT64_MAX))
     return fixed_exps.astype(np.uint64)
 
 
 def save_gaussian_tables(out_dir, table_frac_bits=GAUSS_TABLE_FRAC_BITS,
-                         frac_bits=GAUSS_FRAC_BITS):
+                         frac_bits=GAUSS_FRAC_BITS, z_dist=0):
     """Save Gaussian exp(-x) table as gaussian_tables.npz for Rust Lasso."""
     os.makedirs(out_dir, exist_ok=True)
-    gauss_table = generate_gaussian_table(table_frac_bits, frac_bits)
+    gauss_table = generate_gaussian_table(table_frac_bits, frac_bits, z_dist)
     tables_2d = gauss_table.reshape(1, -1)  # (1, 65536)
     out_path = os.path.join(out_dir, "gaussian_tables.npz")
     np.savez_compressed(out_path, tables=tables_2d,
