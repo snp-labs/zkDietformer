@@ -2,16 +2,22 @@
 # ============================================================================
 # run_tiny_sweep.sh -- Linformer/SOFT attention circuit measurement sweep
 #
-# Tiny config: L=2, hidden=128, heads=2
-# Kernels:     Linformer (Freivalds, k=32), SOFT (Freivalds, m=32)
-# Sequences:   128, 256, 512, 1024, 2048, 4096
-# Total cells: 12
+# 폴더: outputs_n{128,256,512,1024,2048,4096}_{k32_,m32_}L2_h128_{linformer,soft}
+# 회로: linformer_attn (Freivalds) → soft_attn (Freivalds)
 #
-# SOFT epsilon: n-independent constants (eps1=8037, eps3=99, eps4=144)
-# Input text:   SAMPLE_TEXTS[0] from evaluation_fixtures.py
+# 환경: macOS (Darwin, ARM64 Mac Studio, 128 GB)
+# 용도: SSH 접속 후 nohup 백그라운드 실행 → 퇴근 후 자동 완료
 #
-# Usage:
-#   bash scripts/run_tiny_sweep.sh [OPTIONS]
+# 실행 방법:
+#   cd /Users/minhae/Projects/fin_zkdietformer/Dietformer/circuits
+#   chmod +x scripts/run_tiny_sweep.sh
+#   nohup caffeinate -i bash scripts/run_tiny_sweep.sh > logs/master_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+#   echo "PID: $!"
+#
+# 결과 확인:
+#   tail -f logs/master_*.log                                    # 진행 상황
+#   grep BENCHMARK_RESULT logs/prove_*.log                       # per-layer 벤치마크
+#   grep "maximum resident set size" logs/prove_*.time           # peak RSS (bytes)
 #
 # Options:
 #   --witness-only   Generate witnesses only (no circuit measurement)
@@ -23,6 +29,19 @@
 #   --help           Show this help
 # ============================================================================
 set -uo pipefail
+# NOTE: -e 미사용 — 한 테스트 실패해도 다음 테스트 계속 진행
+
+# ── 경로 설정 ────────────────────────────────────────────────────────────────
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CIRCUIT_DIR="$REPO_ROOT"
+DATA_BASE="$(cd "$REPO_ROOT/../models/Nystromformer/code/dietformer" && pwd)"
+PYTHON="/opt/miniconda3/envs/dietformer/bin/python"
+
+cd "$CIRCUIT_DIR"
+mkdir -p logs
+
+# macOS /usr/bin/time (절대 경로, shell builtin 아님)
+TIME_CMD="/usr/bin/time -l"
 
 # ── Constants ────────────────────────────────────────────────────────────────
 SOFT_EPS1=8037
@@ -30,7 +49,6 @@ SOFT_EPS3=99
 SOFT_EPS4=144
 
 SEQ_LENS="128 256 512 1024 2048 4096"
-KERNELS="linformer soft"
 
 INPUT_TEXT="The capital of France is [MASK]."
 INPUT_SEED=42
@@ -42,14 +60,6 @@ LAYERS=2
 PROJ_DIM=32          # Linformer k
 NUM_LANDMARKS=32     # SOFT m
 N_ITER=20            # Newton-Raphson T
-
-# ── Paths ────────────────────────────────────────────────────────────────────
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CIRCUIT_DIR="$REPO_ROOT"
-DATA_BASE="$(cd "$REPO_ROOT/../models/Nystromformer/code/dietformer" && pwd)"
-PYTHON="/opt/miniconda3/envs/dietformer/bin/python"
-
-TIME_CMD="/usr/bin/time -l"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 DO_WITNESS=true
@@ -78,12 +88,24 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# ── Logging setup ────────────────────────────────────────────────────────────
-cd "$CIRCUIT_DIR"
-mkdir -p logs
-
+# ── 시작 시각 ────────────────────────────────────────────────────────────────
 STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
-TOTAL=0; PASS=0; FAIL=0; SKIP=0; OOM=0
+echo "============================================"
+echo " run_tiny_sweep.sh started: $STARTED_AT"
+echo " Circuit dir: $CIRCUIT_DIR"
+echo " Data base:   $DATA_BASE"
+echo " Config:      L=$LAYERS, h=$HIDDEN, H=$HEADS"
+echo " Linformer:   k=$PROJ_DIM"
+echo " SOFT:        m=$NUM_LANDMARKS, T=$N_ITER, eps1=$SOFT_EPS1, eps3=$SOFT_EPS3, eps4=$SOFT_EPS4"
+echo "============================================"
+echo ""
+
+# ── 카운터 ────────────────────────────────────────────────────────────────────
+TOTAL_RUNS=0
+PASS_RUNS=0
+FAIL_RUNS=0
+SKIP_RUNS=0
+OOM_RUNS=0
 
 # ── Helper: witness directory name ───────────────────────────────────────────
 witness_dir() {
@@ -94,10 +116,18 @@ witness_dir() {
     esac
 }
 
+# ── Helper: cell tag ─────────────────────────────────────────────────────────
+cell_tag() {
+    local kernel="$1" n="$2"
+    case "$kernel" in
+        linformer) echo "linformer_attn_n${n}_k${PROJ_DIM}_L${LAYERS}_h${HIDDEN}" ;;
+        soft)      echo "soft_attn_n${n}_m${NUM_LANDMARKS}_L${LAYERS}_h${HIDDEN}" ;;
+    esac
+}
+
 # ── Helper: check if cell result exists ──────────────────────────────────────
 result_exists() {
     local tag="$1"
-    # A cell is complete if a prove log with BENCHMARK_RESULT exists
     local latest
     latest=$(ls -t logs/prove_${tag}_*.log 2>/dev/null | head -1)
     if [[ -n "$latest" ]] && grep -q "BENCHMARK_RESULT" "$latest" 2>/dev/null; then
@@ -134,7 +164,6 @@ gen_witness_linformer() {
         return 1
     fi
 
-    # Verify tokenization: log first 10 token IDs
     echo "  [verify] Token IDs from witness:"
     "$PYTHON" -c "
 import numpy as np, glob, os
@@ -197,7 +226,6 @@ w['eps1'] = np.array($SOFT_EPS1, dtype=np.uint64)
 w['eps3'] = np.array($SOFT_EPS3, dtype=np.uint64)
 w['eps4'] = np.array($SOFT_EPS4, dtype=np.uint64)
 np.savez_compressed('$wit', **w)
-# Verify
 v = np.load('$wit', allow_pickle=True)
 e1 = int(v['eps1']); e3 = int(v['eps3']); e4 = int(v['eps4'])
 if e1 != $SOFT_EPS1 or e3 != $SOFT_EPS3 or e4 != $SOFT_EPS4:
@@ -215,7 +243,6 @@ print(f'  [ok] {\"$wit\".split(\"/\")[-1]}: eps1={e1}, eps3={e3}, eps4={e4}')
         return 1
     fi
 
-    # Verify tokenization
     echo "  [verify] Token IDs from witness:"
     "$PYTHON" -c "
 import numpy as np, glob, os
@@ -232,254 +259,238 @@ for f in sorted(glob.glob(pat)):
 " 2>&1
 }
 
-# ── Circuit measurement ──────────────────────────────────────────────────────
+# ── 측정 함수 ────────────────────────────────────────────────────────────────
+# run_prove WITNESS_VAR DATA_DIR TEST_FN TAG
 run_prove() {
-    local witness_var="$1"
-    local data_dir="$2"
-    local test_fn="$3"
-    local tag="$4"
+    local WITNESS_VAR="$1"
+    local DATA_DIR="$2"
+    local TEST_FN="$3"
+    local TAG="$4"
 
-    local full_data_path="$DATA_BASE/$data_dir"
-    local ts
-    ts="$(date +%Y%m%d_%H%M%S)"
-    local log_file="logs/prove_${tag}_${ts}.log"
-    local time_file="logs/prove_${tag}_${ts}.time"
+    local FULL_DATA_PATH="$DATA_BASE/$DATA_DIR"
+    local TIMESTAMP
+    TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+    local LOG_FILE="logs/prove_${TAG}_${TIMESTAMP}.log"
+    local TIME_FILE="logs/prove_${TAG}_${TIMESTAMP}.time"
 
-    TOTAL=$((TOTAL + 1))
+    TOTAL_RUNS=$((TOTAL_RUNS + 1))
 
     echo "============================================"
-    echo "[$(date +%H:%M:%S)] #${TOTAL} $tag"
-    echo "  Test:  $test_fn"
-    echo "  Data:  $data_dir"
-    echo "  Log:   $log_file"
+    echo "[$(date +%H:%M:%S)] #${TOTAL_RUNS} $TAG"
+    echo "  Test:  $TEST_FN"
+    echo "  Data:  $DATA_DIR"
+    echo "  Log:   $LOG_FILE"
+    echo "  Time:  $TIME_FILE"
     echo "============================================"
 
-    if [[ ! -d "$full_data_path" ]]; then
-        SKIP=$((SKIP + 1))
-        echo "  [SKIP] Data dir not found: $full_data_path"
+    # 데이터 폴더 존재 확인
+    if [ ! -d "$FULL_DATA_PATH" ]; then
+        SKIP_RUNS=$((SKIP_RUNS + 1))
+        echo "  [SKIP] Data dir not found: $FULL_DATA_PATH"
         echo ""
         return 0
     fi
 
-    if [[ "$FORCE" != true ]] && result_exists "$tag"; then
-        SKIP=$((SKIP + 1))
-        echo "  [SKIP] Result exists for $tag"
+    # 기존 결과 확인
+    if [[ "$FORCE" != true ]] && result_exists "$TAG"; then
+        SKIP_RUNS=$((SKIP_RUNS + 1))
+        echo "  [SKIP] Result exists for $TAG"
         echo ""
         return 0
     fi
 
-    local exit_code=0
-    if env "$witness_var=$full_data_path" \
+    # stdout → prove log, stderr → time log (peak RSS)
+    local EXIT_CODE=0
+    if env "$WITNESS_VAR=$FULL_DATA_PATH" \
         $TIME_CMD \
-        cargo test --release "$test_fn" -- --nocapture \
-        > "$log_file" 2> "$time_file"; then
-        exit_code=0
-    else
-        exit_code=$?
-    fi
-
-    # Check for OOM (signal 9 = SIGKILL, common OOM behavior)
-    if [[ $exit_code -eq 137 ]] || grep -qi "killed" "$time_file" 2>/dev/null; then
-        OOM=$((OOM + 1))
-        echo "  [OOM] $tag (exit code: $exit_code)"
-        # Extract peak RSS before OOM
-        local peak_rss
-        peak_rss=$(grep "maximum resident set size" "$time_file" 2>/dev/null | awk '{print $1}' || echo "N/A")
-        echo "  Peak RSS at OOM: $peak_rss bytes"
-        echo "OOM" > "logs/result_${tag}.status"
-        echo ""
-        return 0
-    fi
-
-    if [[ $exit_code -ne 0 ]]; then
-        FAIL=$((FAIL + 1))
-        echo "  [FAIL] $tag (exit code: $exit_code)"
-        echo "FAIL" > "logs/result_${tag}.status"
-    else
-        # Verify eps source for SOFT
-        if [[ "$tag" == *soft* ]]; then
-            if grep -q "\[fallback\]" "$time_file" 2>/dev/null; then
-                FAIL=$((FAIL + 1))
-                echo "  [FAIL] $tag: eps loaded from fallback, not NPZ"
-                echo "FAIL_EPS_FALLBACK" > "logs/result_${tag}.status"
-                echo ""
-                return 0
-            fi
-            echo "  [eps] Source verified: all [npz]"
-        fi
-
-        PASS=$((PASS + 1))
-        echo "  [PASS] $tag"
-        echo "PASS" > "logs/result_${tag}.status"
-    fi
-
-    # Extract metrics
-    if [[ -f "$time_file" ]]; then
-        local peak_rss peak_rss_mb
-        peak_rss=$(grep "maximum resident set size" "$time_file" 2>/dev/null | awk '{print $1}' || echo "N/A")
-        if [[ "$peak_rss" != "N/A" ]] && [[ "$peak_rss" -gt 0 ]] 2>/dev/null; then
-            peak_rss_mb=$((peak_rss / 1048576))
+        cargo test --release "$TEST_FN" -- --nocapture \
+        > "$LOG_FILE" 2> "$TIME_FILE"; then
+        # SOFT: eps fallback check
+        if [[ "$TAG" == *soft_attn* ]] && grep -q "\[fallback\]" "$TIME_FILE" 2>/dev/null; then
+            FAIL_RUNS=$((FAIL_RUNS + 1))
+            echo "  [FAIL] $TAG (eps loaded from fallback, not NPZ)"
         else
-            peak_rss_mb="N/A"
+            PASS_RUNS=$((PASS_RUNS + 1))
+            echo "  [PASS] $TAG"
         fi
-        echo "  Peak RSS: ${peak_rss} bytes (${peak_rss_mb} MB)"
-    fi
-
-    local layer_count
-    layer_count=$(grep -c "BENCHMARK_RESULT" "$log_file" 2>/dev/null || echo "0")
-    echo "  Layers proved: $layer_count"
-
-    # Extract d1/d2/aux sizes
-    local d1_line
-    d1_line=$(grep "^d1=" "$log_file" 2>/dev/null | tail -1)
-    if [[ -n "$d1_line" ]]; then
-        echo "  Sizes: $d1_line"
-    fi
-
-    # SOFT-specific: eps and MP headroom from stderr
-    if [[ "$tag" == *soft* ]] && [[ -f "$time_file" ]]; then
-        local eps_line
-        eps_line=$(grep "\[soft\] eps" "$time_file" 2>/dev/null | head -1)
-        if [[ -n "$eps_line" ]]; then
-            echo "  $eps_line"
+    else
+        EXIT_CODE=$?
+        # OOM check (signal 9 = SIGKILL)
+        if [[ $EXIT_CODE -eq 137 ]] || grep -qi "killed" "$TIME_FILE" 2>/dev/null; then
+            OOM_RUNS=$((OOM_RUNS + 1))
         fi
+        FAIL_RUNS=$((FAIL_RUNS + 1))
+        echo "  [FAIL] $TAG (exit code: $EXIT_CODE)"
     fi
 
+    # peak RSS 추출 (macOS: bytes)
+    if [ -f "$TIME_FILE" ]; then
+        local PEAK_RSS
+        PEAK_RSS=$(grep "maximum resident set size" "$TIME_FILE" | awk '{print $1}' || echo "N/A")
+        local PEAK_RSS_MB
+        if [ "$PEAK_RSS" != "N/A" ] && [ "$PEAK_RSS" -gt 0 ] 2>/dev/null; then
+            PEAK_RSS_MB=$((PEAK_RSS / 1048576))
+        else
+            PEAK_RSS_MB="N/A"
+        fi
+        echo "  Peak RSS: ${PEAK_RSS} bytes (${PEAK_RSS_MB} MB)"
+    fi
+
+    # BENCHMARK_RESULT 라인 수 (= prove 완료 layer 수)
+    local LAYER_COUNT
+    LAYER_COUNT=$(grep -c "BENCHMARK_RESULT" "$LOG_FILE" 2>/dev/null || true)
+    : "${LAYER_COUNT:=0}"
+    echo "  Layers proved: $LAYER_COUNT"
     echo ""
 }
 
-# ── Main execution ───────────────────────────────────────────────────────────
+# ── Dry-run ──────────────────────────────────────────────────────────────────
+if [[ "$DRY_RUN" == true ]]; then
+    DRY_N=0
+    for KERNEL in linformer soft; do
+        if [[ -n "$FILTER_KERNEL" ]] && [[ "$FILTER_KERNEL" != "$KERNEL" ]]; then
+            continue
+        fi
+        for N in $SEQ_LENS; do
+            if [[ -n "$FILTER_SEQ" ]] && [[ "$N" != "$FILTER_SEQ" ]]; then
+                continue
+            fi
+            DRY_N=$((DRY_N + 1))
+            TAG="$(cell_tag "$KERNEL" "$N")"
+            DIR="$(witness_dir "$KERNEL" "$N")"
+            echo "[dry-run] #${DRY_N} $TAG"
+            echo "  witness: $DIR"
+            case "$KERNEL" in
+                linformer)
+                    echo "  env:  LINFORMER_ATTN_WITNESS_DIR=$DATA_BASE/$DIR"
+                    echo "  test: linformer_attn_single_layer_test"
+                    ;;
+                soft)
+                    echo "  env:  SOFT_ATTN_WITNESS_DIR=$DATA_BASE/$DIR"
+                    echo "  test: soft_attn_single_layer_test"
+                    echo "  eps:  eps1=$SOFT_EPS1 eps3=$SOFT_EPS3 eps4=$SOFT_EPS4"
+                    ;;
+            esac
+            echo ""
+        done
+    done
+    echo "Total cells: $DRY_N"
+    exit 0
+fi
 
-echo "============================================"
-echo " run_tiny_sweep.sh"
-echo " Started:    $STARTED_AT"
-echo " Circuit:    $CIRCUIT_DIR"
-echo " Data:       $DATA_BASE"
-echo " Python:     $PYTHON"
-echo " Config:     L=$LAYERS, h=$HIDDEN, H=$HEADS"
-echo " Linformer:  k=$PROJ_DIM"
-echo " SOFT:       m=$NUM_LANDMARKS, T=$N_ITER"
-echo " SOFT eps:   eps1=$SOFT_EPS1, eps3=$SOFT_EPS3, eps4=$SOFT_EPS4"
-echo " Input text: $INPUT_TEXT"
-echo " Input seed: $INPUT_SEED"
-echo " Witness:    $DO_WITNESS"
-echo " Circuit:    $DO_CIRCUIT"
-echo " Force:      $FORCE"
-echo "============================================"
-echo ""
-
-# Build (once)
-if [[ "$DO_CIRCUIT" == true ]] && [[ "$DRY_RUN" != true ]]; then
+# ── cargo 빌드 (release, 1회) ────────────────────────────────────────────────
+if [[ "$DO_CIRCUIT" == true ]]; then
     echo "=== [BUILD] cargo test --release --no-run ==="
     cargo test --release --no-run 2>&1 | tail -5
     echo ""
 fi
 
-# Iterate: small n first, linformer then soft
-for N in $SEQ_LENS; do
-    # Filter
-    if [[ -n "$FILTER_SEQ" ]] && [[ "$N" != "$FILTER_SEQ" ]]; then
-        continue
-    fi
+# ============================================================================
+# === 1. Linformer Attention (Freivalds) =====================================
+# ============================================================================
+if [[ -z "$FILTER_KERNEL" ]] || [[ "$FILTER_KERNEL" == "linformer" ]]; then
 
-    for K in $KERNELS; do
-        if [[ -n "$FILTER_KERNEL" ]] && [[ "$K" != "$FILTER_KERNEL" ]]; then
-            continue
-        fi
-
-        local_dir="$(witness_dir "$K" "$N")"
-        tag="${K}_freivalds_n${N}"
-
-        if [[ "$DRY_RUN" == true ]]; then
-            echo "[dry-run] $tag"
-            echo "  witness_dir: $local_dir"
-            case "$K" in
-                linformer)
-                    echo "  env: LINFORMER_ATTN_WITNESS_DIR=$DATA_BASE/$local_dir"
-                    echo "  test: linformer_attn_single_layer_test"
-                    ;;
-                soft)
-                    echo "  env: SOFT_ATTN_WITNESS_DIR=$DATA_BASE/$local_dir"
-                    echo "  test: soft_attn_single_layer_test"
-                    echo "  eps: eps1=$SOFT_EPS1 eps3=$SOFT_EPS3 eps4=$SOFT_EPS4"
-                    ;;
-            esac
-            echo ""
-            continue
-        fi
-
-        echo ""
-        echo "################################################################"
-        echo "# $K n=$N"
-        echo "################################################################"
-
-        # Witness generation
-        if [[ "$DO_WITNESS" == true ]]; then
-            wit_ok=true
-            case "$K" in
-                linformer) gen_witness_linformer "$N" || wit_ok=false ;;
-                soft)      gen_witness_soft "$N" || wit_ok=false ;;
-            esac
-            if [[ "$wit_ok" != true ]]; then
-                TOTAL=$((TOTAL + 1))
-                FAIL=$((FAIL + 1))
-                echo "  [FAIL] $tag: witness generation failed"
-                echo "FAIL_WITNESS" > "logs/result_${tag}.status"
+    # ── Witness generation ──────────────────────────────────────────────────
+    if [[ "$DO_WITNESS" == true ]]; then
+        echo "=== [WITNESS] Linformer ==="
+        for N in $SEQ_LENS; do
+            if [[ -n "$FILTER_SEQ" ]] && [[ "$N" != "$FILTER_SEQ" ]]; then
                 continue
             fi
-        fi
+            wit_ok=true
+            gen_witness_linformer "$N" || wit_ok=false
+            if [[ "$wit_ok" != true ]]; then
+                echo "  [FAIL] Linformer n=$N: witness generation failed"
+            fi
+        done
+        echo ""
+    fi
 
-        # Circuit measurement
-        if [[ "$DO_CIRCUIT" == true ]]; then
-            case "$K" in
-                linformer)
-                    run_prove "LINFORMER_ATTN_WITNESS_DIR" \
-                        "$local_dir" \
-                        "linformer_attn_single_layer_test" \
-                        "$tag"
-                    ;;
-                soft)
-                    run_prove "SOFT_ATTN_WITNESS_DIR" \
-                        "$local_dir" \
-                        "soft_attn_single_layer_test" \
-                        "$tag"
-                    ;;
-            esac
-        fi
-    done
-done
+    # ── Circuit measurement ─────────────────────────────────────────────────
+    if [[ "$DO_CIRCUIT" == true ]]; then
+        echo ""
+        echo "################################################################"
+        echo "# 1. Linformer Attention (Freivalds)"
+        echo "################################################################"
+        for N in $SEQ_LENS; do
+            if [[ -n "$FILTER_SEQ" ]] && [[ "$N" != "$FILTER_SEQ" ]]; then
+                continue
+            fi
+            run_prove "LINFORMER_ATTN_WITNESS_DIR" \
+                "$(witness_dir linformer "$N")" \
+                "linformer_attn_single_layer_test" \
+                "$(cell_tag linformer "$N")"
+        done
+    fi
 
-# ── Summary ──────────────────────────────────────────────────────────────────
-if [[ "$DRY_RUN" != true ]]; then
-    ENDED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    echo "============================================"
-    echo " run_tiny_sweep.sh complete"
-    echo " Started: $STARTED_AT"
-    echo " Ended:   $ENDED_AT"
-    echo "--------------------------------------------"
-    echo " Total:   $TOTAL"
-    echo " Pass:    $PASS"
-    echo " Fail:    $FAIL"
-    echo " OOM:     $OOM"
-    echo " Skip:    $SKIP"
-    echo "============================================"
-    echo ""
-    echo "=== Result commands ==="
-    echo ""
-    echo "# Per-layer benchmarks (JSON):"
-    echo "  grep BENCHMARK_RESULT logs/prove_*.log"
-    echo ""
-    echo "# Peak RSS:"
-    echo "  grep 'maximum resident set size' logs/prove_*.time"
-    echo ""
-    echo "# d1/d2/aux sizes:"
-    echo "  grep '^d1=' logs/prove_*.log"
-    echo ""
-    echo "# SOFT eps source:"
-    echo "  grep '\\[soft\\] eps' logs/prove_*.time"
-    echo ""
-    echo "# Cell status:"
-    echo "  cat logs/result_*.status"
-    echo ""
 fi
+
+# ============================================================================
+# === 2. SOFT Attention (Freivalds) ==========================================
+# ============================================================================
+if [[ -z "$FILTER_KERNEL" ]] || [[ "$FILTER_KERNEL" == "soft" ]]; then
+
+    # ── Witness generation ──────────────────────────────────────────────────
+    if [[ "$DO_WITNESS" == true ]]; then
+        echo "=== [WITNESS] SOFT ==="
+        for N in $SEQ_LENS; do
+            if [[ -n "$FILTER_SEQ" ]] && [[ "$N" != "$FILTER_SEQ" ]]; then
+                continue
+            fi
+            wit_ok=true
+            gen_witness_soft "$N" || wit_ok=false
+            if [[ "$wit_ok" != true ]]; then
+                echo "  [FAIL] SOFT n=$N: witness generation failed"
+            fi
+        done
+        echo ""
+    fi
+
+    # ── Circuit measurement ─────────────────────────────────────────────────
+    if [[ "$DO_CIRCUIT" == true ]]; then
+        echo ""
+        echo "################################################################"
+        echo "# 2. SOFT Attention (Freivalds)"
+        echo "################################################################"
+        for N in $SEQ_LENS; do
+            if [[ -n "$FILTER_SEQ" ]] && [[ "$N" != "$FILTER_SEQ" ]]; then
+                continue
+            fi
+            run_prove "SOFT_ATTN_WITNESS_DIR" \
+                "$(witness_dir soft "$N")" \
+                "soft_attn_single_layer_test" \
+                "$(cell_tag soft "$N")"
+        done
+    fi
+
+fi
+
+# ============================================================================
+# === 종합 결과 ==============================================================
+# ============================================================================
+ENDED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
+echo ""
+echo "============================================"
+echo " run_tiny_sweep.sh 완료"
+echo " 시작: $STARTED_AT"
+echo " 종료: $ENDED_AT"
+echo " 총 실행: $TOTAL_RUNS"
+echo " 성공:    $PASS_RUNS"
+echo " 실패:    $FAIL_RUNS"
+echo " 스킵:    $SKIP_RUNS"
+echo " OOM:     $OOM_RUNS"
+echo "============================================"
+echo ""
+echo "=== 결과 요약 명령 ==="
+echo ""
+echo "# per-layer 벤치마크 (JSON):"
+echo "  grep BENCHMARK_RESULT logs/prove_*.log"
+echo ""
+echo "# peak RSS (메모리, bytes):"
+echo "  grep 'maximum resident set size' logs/prove_*.time"
+echo ""
+echo "# 전체 wall time per run:"
+echo "  grep 'total_wall_ms' logs/prove_*.log"
+echo ""
+echo "# 실패한 run 확인:"
+echo "  grep '\\[FAIL\\]' logs/master_*.log"
