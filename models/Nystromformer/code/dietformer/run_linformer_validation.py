@@ -53,7 +53,14 @@ parser.add_argument(
     "--proj_dim", type=int, default=32,
     help="Linformer projection dim k (default 32).",
 )
+parser.add_argument(
+    "--seq_len", type=int, default=None,
+    help="Sequence length (default: MAX_SEQ_LEN from evaluation_fixtures).",
+)
 args = parser.parse_args()
+
+# Use --seq_len if provided, otherwise fall back to evaluation_fixtures constant.
+SEQ_LEN = args.seq_len if args.seq_len is not None else MAX_SEQ_LEN
 
 assert_fixture_invariants()
 
@@ -107,11 +114,11 @@ if args.save_attn_npz:
 elif args.hidden_size is not None:
     n_layers = args.num_hidden_layers or 4
     output_dir_name = (
-        f"outputs_n{MAX_SEQ_LEN}_k{args.proj_dim}"
+        f"outputs_n{SEQ_LEN}_k{args.proj_dim}"
         f"_L{n_layers}_h{args.hidden_size}_linformer"
     )
 else:
-    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_k{args.proj_dim}_linformer"
+    output_dir_name = f"outputs_n{SEQ_LEN}_k{args.proj_dim}_linformer"
 save_prefix = output_dir_name
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -120,7 +127,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Tokenizer + Model ────────────────────────────────────────────────────
 tokenizer = BertTokenizerFast.from_pretrained(
-    "bert-base-uncased", model_max_length=MAX_SEQ_LEN,
+    "bert-base-uncased", model_max_length=SEQ_LEN,
 )
 device = torch.device("cpu")
 
@@ -132,7 +139,7 @@ if args.hidden_size is not None:
         hidden_size=args.hidden_size,
         num_attention_heads=n_heads,
         num_hidden_layers=args.num_hidden_layers or 4,
-        seq_len=MAX_SEQ_LEN,
+        seq_len=SEQ_LEN,
     )
     print(f"[Linformer] RANDOM INIT — hidden={args.hidden_size}, heads={n_heads}")
 else:
@@ -149,11 +156,11 @@ assert n_swapped == expected_layers, (
 
 # Replace BERT attention with Linformer
 n_replaced = replace_bert_attn_with_linformer(
-    model, MAX_SEQ_LEN, proj_dim=args.proj_dim,
+    model, SEQ_LEN, proj_dim=args.proj_dim,
 )
 print(
     f"[Linformer] replaced {n_replaced} layers, "
-    f"proj_dim={args.proj_dim}, seq_len={MAX_SEQ_LEN}"
+    f"proj_dim={args.proj_dim}, seq_len={SEQ_LEN}"
 )
 
 # Apply monkey-patch capture
@@ -170,7 +177,7 @@ def _make_batches():
         enc = tokenizer(
             chunk,
             padding="max_length",
-            max_length=MAX_SEQ_LEN,
+            max_length=SEQ_LEN,
             truncation=True,
             return_tensors="pt",
         )
@@ -250,7 +257,7 @@ def _register_norm_hooks(model, saved_norm):
 # ── Main loop ─────────────────────────────────────────────────────────────
 print(
     f"Starting Linformer Validation: {args.num_batch} batches x "
-    f"{args.batch_size} samples (seq_len={MAX_SEQ_LEN}, k={args.proj_dim})"
+    f"{args.batch_size} samples (seq_len={SEQ_LEN}, k={args.proj_dim})"
 )
 
 batches = _make_batches()
@@ -275,7 +282,7 @@ for batch_idx, batch in enumerate(batches):
         batch_mask_np = batch["attention_mask"].cpu().numpy().astype(np.int64)
     else:
         batch_mask_np = np.ones(
-            (batch["input_ids"].shape[0], MAX_SEQ_LEN), dtype=np.int64,
+            (batch["input_ids"].shape[0], SEQ_LEN), dtype=np.int64,
         )
 
     # Process each captured layer

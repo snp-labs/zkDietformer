@@ -520,15 +520,36 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
     # ── A-gate 10: Misc ──
     import torch
     kernel_A_tensor = torch.tensor(debug['kernel_A'].astype(np.float64))
-    # Min singular value per (b,h) head
+    # SVD analysis per (b,h) head
     svd_mins = []
+    rank_per_head = []
+    cond_per_head = []
     for bi in range(B):
         for hi in range(H):
             sv = torch.linalg.svdvals(kernel_A_tensor[bi, hi])
             svd_mins.append(float(sv[-1]))
+            rank_per_head.append(int(torch.linalg.matrix_rank(
+                kernel_A_tensor[bi, hi]).item()))
+            cond_val = float(sv[0] / sv[-1]) if sv[-1] > 1e-12 else float('inf')
+            cond_per_head.append(cond_val)
+
+    # Landmark diagnostics: zero-vectors and duplicates
+    zero_lm_count = int(np.sum(norm_qtilde_int == 0))
+    dup_pairs = 0
+    for bi in range(B):
+        for hi in range(H):
+            lm = Q_landmarks_q[bi, hi]  # [m, D]
+            for i in range(m):
+                for j in range(i + 1, m):
+                    if np.array_equal(lm[i], lm[j]):
+                        dup_pairs += 1
+
     print(f"\n  [Misc]")
     print(f"  Sequence length: S={S}, landmarks: m={m}, seg={seg}")
     print(f"  A min singular values (per head): {svd_mins}")
+    print(f"  A rank (per head): {rank_per_head}")
+    print(f"  A condition number (per head): {cond_per_head}")
+    print(f"  Zero-vector landmarks: {zero_lm_count}, duplicate pairs: {dup_pairs}")
     print(f"  Masking: Q_proc and V pre-masked at z_q={z_q}, z_v={z_v}")
 
     # ── NPZ save ──
@@ -538,6 +559,11 @@ def process_soft_attn_debug_npz(debug_npz_path, out_npz_path,
         "cond2_max": cond2_max,
         "cond3_max": cond3_max,
         "cond4_max": cond4_max,
+        "svd_min_per_head": svd_mins,
+        "rank_per_head": rank_per_head,
+        "cond_number_per_head": cond_per_head,
+        "zero_landmark_count": zero_lm_count,
+        "duplicate_landmark_pairs": dup_pairs,
     }
 
     np.savez_compressed(

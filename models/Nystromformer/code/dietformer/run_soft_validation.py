@@ -115,6 +115,11 @@ def main():
         print(f"    cond1_max={result['cond1_max']}, "
               f"cond3_max={result['cond3_max']}, "
               f"cond4_max={result['cond4_max']}")
+        print(f"    svd_min={result['svd_min_per_head']}, "
+              f"rank={result['rank_per_head']}, "
+              f"cond={result['cond_number_per_head']}")
+        print(f"    zero_landmarks={result['zero_landmark_count']}, "
+              f"dup_pairs={result['duplicate_landmark_pairs']}")
 
         # Append epsilon to witness NPZ.
         # Use max(production_floor, 3 * actual_cond_max) to guarantee coverage.
