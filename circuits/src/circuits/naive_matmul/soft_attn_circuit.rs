@@ -12,9 +12,19 @@ use ark_serialize::CanonicalSerialize;
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, ConstraintSynthesizer, SynthesisError};
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, FieldVar}, R1CSVar, select::CondSelectGadget};
 use crate::{
-    circuits::freivalds_matmul::soft_attn_circuit::{
-        SOFTAttentionCircuit, GaussianBundle, DistBundle, load_soft_circuit,
-        alloc_weight_vars, split_52bit_remainder,
+    cc_snark::legogroth16::{create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof},
+    circuits::{
+        common::{
+            BenchmarkResult, Groth16Metrics, LassoBenchmarkMetrics, CpLinkMetrics, LassoMetricsAggregate,
+            factored_link_setup, factored_link_keygen, factored_link_prove, factored_link_verify,
+            global_link_setup, global_link_keygen, global_link_prove, global_link_verify,
+            pad_lasso_u_values, groth16_commitment_size,
+        },
+        freivalds_matmul::soft_attn_circuit::{
+            SOFTAttentionCircuit, GaussianBundle, DistBundle, load_soft_circuit,
+            alloc_weight_vars, split_52bit_remainder,
+        },
+        proof_size,
     },
     gadgets::{
         activation::gelu::split_remainder_and_push,
@@ -26,6 +36,11 @@ use crate::{
             },
             naive_quantized::enforce_naive_matmul,
         },
+    },
+    lasso::subtables::gaussian::set_gaussian_table_dir,
+    util::{
+        soft_attn_lookup::{run_soft_lasso_bundle, run_all_soft_remainders_with_link, run_soft_mp_conditions_with_link},
+        utils::{cm1_from_vk, cm2_from_vk, cm_aux_from_vk, generate_global_ck, commit_global, hash_commitments_to_field_v3},
     },
 };
 
@@ -554,12 +569,300 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for SOFTAttentionCircuitNot<F> {
     }
 }
 
+// === Naive matmul proving pipeline (Groth16 + Lasso + CP-Link) ===
+
+pub fn run_soft_attention_not_paths<E: Pairing>(targets: &[std::path::PathBuf]) -> Result<()>
+where
+    E: Pairing<ScalarField = Fr, G1 = ark_bn254::G1Projective, G1Affine = ark_bn254::G1Affine>,
+    <E::ScalarField as FromStr>::Err: core::fmt::Debug,
+{
+    let mut rng = StdRng::seed_from_u64(42u64);
+
+    // Set Gaussian table directory from the first witness file's parent dir
+    if let Some(first) = targets.first() {
+        if let Some(dir) = first.parent() {
+            set_gaussian_table_dir(dir);
+        }
+    }
+
+    for file_path in targets {
+        let e2e_start = Instant::now();
+        println!("\n=== [SOFT NOT] Processing: {:?} ===", file_path);
+
+        // Dry-run: extract committed witness indices (3 groups: d1, d2, d3/aux)
+        let (d1_indices, d2_indices, d3_indices) = {
+            let temp_circuit = load_soft_circuit::<E>(file_path)?;
+            let vars1_ptr = Rc::clone(&temp_circuit.committed_vars);
+            let vars2_ptr = Rc::clone(&temp_circuit.committed_vars_2);
+            let vars_aux_ptr = Rc::clone(&temp_circuit.committed_vars_aux);
+            let cs_analyze = ConstraintSystem::<Fr>::new_ref();
+            SOFTAttentionCircuitNot(temp_circuit).generate_constraints(cs_analyze)?;
+            (
+                crate::util::utils::extract_witness_indices(&vars1_ptr.borrow()),
+                crate::util::utils::extract_witness_indices(&vars2_ptr.borrow()),
+                crate::util::utils::extract_witness_indices(&vars_aux_ptr.borrow()),
+            )
+        };
+        let num_commit_1 = d1_indices.len() as u32;
+        let num_commit_2 = d2_indices.len() as u32;
+        let num_commit_3 = d3_indices.len() as u32;
+        println!("Commit counts: d1={}, d2={}, d3={}", num_commit_1, num_commit_2, num_commit_3);
+
+        let sample_circuit = load_soft_circuit::<E>(file_path)?;
+
+        // [0] Setup
+        println!("=== [0] LegoGroth16 Setup (d1={}, d2={}, d3={}) ===", num_commit_1, num_commit_2, num_commit_3);
+        let setup_start = Instant::now();
+        let params = generate_random_parameters::<E, _, _>(
+            SOFTAttentionCircuitNot(sample_circuit.clone()),
+            &d1_indices, &d2_indices, &d3_indices,
+            &mut rng,
+        ).map_err(|e| anyhow::anyhow!("Setup failed: {:?}", e))?;
+        let setup_time = setup_start.elapsed();
+        let pvk = prepare_verifying_key::<E>(&params.vk);
+
+        // Witness extraction + constraint count
+        let cs_witness = ConstraintSystem::<Fr>::new_ref();
+        SOFTAttentionCircuitNot(sample_circuit.clone()).generate_constraints(cs_witness.clone())?;
+        let num_constraints = cs_witness.num_constraints();
+
+        let committed_group1 = {
+            let vars = sample_circuit.committed_vars.borrow();
+            let values: Vec<Fr> = vars.iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
+            assert_eq!(values.len(), num_commit_1 as usize, "d1 size mismatch");
+            values
+        };
+        let committed_group2 = {
+            let vars = sample_circuit.committed_vars_2.borrow();
+            let values: Vec<Fr> = vars.iter().map(|v| v.value().unwrap_or(Fr::zero())).collect();
+            assert_eq!(values.len(), num_commit_2 as usize, "d2 size mismatch");
+            values
+        };
+        let committed_aux = {
+            let vars = sample_circuit.committed_vars_aux.borrow();
+            vars.iter().map(|v| v.value().unwrap_or(Fr::zero())).collect::<Vec<Fr>>()
+        };
+
+        println!("d1={}, d2={}, aux={}", committed_group1.len(), committed_group2.len(), committed_aux.len());
+
+        let v1 = Fr::rand(&mut rng);
+        let v2 = Fr::rand(&mut rng);
+        let v3 = Fr::rand(&mut rng);
+        let num_pub = cs_witness.num_instance_variables() - 1;
+
+        // Groth16 commit (cm1, cm2, cm_aux)
+        let g16_commit_start = Instant::now();
+        let cm1_start = Instant::now();
+        let cm1 = cm1_from_vk::<E>(&params.vk, num_pub, &committed_group1, &v1);
+        let cm1_ms = cm1_start.elapsed().as_millis();
+        let cm2_start = Instant::now();
+        let cm2 = cm2_from_vk::<E>(&params.vk, num_pub, &committed_group2, &v2);
+        let cm2_ms = cm2_start.elapsed().as_millis();
+        let cm_aux_start = Instant::now();
+        let cm_aux = cm_aux_from_vk::<E>(&params.vk, num_pub, &committed_aux, &v3);
+        let cm_aux_ms = cm_aux_start.elapsed().as_millis();
+        let g16_commit_ms = g16_commit_start.elapsed().as_millis();
+
+        // Global weight commitment
+        let global_commit_start = Instant::now();
+        let ck_glob = generate_global_ck::<E, _>(committed_group2.len(), &mut rng);
+        let o_glob = Fr::rand(&mut rng);
+        let c_w = commit_global::<E>(&ck_glob, &committed_group2, &o_glob);
+        let global_commit_ms = global_commit_start.elapsed().as_millis();
+
+        // Poseidon hashes
+        let poseidon_config = crate::gadgets::poseidon_helper::default_poseidon_config::<Fr>();
+        let input_hash = {
+            let mut x_flat: Vec<Fr> = Vec::new();
+            for batch in &sample_circuit.q_x_input {
+                for seq in batch { x_flat.extend(seq.iter()); }
+            }
+            crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &x_flat)
+        };
+        let output_hash = {
+            let mut output_flat: Vec<Fr> = Vec::new();
+            for batch in &sample_circuit.proj_o.q_out_proj {
+                for head in batch { for seq in head { output_flat.extend(seq.iter()); } }
+            }
+            crate::gadgets::poseidon_helper::poseidon_hash(&poseidon_config, &output_flat)
+        };
+
+        // Multi-commitment Fiat-Shamir challenge (v3: includes cm_aux)
+        let r_fs = hash_commitments_to_field_v3::<E>(&c_w, &cm1, &cm2, &cm_aux, &input_hash, &output_hash);
+
+        println!("=== [1] Building final circuit with Fiat-Shamir challenge ===");
+        let final_inner = SOFTAttentionCircuit {
+            r_challenge: r_fs,
+            input_hash,
+            output_hash,
+            ..sample_circuit.clone()
+        };
+
+        // R1CS satisfaction check
+        {
+            let cs_check = ConstraintSystem::<Fr>::new_ref();
+            SOFTAttentionCircuitNot(final_inner.clone()).generate_constraints(cs_check.clone())?;
+            let is_sat = cs_check.is_satisfied().unwrap_or(false);
+            if !is_sat {
+                let unsat = cs_check.which_is_unsatisfied().unwrap();
+                eprintln!("R1CS not satisfied: {:?}", unsat);
+                return Err(anyhow::anyhow!("R1CS not satisfied (final_circuit)"));
+            }
+            println!("  R1CS satisfied: {} constraints", cs_check.num_constraints());
+        }
+
+        // [1] Groth16 Prove
+        let groth16_prove_start = Instant::now();
+        let proof = create_random_proof::<E, _, _>(
+            SOFTAttentionCircuitNot(final_inner.clone()), v1, v2, v3, &params, &mut rng,
+        ).map_err(|e| anyhow::anyhow!("Groth16 proof generation failed: {:?}", e))?;
+        let groth16_prove_time = groth16_prove_start.elapsed();
+
+        let mut proof_bytes = Vec::new();
+        proof.serialize_uncompressed(&mut proof_bytes)
+            .map_err(|e| anyhow::anyhow!("Proof serialization failed: {:?}", e))?;
+        let proof_size = proof_bytes.len();
+
+        // [1] Groth16 Verify
+        let public_inputs = vec![final_inner.r_challenge, final_inner.input_hash, final_inner.output_hash];
+        let groth16_verify_start = Instant::now();
+        let result = verify_proof::<E>(&pvk, &proof, &public_inputs);
+        let groth16_verify_time = groth16_verify_start.elapsed();
+
+        println!("  - SOFT NOT SNARK Verification: {:?}", result);
+        if let Err(e) = result {
+            return Err(anyhow::anyhow!("Groth16 verify failed: {:?}", e));
+        }
+        println!("  output_hash = {:?}", final_inner.output_hash.into_bigint());
+
+        let g16_report = proof_size::compute_groth16_report::<E>(&proof);
+        g16_report.print_log();
+
+        // [2] Lasso (Gaussian bundles + remainders + MP conditions)
+        proof_size::reset_lasso_aggregator();
+        println!("=== [2] SOFT NOT Lasso Lookup Proofs ===");
+        let lasso_start = Instant::now();
+        let mut lasso_agg = LassoMetricsAggregate::default();
+
+        let (lasso_gauss_b, gb_agg) = run_soft_lasso_bundle(&final_inner.gauss_b.table_idx, b"soft_gauss_b", &mut rng)?;
+        lasso_agg.add_aggregate(&gb_agg);
+        let (lasso_gauss_a, ga_agg) = run_soft_lasso_bundle(&final_inner.gauss_a.table_idx, b"soft_gauss_a", &mut rng)?;
+        lasso_agg.add_aggregate(&ga_agg);
+        let (lasso_remainders, rem_agg) = run_all_soft_remainders_with_link(&final_inner, &mut rng)?;
+        lasso_agg.add_aggregate(&rem_agg);
+        let (mp_results, mp_agg) = run_soft_mp_conditions_with_link(&final_inner, &mut rng)?;
+        lasso_agg.add_aggregate(&mp_agg);
+
+        let lasso_time = lasso_start.elapsed();
+        lasso_agg.total_ms = lasso_time.as_millis();
+
+        let mut lasso_results = Vec::new();
+        lasso_results.extend(lasso_gauss_b);
+        lasso_results.extend(lasso_gauss_a);
+        lasso_results.extend(lasso_remainders);
+        lasso_results.extend(mp_results);
+
+        // [3] CP-Link #1: d1 <-> Lasso
+        let u_padded = pad_lasso_u_values::<E>(&lasso_results, &committed_group1);
+        let cpl_setup_start = Instant::now();
+        let (pp_lasso, crs_lasso) = factored_link_setup::<E, _>(&params.vk, num_pub, committed_group1.len(), &lasso_results, &mut rng);
+        let (ek_lasso, vk_link_lasso) = factored_link_keygen::<E, _>(&pp_lasso, crs_lasso, &mut rng);
+        let cpl_setup_ms = cpl_setup_start.elapsed().as_millis();
+
+        let cpl_prove_start = Instant::now();
+        let (proof_link_lasso, instance_lasso) = factored_link_prove::<E, _>(&pp_lasso, &ek_lasso, v1, cm1, &lasso_results, u_padded, &mut rng);
+        let cpl_prove_ms = cpl_prove_start.elapsed().as_millis();
+
+        let cpl_verify_start = Instant::now();
+        if !factored_link_verify::<E>(&pp_lasso, &vk_link_lasso, &instance_lasso, &proof_link_lasso) {
+            return Err(anyhow::anyhow!("CP-Link #1 (d1 <-> Lasso) verification failed"));
+        }
+        println!("  -> [Success] CP-Link #1 (d1 <-> Lasso) verified");
+        let cpl_verify_ms = cpl_verify_start.elapsed().as_millis();
+
+        let cplink_lasso_report = proof_size::compute_cplink_report::<E>(&proof_link_lasso, &instance_lasso);
+        cplink_lasso_report.print_log();
+
+        // [4] CP-Link #2: c_W <-> d2
+        let cpg_setup_start = Instant::now();
+        let (pp_glob, crs_glob) = global_link_setup::<E, _>(&params.vk, num_pub, &ck_glob, &mut rng);
+        let (ek_glob, vk_link_glob) = global_link_keygen::<E, _>(&pp_glob, crs_glob, &mut rng);
+        let cpg_setup_ms = cpg_setup_start.elapsed().as_millis();
+
+        let cpg_prove_start = Instant::now();
+        let (proof_link_glob, instance_glob) = global_link_prove::<E, _>(
+            &pp_glob, &ek_glob, o_glob, v2, &committed_group2, c_w, proof.d2, &mut rng,
+        );
+        let cpg_prove_ms = cpg_prove_start.elapsed().as_millis();
+
+        let cpg_verify_start = Instant::now();
+        if !global_link_verify::<E>(&pp_glob, &vk_link_glob, &instance_glob, &proof_link_glob) {
+            return Err(anyhow::anyhow!("CP-Link #2 (c_W <-> d2) verification failed"));
+        }
+        println!("  -> [Success] CP-Link #2 (c_W <-> d2) verified");
+        let cpg_verify_ms = cpg_verify_start.elapsed().as_millis();
+
+        let cplink_global_report = proof_size::compute_cplink_report::<E>(&proof_link_glob, &instance_glob);
+        cplink_global_report.print_log();
+
+        // Fiat-Shamir verification
+        let r_fs_verify = hash_commitments_to_field_v3::<E>(
+            &c_w, &proof.d1, &proof.d2, &proof.d3,
+            &public_inputs[1], &public_inputs[2],
+        );
+        assert_eq!(r_fs, r_fs_verify, "Fiat-Shamir recomputation mismatch");
+        println!("  -> [Success] Fiat-Shamir recomputation verified");
+
+        proof_size::print_full_report(&g16_report, &cplink_lasso_report, &cplink_global_report);
+
+        let e2e_time = e2e_start.elapsed();
+
+        BenchmarkResult {
+            file: file_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
+            circuit: "soft_attention_not".to_string(),
+            constraints: num_constraints,
+            groth16: Groth16Metrics {
+                setup_ms: setup_time.as_millis(),
+                commit_ms: g16_commit_ms,
+                cm1_ms,
+                cm2_ms,
+                cm_aux_ms,
+                prove_ms: groth16_prove_time.as_millis(),
+                verify_ms: groth16_verify_time.as_millis(),
+                proof_size_bytes: proof_size,
+                commitment_size_bytes: groth16_commitment_size::<E>(&cm1),
+            },
+            lasso: LassoBenchmarkMetrics::from_aggregate(&lasso_agg),
+            cp_link_lasso: CpLinkMetrics {
+                commit_ms: 0,
+                setup_ms: cpl_setup_ms,
+                prove_ms: cpl_prove_ms,
+                verify_ms: cpl_verify_ms,
+                proof_size_bytes: cplink_lasso_report.proof_total,
+            },
+            cp_link_global: CpLinkMetrics {
+                commit_ms: global_commit_ms,
+                setup_ms: cpg_setup_ms,
+                prove_ms: cpg_prove_ms,
+                verify_ms: cpg_verify_ms,
+                proof_size_bytes: cplink_global_report.proof_total,
+            },
+            end_to_end_ms: e2e_time.as_millis(),
+        }
+        .print_json();
+    }
+    Ok(())
+}
+
+
 #[test]
 fn soft_attn_naive_single_layer_test() {
     use std::env;
 
     let witness_dir = env::var("NAIVE_SOFT_ATTN_WITNESS_DIR")
         .unwrap_or_else(|_| "outputs_soft".to_string());
+    let layer_idx: Option<usize> = env::var("NAIVE_SOFT_ATTN_LAYER_IDX")
+        .ok().and_then(|s| s.parse().ok());
 
     let dir = Path::new(&witness_dir);
     if !dir.is_dir() {
@@ -567,5 +870,40 @@ fn soft_attn_naive_single_layer_test() {
         return;
     }
 
-    eprintln!("[info] Naive matmul test: would require run_soft_attention_not_paths (not implemented yet)");
+    let mut all_targets: Vec<std::path::PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir).expect("reading witness dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_file()
+            && path.file_name().and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with("attention_self.witness.npz"))
+        {
+            all_targets.push(path);
+        }
+    }
+    all_targets.sort();
+
+    if all_targets.is_empty() {
+        eprintln!("[skip] no '*attention_self.witness.npz' files in {}.", witness_dir);
+        return;
+    }
+
+    let targets = if let Some(idx) = layer_idx {
+        if idx >= all_targets.len() {
+            panic!("NAIVE_SOFT_ATTN_LAYER_IDX={} out of range.", idx);
+        }
+        vec![all_targets[idx].clone()]
+    } else {
+        all_targets
+    };
+
+    println!("\n=== [SOFT Attention NAIVE prove+verify] dir={} | files={} ===", witness_dir, targets.len());
+
+    let total_start = std::time::Instant::now();
+    let res = run_soft_attention_not_paths::<Bn254>(&targets);
+    let total_ms = total_start.elapsed().as_millis();
+
+    match res {
+        Ok(()) => println!("\n=== [SOFT Attention NAIVE] ALL {} files PASS | total_wall_ms={} ===", targets.len(), total_ms),
+        Err(e) => panic!("[SOFT Attention NAIVE] proof failed after {}ms: {}", total_ms, e),
+    }
 }

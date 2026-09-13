@@ -70,7 +70,8 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    out_dir = f"outputs_n{S}_m{m}_L{L}_h{HD}_soft"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    out_dir = os.path.join(script_dir, f"outputs_n{S}_m{m}_L{L}_h{HD}_soft")
     os.makedirs(out_dir, exist_ok=True)
 
     model = build_soft_model(HD, H, L, S, m, args.n_iter)
