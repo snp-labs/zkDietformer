@@ -1,0 +1,168 @@
+  Gaussian table saved to /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n128_m32_L2_h128_soft/gaussian_tables.npz -- shape (1, 65536)
+S=128, m=32, valid=9, pad=119
+  Gaussian table saved to /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n128_m32_L2_h128_soft/gaussian_tables.npz -- shape (1, 65536)
+  [Clamping] B: lo=0 hi=0, A: lo=0 hi=0
+  table_idx_B: min=0, max=32, TABLE_SIZE=65536
+  table_idx_A: min=0, max=12, TABLE_SIZE=65536
+  Margin: B high=65503, A high=65523
+
+  [MP Conditions]
+   Cond |  max|diff| |  % of 4095 |       3x |       5x |  Nystrom |    Paper
+  ------+------------+------------+----------+----------+----------+---------
+      1 |       1779 |     43.44% |     5337 |     8895 |     4096 |      512
+      2 |       3896 |     95.14% |    11688 |    19480 |      N/A |      N/A
+      3 |         28 |      0.68% |       84 |      140 |      512 |       64
+      4 |         37 |      0.90% |      111 |      185 |       32 |        4
+
+  [Newton-Raphson convergence] T=20
+     t |  ||A A_k A - A||/||A|| |  ||A_k A A_k - A_k||/||A_k||
+  -----+------------------------+-----------------------------
+     0 |     9.980468566758e-01 |           9.980468451281e-01
+     1 |     9.960975281282e-01 |           9.960975223670e-01
+     2 |     9.922102855742e-01 |           9.922102827406e-01
+     3 |     9.844812509238e-01 |           9.844812497052e-01
+     4 |     9.692033339185e-01 |           9.692033341443e-01
+     5 |     9.393551044714e-01 |           9.393551080651e-01
+    10 |     1.350717545304e-01 |           1.350878337457e-01
+    15 |     1.008848421123e-03 |           6.443138975019e-02
+    17 |     1.008682598536e-03 |           2.499962932527e-01
+    18 |     1.008461550774e-03 |           4.586696387423e-01
+    19 |     1.008019623272e-03 |           7.177532486713e-01
+
+  [Fidelity]
+         Stage |     CosSim |    MaxAbsErr
+  -------------+------------+-------------
+     landmarks | 0.99997854 | 5.914618e-04
+       cross_B | 0.99999889 | 4.971417e-04
+       cross_A | 0.99999953 | 3.039965e-04
+        dist_B | 0.99999966 | 5.085883e-05
+        dist_A | 0.99999960 | 2.111781e-05
+      kernel_B | 0.99999984 | 1.889408e-03
+      kernel_A | 0.99999983 | 1.889408e-03
+         inv_A | 0.99999466 | 1.033187e-05
+          temp | 0.99999699 | 7.546480e-03
+           mid | 0.99999677 | 3.122277e-04
+             Y | 0.99999459 | 2.736074e-02
+        O-proj | 0.99999336 | 6.148780e-03
+
+  [dist statistics]
+  dist_B: min=0.000000, max=0.031564, mean=0.002401
+  dist_A: min=0.000000, max=0.012484, mean=0.001339
+
+  [Gaussian consistency] B: 0/8192, A: 0/2048
+
+  [ZEN equations]
+           Matmul |    Total | Mismatch |   MaxDev
+  ----------------+----------+----------+---------
+          cross_B |     8192 |        0 |        0
+          cross_A |     2048 |        0 |        0
+         MP_step1 |     2048 |        0 |        0
+         MP_step2 |     2048 |        0 |        0
+       MP_step2-1 |     2048 |        0 |        0
+       MP_step2-2 |     2048 |        0 |        0
+             temp |     4096 |        0 |        0
+              mid |     8192 |        0 |        0
+                Y |    16384 |        0 |        0
+
+  [Recovery injectivity]
+  kernel_B dist recovery: 8192/8192 match, 0 mismatch
+  kernel_A dist recovery: 2048/2048 match, 0 mismatch
+  kernel_B cross recovery: 8192/8192 within 1e-4, max_diff=9.812584e-05
+  kernel_A cross recovery: 2048/2048 within 1e-4, max_diff=3.145580e-05
+
+  [Misc]
+  Sequence length: S=128, landmarks: m=32, seg=4
+  A min singular values (per head): [0.0, 0.0]
+  A rank (per head): [4, 4]
+  A condition number (per head): [inf, inf]
+  Zero-vector landmarks: 58, duplicate pairs: 812
+  Masking: Q_proc and V pre-masked at z_q=1966, z_v=2071
+  bert_encoder_layer_0_attention_self: CosSim=0.99999336
+    cond1_max=1779, cond3_max=28, cond4_max=37
+    svd_min=[0.0, 0.0], rank=[4, 4], cond=[inf, inf]
+    zero_landmarks=58, dup_pairs=812
+    eps1=5337, eps3=84, eps4=195 (production, layer 0)
+  Gaussian table saved to /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n128_m32_L2_h128_soft/gaussian_tables.npz -- shape (1, 65536)
+  [Clamping] B: lo=0 hi=0, A: lo=0 hi=0
+  table_idx_B: min=0, max=40, TABLE_SIZE=65536
+  table_idx_A: min=0, max=20, TABLE_SIZE=65536
+  Margin: B high=65495, A high=65515
+
+  [MP Conditions]
+   Cond |  max|diff| |  % of 4095 |       3x |       5x |  Nystrom |    Paper
+  ------+------------+------------+----------+----------+----------+---------
+      1 |       2679 |     65.42% |     8037 |    13395 |     4096 |      512
+      2 |       3830 |     93.53% |    11490 |    19150 |      N/A |      N/A
+      3 |         33 |      0.81% |       99 |      165 |      512 |       64
+      4 |         27 |      0.66% |       81 |      135 |       32 |        4
+
+  [Newton-Raphson convergence] T=20
+     t |  ||A A_k A - A||/||A|| |  ||A_k A A_k - A_k||/||A_k||
+  -----+------------------------+-----------------------------
+     0 |     9.980468294029e-01 |           9.980468178519e-01
+     1 |     9.960974737055e-01 |           9.960974679411e-01
+     2 |     9.922101772198e-01 |           9.922101744398e-01
+     3 |     9.844810361679e-01 |           9.844810353213e-01
+     4 |     9.692029121319e-01 |           9.692029141821e-01
+     5 |     9.393542911166e-01 |           9.393543027754e-01
+    10 |     1.350752576731e-01 |           1.351255485076e-01
+    15 |     1.783781985231e-03 |           1.134318380716e-01
+    17 |     1.782673627825e-03 |           4.150287563786e-01
+    18 |     1.781197061167e-03 |           6.730865852393e-01
+    19 |     1.778248185074e-03 |           8.739906784559e-01
+
+  [Fidelity]
+         Stage |     CosSim |    MaxAbsErr
+  -------------+------------+-------------
+     landmarks | 0.99999327 | 5.729185e-04
+       cross_B | 0.99999931 | 5.831072e-04
+       cross_A | 0.99999922 | 4.684068e-04
+        dist_B | 0.99999970 | 3.395146e-05
+        dist_A | 0.99999939 | 3.076496e-05
+      kernel_B | 0.99999985 | 1.886606e-03
+      kernel_A | 0.99999982 | 1.873314e-03
+         inv_A | 0.99999481 | 1.802010e-05
+          temp | 0.99999640 | 8.239928e-03
+           mid | 0.99998986 | 5.163569e-04
+             Y | 0.99998922 | 6.316819e-02
+        O-proj | 0.99998914 | 9.454750e-03
+
+  [dist statistics]
+  dist_B: min=0.000000, max=0.039757, mean=0.002993
+  dist_A: min=0.000000, max=0.020050, mean=0.002100
+
+  [Gaussian consistency] B: 0/8192, A: 0/2048
+
+  [ZEN equations]
+           Matmul |    Total | Mismatch |   MaxDev
+  ----------------+----------+----------+---------
+          cross_B |     8192 |        0 |        0
+          cross_A |     2048 |        0 |        0
+         MP_step1 |     2048 |        0 |        0
+         MP_step2 |     2048 |        0 |        0
+       MP_step2-1 |     2048 |        0 |        0
+       MP_step2-2 |     2048 |        0 |        0
+             temp |     4096 |        0 |        0
+              mid |     8192 |        0 |        0
+                Y |    16384 |        0 |        0
+
+  [Recovery injectivity]
+  kernel_B dist recovery: 8192/8192 match, 0 mismatch
+  kernel_A dist recovery: 2048/2048 match, 0 mismatch
+  kernel_B cross recovery: 8192/8192 within 1e-4, max_diff=9.150918e-05
+  kernel_A cross recovery: 2048/2048 within 1e-4, max_diff=3.917919e-05
+
+  [Misc]
+  Sequence length: S=128, landmarks: m=32, seg=4
+  A min singular values (per head): [0.0, 0.0]
+  A rank (per head): [4, 4]
+  A condition number (per head): [inf, inf]
+  Zero-vector landmarks: 58, duplicate pairs: 812
+  Masking: Q_proc and V pre-masked at z_q=2095, z_v=2304
+  bert_encoder_layer_1_attention_self: CosSim=0.99998914
+    cond1_max=2679, cond3_max=33, cond4_max=27
+    svd_min=[0.0, 0.0], rank=[4, 4], cond=[inf, inf]
+    zero_landmarks=58, dup_pairs=812
+    eps1=8037, eps3=99, eps4=195 (production, layer 1)
+
+Output: /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer/outputs_n128_m32_L2_h128_soft/

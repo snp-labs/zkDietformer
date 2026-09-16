@@ -1,0 +1,324 @@
+============================================
+ measure_linformercir.sh (Circuit Proving)
+ Started:     2026-09-14 09:00:20
+ Circuit dir: /Users/zkrypto12/zkdietformer/Dietformer/circuits
+ Data base:   /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer
+ Log dir:     logs/results_softlinformer/tiny_circuit
+ Config:      L=2, h=128, H=2
+ Linformer:   k=32
+ SOFT:        m=32, eps=8037/99/144
+ Variant:     both
+============================================
+
+=== [BUILD] cargo test --release --no-run ===
+
+warning: `nystromformer` (lib) generated 16 warnings (run `cargo fix --lib -p nystromformer` to apply 3 suggestions)
+warning: `nystromformer` (lib test) generated 16 warnings (16 duplicates)
+    Finished `release` profile [optimized + debuginfo] target(s) in 3m 17s
+  Executable unittests src/lib.rs (target/release/deps/nystromformer-d2b7cdf411c2ccd6)
+
+
+################################################################
+# 1. Linformer Attention (Freivalds)
+################################################################
+============================================
+[09:03:37] #1 linformer_attn_freivalds_n128_k32_L2_h128
+  Test:  linformer_attn_single_layer_test
+  Data:  outputs_n128_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n128_k32_L2_h128_20260914_090337.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n128_k32_L2_h128_20260914_090337.time
+============================================
+  [PASS] linformer_attn_freivalds_n128_k32_L2_h128
+  Peak RSS: 25031311360 bytes (23871 MB)
+  Layers proved: 2
+
+============================================
+[09:10:39] #2 linformer_attn_freivalds_n256_k32_L2_h128
+  Test:  linformer_attn_single_layer_test
+  Data:  outputs_n256_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n256_k32_L2_h128_20260914_091039.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n256_k32_L2_h128_20260914_091039.time
+============================================
+  [PASS] linformer_attn_freivalds_n256_k32_L2_h128
+  Peak RSS: 49688215552 bytes (47386 MB)
+  Layers proved: 2
+
+============================================
+[09:24:42] #3 linformer_attn_freivalds_n512_k32_L2_h128
+  Test:  linformer_attn_single_layer_test
+  Data:  outputs_n512_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n512_k32_L2_h128_20260914_092442.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n512_k32_L2_h128_20260914_092442.time
+============================================
+  [PASS] linformer_attn_freivalds_n512_k32_L2_h128
+  Peak RSS: 87742726144 bytes (83677 MB)
+  Layers proved: 2
+
+============================================
+[09:53:09] #4 linformer_attn_freivalds_n1024_k32_L2_h128
+  Test:  linformer_attn_single_layer_test
+  Data:  outputs_n1024_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n1024_k32_L2_h128_20260914_095309.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n1024_k32_L2_h128_20260914_095309.time
+============================================
+  [PASS] linformer_attn_freivalds_n1024_k32_L2_h128
+  Peak RSS: 116734984192 bytes (111327 MB)
+  Layers proved: 2
+
+============================================
+[11:07:17] #5 linformer_attn_freivalds_n2048_k32_L2_h128
+  Test:  linformer_attn_single_layer_test
+  Data:  outputs_n2048_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n2048_k32_L2_h128_20260914_110717.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n2048_k32_L2_h128_20260914_110717.time
+============================================
+  [FAIL] linformer_attn_freivalds_n2048_k32_L2_h128 (exit code: 101)
+  Peak RSS: 121326747648 bytes (115706 MB)
+  Layers proved: 0
+
+============================================
+[11:47:15] #6 linformer_attn_freivalds_n4096_k32_L2_h128
+  Test:  linformer_attn_single_layer_test
+  Data:  outputs_n4096_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n4096_k32_L2_h128_20260914_114715.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_freivalds_n4096_k32_L2_h128_20260914_114715.time
+============================================
+  [FAIL] linformer_attn_freivalds_n4096_k32_L2_h128 (exit code: 101)
+  Peak RSS: 119903436800 bytes (114348 MB)
+  Layers proved: 0
+
+
+################################################################
+# 2. Linformer Attention (Naive)
+################################################################
+============================================
+[12:26:52] #7 linformer_attn_naive_n128_k32_L2_h128
+  Test:  linformer_attn_naive_single_layer_test
+  Data:  outputs_n128_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n128_k32_L2_h128_20260914_122652.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n128_k32_L2_h128_20260914_122652.time
+============================================
+  [PASS] linformer_attn_naive_n128_k32_L2_h128
+  Peak RSS: 72049868800 bytes (68712 MB)
+  Layers proved: 2
+
+============================================
+[12:41:53] #8 linformer_attn_naive_n256_k32_L2_h128
+  Test:  linformer_attn_naive_single_layer_test
+  Data:  outputs_n256_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n256_k32_L2_h128_20260914_124153.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n256_k32_L2_h128_20260914_124153.time
+============================================
+  [PASS] linformer_attn_naive_n256_k32_L2_h128
+  Peak RSS: 120176181248 bytes (114608 MB)
+  Layers proved: 2
+
+============================================
+[13:14:13] #9 linformer_attn_naive_n512_k32_L2_h128
+  Test:  linformer_attn_naive_single_layer_test
+  Data:  outputs_n512_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n512_k32_L2_h128_20260914_131413.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n512_k32_L2_h128_20260914_131413.time
+============================================
+  [FAIL] linformer_attn_naive_n512_k32_L2_h128 (exit code: 101)
+  Peak RSS: 121076924416 bytes (115467 MB)
+  Layers proved: 0
+
+============================================
+[13:58:35] #10 linformer_attn_naive_n1024_k32_L2_h128
+  Test:  linformer_attn_naive_single_layer_test
+  Data:  outputs_n1024_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n1024_k32_L2_h128_20260914_135835.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n1024_k32_L2_h128_20260914_135835.time
+============================================
+  [FAIL] linformer_attn_naive_n1024_k32_L2_h128 (exit code: 101)
+  Peak RSS: 121091309568 bytes (115481 MB)
+  Layers proved: 0
+
+============================================
+[14:33:27] #11 linformer_attn_naive_n2048_k32_L2_h128
+  Test:  linformer_attn_naive_single_layer_test
+  Data:  outputs_n2048_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n2048_k32_L2_h128_20260914_143327.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n2048_k32_L2_h128_20260914_143327.time
+============================================
+  [FAIL] linformer_attn_naive_n2048_k32_L2_h128 (exit code: 101)
+  Peak RSS: 120567300096 bytes (114981 MB)
+  Layers proved: 0
+
+============================================
+[15:10:31] #12 linformer_attn_naive_n4096_k32_L2_h128
+  Test:  linformer_attn_naive_single_layer_test
+  Data:  outputs_n4096_k32_L2_h128_linformer
+  Log:   logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n4096_k32_L2_h128_20260914_151031.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_linformer_attn_naive_n4096_k32_L2_h128_20260914_151031.time
+============================================
+  [FAIL] linformer_attn_naive_n4096_k32_L2_h128 (exit code: 101)
+  Peak RSS: 120282382336 bytes (114710 MB)
+  Layers proved: 0
+
+
+################################################################
+# 3. SOFT Attention (Freivalds)
+################################################################
+============================================
+[15:18:47] #13 soft_attn_freivalds_n128_m32_L2_h128
+  Test:  soft_attn_single_layer_test
+  Data:  outputs_n128_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n128_m32_L2_h128_20260914_151847.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n128_m32_L2_h128_20260914_151847.time
+============================================
+  [PASS] soft_attn_freivalds_n128_m32_L2_h128
+  Peak RSS: 30397087744 bytes (28988 MB)
+  Layers proved: 2
+
+============================================
+[15:25:51] #14 soft_attn_freivalds_n256_m32_L2_h128
+  Test:  soft_attn_single_layer_test
+  Data:  outputs_n256_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n256_m32_L2_h128_20260914_152551.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n256_m32_L2_h128_20260914_152551.time
+============================================
+  [PASS] soft_attn_freivalds_n256_m32_L2_h128
+  Peak RSS: 58388512768 bytes (55683 MB)
+  Layers proved: 2
+
+============================================
+[15:39:54] #15 soft_attn_freivalds_n512_m32_L2_h128
+  Test:  soft_attn_single_layer_test
+  Data:  outputs_n512_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n512_m32_L2_h128_20260914_153954.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n512_m32_L2_h128_20260914_153954.time
+============================================
+  [PASS] soft_attn_freivalds_n512_m32_L2_h128
+  Peak RSS: 110402879488 bytes (105288 MB)
+  Layers proved: 2
+
+============================================
+[16:08:29] #16 soft_attn_freivalds_n1024_m32_L2_h128
+  Test:  soft_attn_single_layer_test
+  Data:  outputs_n1024_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n1024_m32_L2_h128_20260914_160829.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n1024_m32_L2_h128_20260914_160829.time
+============================================
+  [PASS] soft_attn_freivalds_n1024_m32_L2_h128
+  Peak RSS: 120230477824 bytes (114660 MB)
+  Layers proved: 2
+
+============================================
+[17:37:12] #17 soft_attn_freivalds_n2048_m32_L2_h128
+  Test:  soft_attn_single_layer_test
+  Data:  outputs_n2048_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n2048_m32_L2_h128_20260914_173712.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n2048_m32_L2_h128_20260914_173712.time
+============================================
+  [FAIL] soft_attn_freivalds_n2048_m32_L2_h128 (exit code: 101)
+  Peak RSS: 121089654784 bytes (115480 MB)
+  Layers proved: 0
+
+============================================
+[18:18:39] #18 soft_attn_freivalds_n4096_m32_L2_h128
+  Test:  soft_attn_single_layer_test
+  Data:  outputs_n4096_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n4096_m32_L2_h128_20260914_181839.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_freivalds_n4096_m32_L2_h128_20260914_181839.time
+============================================
+  [FAIL] soft_attn_freivalds_n4096_m32_L2_h128 (exit code: 101)
+  Peak RSS: 120565350400 bytes (114980 MB)
+  Layers proved: 0
+
+
+################################################################
+# 4. SOFT Attention (Naive)
+################################################################
+============================================
+[18:58:45] #19 soft_attn_naive_n128_m32_L2_h128
+  Test:  soft_attn_naive_single_layer_test
+  Data:  outputs_n128_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n128_m32_L2_h128_20260914_185845.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n128_m32_L2_h128_20260914_185845.time
+============================================
+  [PASS] soft_attn_naive_n128_m32_L2_h128
+  Peak RSS: 57296125952 bytes (54641 MB)
+  Layers proved: 2
+
+============================================
+[19:10:29] #20 soft_attn_naive_n256_m32_L2_h128
+  Test:  soft_attn_naive_single_layer_test
+  Data:  outputs_n256_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n256_m32_L2_h128_20260914_191029.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n256_m32_L2_h128_20260914_191029.time
+============================================
+  [PASS] soft_attn_naive_n256_m32_L2_h128
+  Peak RSS: 111523201024 bytes (106356 MB)
+  Layers proved: 2
+
+============================================
+[19:34:02] #21 soft_attn_naive_n512_m32_L2_h128
+  Test:  soft_attn_naive_single_layer_test
+  Data:  outputs_n512_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n512_m32_L2_h128_20260914_193402.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n512_m32_L2_h128_20260914_193402.time
+============================================
+  [PASS] soft_attn_naive_n512_m32_L2_h128
+  Peak RSS: 119755161600 bytes (114207 MB)
+  Layers proved: 2
+
+============================================
+[20:46:36] #22 soft_attn_naive_n1024_m32_L2_h128
+  Test:  soft_attn_naive_single_layer_test
+  Data:  outputs_n1024_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n1024_m32_L2_h128_20260914_204636.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n1024_m32_L2_h128_20260914_204636.time
+============================================
+  [FAIL] soft_attn_naive_n1024_m32_L2_h128 (exit code: 101)
+  Peak RSS: 121488490496 bytes (115860 MB)
+  Layers proved: 0
+
+============================================
+[21:29:02] #23 soft_attn_naive_n2048_m32_L2_h128
+  Test:  soft_attn_naive_single_layer_test
+  Data:  outputs_n2048_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n2048_m32_L2_h128_20260914_212902.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n2048_m32_L2_h128_20260914_212902.time
+============================================
+  [FAIL] soft_attn_naive_n2048_m32_L2_h128 (exit code: 101)
+  Peak RSS: 121014091776 bytes (115408 MB)
+  Layers proved: 0
+
+============================================
+[22:07:15] #24 soft_attn_naive_n4096_m32_L2_h128
+  Test:  soft_attn_naive_single_layer_test
+  Data:  outputs_n4096_m32_L2_h128_soft
+  Log:   logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n4096_m32_L2_h128_20260914_220715.log
+  Time:  logs/results_softlinformer/tiny_circuit/prove_soft_attn_naive_n4096_m32_L2_h128_20260914_220715.time
+============================================
+  [FAIL] soft_attn_naive_n4096_m32_L2_h128 (exit code: 101)
+  Peak RSS: 121292587008 bytes (115673 MB)
+  Layers proved: 0
+
+
+============================================
+ measure_linformercir.sh 완료
+ 시작: 2026-09-14 09:00:20
+ 종료: 2026-09-14 22:16:09
+ 총 실행: 24
+ 성공:    13
+ 실패:    11
+ 스킵:    0
+ OOM:     0
+============================================
+
+=== 결과 요약 명령 ===
+
+# per-layer 벤치마크 (JSON):
+  grep BENCHMARK_RESULT logs/results_softlinformer/tiny_circuit/prove_*.log
+
+# peak RSS (메모리, bytes):
+  grep 'maximum resident set size' logs/results_softlinformer/tiny_circuit/prove_*.time
+
+# 전체 wall time per run:
+  grep 'total_wall_ms' logs/results_softlinformer/tiny_circuit/prove_*.log
+
+# 실패한 run 확인:
+  grep '\[FAIL\]' logs/results_softlinformer/tiny_circuit/prove_*.log
