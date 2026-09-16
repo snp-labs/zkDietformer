@@ -62,7 +62,14 @@ parser.add_argument(
     "--num_hidden_layers", type=int, default=None,
     help="Random init 모델 layer 수. 미지정 시 함수 default (4) 사용.",
 )
+parser.add_argument(
+    "--seq_len", type=int, default=None,
+    help="Sequence length (default: MAX_SEQ_LEN from evaluation_fixtures).",
+)
 args = parser.parse_args()
+
+# Use --seq_len if provided, otherwise fall back to evaluation_fixtures constant.
+SEQ_LEN = args.seq_len if args.seq_len is not None else MAX_SEQ_LEN
 
 # fixture 무결성 self-check
 assert_fixture_invariants()
@@ -79,9 +86,9 @@ if args.save_attn_npz:
     output_dir_name = args.save_attn_npz
 elif args.hidden_size is not None:
     n_layers = args.num_hidden_layers or 4
-    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_L{n_layers}_h{args.hidden_size}_nystrom"
+    output_dir_name = f"outputs_n{SEQ_LEN}_m{args.num_landmarks}_L{n_layers}_h{args.hidden_size}_nystrom"
 else:
-    output_dir_name = f"outputs_n{MAX_SEQ_LEN}_m{args.num_landmarks}_nystrom"
+    output_dir_name = f"outputs_n{SEQ_LEN}_m{args.num_landmarks}_nystrom"
 save_prefix = output_dir_name
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -103,14 +110,14 @@ if args.hidden_size is not None:
         num_attention_heads=n_heads,
         num_hidden_layers=args.num_hidden_layers or 4,
         num_landmarks=args.num_landmarks,
-        seq_len=MAX_SEQ_LEN,
+        seq_len=SEQ_LEN,
     )
     print(f"[Nystromformer] RANDOM INIT — hidden_size={args.hidden_size}, heads={n_heads}")
 else:
     model = load_nystromformer_with_landmarks_override(
         model_id="uw-madison/nystromformer-512",
         num_landmarks=args.num_landmarks,
-        seq_len=MAX_SEQ_LEN,
+        seq_len=SEQ_LEN,
     )
 model.to(device).eval()  # 중요: dropout 비활성화로 결정성 보장
 
@@ -138,7 +145,7 @@ registry = apply_monkey_patch(model)
 def _make_batches() -> list:
     """SAMPLE_TEXTS 의 앞 total_needed 개를 batch_size 단위로 묶음.
 
-    각 batch shape = [batch_size, MAX_SEQ_LEN] (padding=max_length).
+    각 batch shape = [batch_size, SEQ_LEN] (padding=max_length).
     """
     batches = []
     texts = SAMPLE_TEXTS[:total_needed]
@@ -147,7 +154,7 @@ def _make_batches() -> list:
         enc = tokenizer(
             chunk,
             padding="max_length",
-            max_length=MAX_SEQ_LEN,
+            max_length=SEQ_LEN,
             truncation=True,
             return_tensors="pt",
         )
@@ -296,7 +303,7 @@ def _capture_and_process_nystrom_intermediates(
 # ── Main loop ──────────────────────────────────────────────────────────────
 print(
     f"Starting Nystromformer Validation: {args.num_batch} batches × "
-    f"{args.batch_size} samples (max_seq_len={MAX_SEQ_LEN}, "
+    f"{args.batch_size} samples (max_seq_len={SEQ_LEN}, "
     f"num_landmarks={args.num_landmarks})"
 )
 
