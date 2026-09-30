@@ -1,0 +1,184 @@
+============================================
+ measure_nystromcir.sh (Circuit Proving)
+ Started:     2026-09-17 10:01:59
+ Circuit dir: /Users/zkrypto12/zkdietformer/Dietformer/circuits
+ Data base:   /Users/zkrypto12/zkdietformer/Dietformer/models/Nystromformer/code/dietformer
+ Log dir:     logs/results_nystrom/tiny_circuit
+ Config:      L=2, h=128, H=2
+ Nystrom:     m=32
+ Variant:     both
+============================================
+
+=== [BUILD] cargo test --release --no-run ===
+
+warning: `nystromformer` (lib) generated 16 warnings (run `cargo fix --lib -p nystromformer` to apply 3 suggestions)
+warning: `nystromformer` (lib test) generated 16 warnings (16 duplicates)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.22s
+  Executable unittests src/lib.rs (target/release/deps/nystromformer-d2b7cdf411c2ccd6)
+
+
+################################################################
+# 1. Nystrom Attention (Freivalds)
+################################################################
+============================================
+[10:01:59] #1 nystrom_attn_freivalds_n128_m32_L2_h128
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n128_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n128_m32_L2_h128_20260917_100159.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n128_m32_L2_h128_20260917_100159.time
+============================================
+  [PASS] nystrom_attn_freivalds_n128_m32_L2_h128
+  Peak RSS: 31674777600 bytes (30207 MB)
+  Layers proved: 2
+
+============================================
+[10:09:16] #2 nystrom_attn_freivalds_n256_m32_L2_h128
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n256_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n256_m32_L2_h128_20260917_100916.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n256_m32_L2_h128_20260917_100916.time
+============================================
+  [PASS] nystrom_attn_freivalds_n256_m32_L2_h128
+  Peak RSS: 60359393280 bytes (57563 MB)
+  Layers proved: 2
+
+============================================
+[10:23:46] #3 nystrom_attn_freivalds_n512_m32_L2_h128
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n512_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n512_m32_L2_h128_20260917_102346.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n512_m32_L2_h128_20260917_102346.time
+============================================
+  [PASS] nystrom_attn_freivalds_n512_m32_L2_h128
+  Peak RSS: 113305747456 bytes (108056 MB)
+  Layers proved: 2
+
+============================================
+[10:53:15] #4 nystrom_attn_freivalds_n1024_m32_L2_h128
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n1024_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n1024_m32_L2_h128_20260917_105315.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n1024_m32_L2_h128_20260917_105315.time
+============================================
+  [PASS] nystrom_attn_freivalds_n1024_m32_L2_h128
+  Peak RSS: 117799288832 bytes (112342 MB)
+  Layers proved: 2
+
+============================================
+[12:25:14] #5 nystrom_attn_freivalds_n2048_m32_L2_h128
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n2048_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n2048_m32_L2_h128_20260917_122514.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n2048_m32_L2_h128_20260917_122514.time
+============================================
+  [FAIL] nystrom_attn_freivalds_n2048_m32_L2_h128 (exit code: 101)
+  Peak RSS: 120913248256 bytes (115311 MB)
+  Layers proved: 0
+
+============================================
+[13:04:00] #6 nystrom_attn_freivalds_n4096_m32_L2_h128
+  Test:  nystrom_attn_hf_single_layer_test
+  Data:  outputs_n4096_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n4096_m32_L2_h128_20260917_130400.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_freivalds_n4096_m32_L2_h128_20260917_130400.time
+============================================
+  [FAIL] nystrom_attn_freivalds_n4096_m32_L2_h128 (exit code: 101)
+  Peak RSS: 119494950912 bytes (113959 MB)
+  Layers proved: 0
+
+
+################################################################
+# 2. Nystrom Attention (Naive)
+################################################################
+============================================
+[13:43:41] #7 nystrom_attn_naive_n128_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n128_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n128_m32_L2_h128_20260917_134341.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n128_m32_L2_h128_20260917_134341.time
+============================================
+  [PASS] nystrom_attn_naive_n128_m32_L2_h128
+  Peak RSS: 73160900608 bytes (69771 MB)
+  Layers proved: 2
+
+============================================
+[13:59:16] #8 nystrom_attn_naive_n256_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n256_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n256_m32_L2_h128_20260917_135916.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n256_m32_L2_h128_20260917_135916.time
+============================================
+  [PASS] nystrom_attn_naive_n256_m32_L2_h128
+  Peak RSS: 120380620800 bytes (114803 MB)
+  Layers proved: 2
+
+============================================
+[14:32:55] #9 nystrom_attn_naive_n512_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n512_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n512_m32_L2_h128_20260917_143255.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n512_m32_L2_h128_20260917_143255.time
+============================================
+  [FAIL] nystrom_attn_naive_n512_m32_L2_h128 (exit code: 101)
+  Peak RSS: 120951078912 bytes (115347 MB)
+  Layers proved: 0
+
+============================================
+[15:14:09] #10 nystrom_attn_naive_n1024_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n1024_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n1024_m32_L2_h128_20260917_151409.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n1024_m32_L2_h128_20260917_151409.time
+============================================
+  [FAIL] nystrom_attn_naive_n1024_m32_L2_h128 (exit code: 101)
+  Peak RSS: 120908152832 bytes (115307 MB)
+  Layers proved: 0
+
+============================================
+[15:51:15] #11 nystrom_attn_naive_n2048_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n2048_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n2048_m32_L2_h128_20260917_155115.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n2048_m32_L2_h128_20260917_155115.time
+============================================
+  [FAIL] nystrom_attn_naive_n2048_m32_L2_h128 (exit code: 101)
+  Peak RSS: 120857526272 bytes (115258 MB)
+  Layers proved: 0
+
+============================================
+[16:30:57] #12 nystrom_attn_naive_n4096_m32_L2_h128
+  Test:  nystrom_attn_naive_single_layer_test
+  Data:  outputs_n4096_m32_L2_h128_nystrom
+  Log:   logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n4096_m32_L2_h128_20260917_163057.log
+  Time:  logs/results_nystrom/tiny_circuit/prove_nystrom_attn_naive_n4096_m32_L2_h128_20260917_163057.time
+============================================
+  [FAIL] nystrom_attn_naive_n4096_m32_L2_h128 (exit code: 101)
+  Peak RSS: 120563515392 bytes (114978 MB)
+  Layers proved: 0
+
+
+============================================
+ measure_nystromcir.sh 완료
+ 시작: 2026-09-17 10:01:59
+ 종료: 2026-09-17 16:38:58
+ 총 실행: 12
+ 성공:    6
+ 실패:    6
+ 스킵:    0
+ OOM:     0
+============================================
+
+=== 결과 요약 명령 ===
+
+# per-layer 벤치마크 (JSON):
+  grep BENCHMARK_RESULT logs/results_nystrom/tiny_circuit/prove_*.log
+
+# peak RSS (메모리, bytes):
+  grep 'maximum resident set size' logs/results_nystrom/tiny_circuit/prove_*.time
+
+# 전체 wall time per run:
+  grep 'total_wall_ms' logs/results_nystrom/tiny_circuit/prove_*.log
+
+# 실패한 run 확인:
+  grep '\[FAIL\]' logs/results_nystrom/tiny_circuit/prove_*.log
+
